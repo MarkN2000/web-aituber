@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
+  <link rel="stylesheet" href="/static/style.css?v=1">
   <script type="importmap">
     {
       "imports": {
@@ -14,27 +15,8 @@
       }
     }
   </script>
-  <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #10131a; }
-    body { margin: 0; min-height: 100vh; background: #10131a; color: #f4f7ff; }
-    #stage { position: fixed; inset: 0; overflow: hidden; }
-    #vrm-canvas { display: block; width: 100%; height: 100%; }
-    #panel { position: fixed; inset: auto 24px 24px; max-width: 760px; padding: 16px 20px; border-radius: 14px; background: rgb(12 15 22 / 78%); backdrop-filter: blur(8px); }
-    #status { margin: 0 0 8px; color: #aebbd3; font-size: .9rem; }
-    #question { margin: 0 0 8px; font-weight: 700; }
-    #answer { margin: 0; white-space: pre-wrap; line-height: 1.6; }
-    #skip { position: fixed; right: 24px; top: 24px; padding: 9px 15px; border: 0; border-radius: 999px; background: #e7eefc; color: #172033; font-weight: 700; cursor: pointer; }
-    #skip:disabled { opacity: .45; cursor: not-allowed; }
-    #start-screen { position: fixed; inset: 0; display: grid; place-items: center; background: #10131a; z-index: 10; }
-    #start-card { width: min(420px, calc(100vw - 48px)); text-align: center; }
-    #start-card p { color: #b8c4da; line-height: 1.6; }
-    #start { padding: 14px 28px; border: 0; border-radius: 10px; background: #8cc6ff; color: #08213a; font-weight: 800; font-size: 1rem; cursor: pointer; }
-    #start-error { min-height: 1.5em; color: #ffb4ab; }
-    #viewer-message { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%, -50%); max-width: min(90vw, 540px); text-align: center; color: #ffcabf; white-space: pre-wrap; pointer-events: none; }
-    [hidden] { display: none !important; }
-  </style>
 </head>
-<body>
+<body class="display-page">
   <main id="stage">
     <canvas id="vrm-canvas" aria-label="VRMキャラクター表示"></canvas>
     <p id="viewer-message" hidden></p>
