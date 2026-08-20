@@ -54,6 +54,7 @@ assets/
 
 ## 外部ツールとアセット
 
+- サーバーは`0.0.0.0:3000`で待ち受け、同一ローカルネットワークとCloudflare Tunnelの両方から接続できるようにする。
 - WAVからWebM/Opusへの変換にはFFmpegを使用する。
 - VRMモデルは `assets/model.vrm` に配置する。
 - VRMAは `assets/motions/` に配置する。

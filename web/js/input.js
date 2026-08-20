@@ -4,17 +4,69 @@ const image = document.querySelector("#image");
 const submitButton = document.querySelector("#submit-button");
 const status = document.querySelector("#submission-status");
 const textCount = document.querySelector("#text-count");
+const imageButton = document.querySelector("#image-button");
+const imagePreview = document.querySelector("#image-preview");
+const imageThumbnail = document.querySelector("#image-thumbnail");
+const imageName = document.querySelector("#image-name");
+const imageRemove = document.querySelector("#image-remove");
 
-function setStatus(message, kind = "") {
+let isSubmitting = false;
+let previewUrl;
+let statusTimer;
+
+function setStatus(message, kind = "", autoClear = false) {
+  window.clearTimeout(statusTimer);
   status.textContent = message;
   status.dataset.kind = kind;
+
+  if (autoClear) {
+    statusTimer = window.setTimeout(() => {
+      status.textContent = "";
+      status.dataset.kind = "";
+    }, 4000);
+  }
+}
+
+function updateSubmitState() {
+  submitButton.disabled = isSubmitting || !text.value.trim();
 }
 
 function updateTextCount() {
   textCount.textContent = String(text.value.length);
+  updateSubmitState();
+}
+
+function updateImagePreview() {
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+    previewUrl = undefined;
+  }
+
+  const file = image.files[0];
+  if (imageButton) {
+    imageButton.dataset.selected = String(Boolean(file));
+  }
+  if (!imagePreview || !imageThumbnail || !imageName) return;
+
+  imagePreview.hidden = !file;
+  if (!file) {
+    imageThumbnail.removeAttribute("src");
+    imageName.textContent = "";
+    return;
+  }
+
+  previewUrl = URL.createObjectURL(file);
+  imageThumbnail.src = previewUrl;
+  imageName.textContent = file.name;
 }
 
 text.addEventListener("input", updateTextCount);
+image.addEventListener("change", updateImagePreview);
+imageButton?.addEventListener("click", () => image.click());
+imageRemove?.addEventListener("click", () => {
+  image.value = "";
+  updateImagePreview();
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -34,7 +86,8 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  submitButton.disabled = true;
+  isSubmitting = true;
+  updateSubmitState();
   setStatus("質問を送信しています…");
 
   try {
@@ -55,13 +108,21 @@ form.addEventListener("submit", async (event) => {
 
     form.reset();
     updateTextCount();
-    setStatus("受け付けました。順番にお答えします。", "success");
+    updateImagePreview();
+    setStatus("受け付けました。順番にお答えします。", "success", true);
   } catch (error) {
     console.error(error);
     setStatus(error.message || "送信に失敗しました。通信を確認して、もう一度お試しください。", "error");
   } finally {
-    submitButton.disabled = false;
+    isSubmitting = false;
+    updateSubmitState();
   }
 });
 
+window.addEventListener("beforeunload", () => {
+  window.clearTimeout(statusTimer);
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+});
+
 updateTextCount();
+updateImagePreview();

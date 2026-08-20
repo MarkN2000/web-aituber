@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
   <script type="importmap">
     {
       "imports": {
@@ -22,27 +22,43 @@
     <p id="viewer-message" hidden></p>
   </main>
 
-  <section id="panel" aria-live="polite">
-    <p id="status">表示開始を待っています</p>
-    <p id="question"></p>
-    <p id="answer"></p>
-  </section>
+  <div class="main-bottom">
+    <section id="panel" aria-live="polite" hidden>
+      <p id="status"></p>
+      <p id="question"></p>
+      <p id="answer"></p>
+    </section>
 
-  <aside class="main-input-panel">
-    <p class="eyebrow">Web AITuber</p>
-    <h1>質問する</h1>
-    <form id="submission-form" class="compact-form" novalidate>
-      <label for="text">質問</label>
-      <textarea id="text" name="text" maxlength="2000" required placeholder="質問を入力してください" rows="3"></textarea>
-      <p class="field-note"><span id="text-count">0</span> / 2000文字</p>
+    <p id="submission-status" class="composer-status" role="status" aria-live="polite"></p>
 
-      <label for="image">画像（任意・1枚）</label>
-      <input id="image" name="image" type="file" accept="image/*">
+    <div id="image-preview" class="composer-attachment" hidden>
+      <img id="image-thumbnail" alt="選択した画像のプレビュー">
+      <span id="image-name"></span>
+      <button id="image-remove" type="button" aria-label="選択した画像を解除">×</button>
+    </div>
 
-      <button id="submit-button" type="submit">質問を送る</button>
+    <form id="submission-form" class="composer" novalidate>
+      <button id="image-button" class="composer-icon-button" type="button" aria-label="画像を選択" title="画像を選択">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"></path>
+          <circle cx="9" cy="9" r="2"></circle>
+          <path d="m5 17 4-4 3 3 2-2 5 5"></path>
+        </svg>
+      </button>
+      <input id="image" name="image" type="file" accept="image/*" hidden>
+
+      <label class="visually-hidden" for="text">質問</label>
+      <input id="text" class="composer-input" name="text" type="text" maxlength="2000" required autocomplete="off" placeholder="質問を入力してください">
+      <span id="text-count" class="visually-hidden">0</span>
+
+      <button id="submit-button" class="composer-send-button" type="submit" aria-label="質問を送る" title="質問を送る">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m3.5 4.5 17 7.5-17 7.5 3-7.5z"></path>
+          <path d="M6.5 12h14"></path>
+        </svg>
+      </button>
     </form>
-    <p id="submission-status" class="status" role="status" aria-live="polite"></p>
-  </aside>
+  </div>
 
   <section id="start-screen">
     <div id="start-card">
@@ -53,7 +69,7 @@
     </div>
   </section>
 
-  <script type="module" src="/static/js/main.js?v=2"></script>
-  <script type="module" src="/static/js/input.js?v=2"></script>
+  <script type="module" src="/static/js/main.js?v=3"></script>
+  <script type="module" src="/static/js/input.js?v=3"></script>
 </body>
 </html>

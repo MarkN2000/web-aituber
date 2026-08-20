@@ -8,6 +8,7 @@ const elements = {
   startError: document.querySelector("#start-error"),
   canvas: document.querySelector("#vrm-canvas"),
   viewerMessage: document.querySelector("#viewer-message"),
+  panel: document.querySelector("#panel"),
   status: document.querySelector("#status"),
   question: document.querySelector("#question"),
   answer: document.querySelector("#answer"),
@@ -33,6 +34,7 @@ function showViewerMessage(message = "") {
 
 function setTurn(turn) {
   currentTurn = turn;
+  elements.panel.hidden = !turn;
   elements.question.textContent = turn ? `質問: ${turn.question}` : "";
   if (!turn) {
     elements.answer.textContent = "";
@@ -217,4 +219,3 @@ window.addEventListener("beforeunload", () => {
   viewer?.dispose();
   socket?.close();
 });
-

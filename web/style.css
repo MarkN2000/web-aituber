@@ -176,11 +176,7 @@ input[type="file"]::file-selector-button {
 }
 
 #panel {
-  position: fixed;
-  right: 408px;
-  bottom: 24px;
-  left: 24px;
-  max-width: 760px;
+  width: 100%;
   padding: 16px 20px;
   border: 1px solid rgb(0 0 0 / 12%);
   border-radius: 12px;
@@ -206,39 +202,167 @@ input[type="file"]::file-selector-button {
   line-height: 1.6;
 }
 
-.main-input-panel {
+.main-bottom {
   position: fixed;
-  top: 24px;
-  right: 24px;
-  width: 360px;
-  max-height: calc(100dvh - 48px);
-  overflow-y: auto;
-  padding: 20px;
+  z-index: 3;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: 50%;
+  display: grid;
+  width: min(760px, calc(100vw - 32px));
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
   border: 1px solid rgb(0 0 0 / 12%);
-  border-radius: 12px;
-  background: rgb(255 255 255 / 94%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 97%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
   color: #202020;
 }
 
-.main-input-panel h1 {
-  font-size: 1.5rem;
+.composer-input {
+  width: 100%;
+  height: 44px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #202020;
 }
 
-.compact-form {
-  margin-top: 16px;
+.composer-input:focus-visible {
+  outline: 0;
 }
 
-.compact-form label {
-  margin-top: 6px;
+.composer-icon-button,
+.composer-send-button {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  margin: 0;
+  place-items: center;
+  border-radius: 10px;
+  padding: 0;
 }
 
-.compact-form textarea {
-  min-height: 96px;
+.composer-icon-button {
+  border-color: transparent;
+  background: transparent;
+  color: #505050;
 }
 
-.main-input-panel .status {
-  margin-top: 16px;
+.composer-icon-button:hover,
+.composer-icon-button[data-selected="true"] {
+  border-color: #dededb;
+  background: #f0f0ed;
+}
+
+.composer-send-button {
+  border-color: #202020;
+  background: #202020;
+  color: #fff;
+}
+
+#submission-form.composer #submit-button {
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+}
+
+.composer-icon-button svg,
+.composer-send-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.composer-status {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid #dededb;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 8%);
+  color: #505050;
+  font-size: .9rem;
+}
+
+.composer-status:empty {
+  display: none;
+}
+
+.composer-status[data-kind="success"] {
+  color: #26734d;
+}
+
+.composer-status[data-kind="error"] {
+  color: #b3261e;
+}
+
+.composer-attachment {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 8%);
+}
+
+.composer-attachment img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.composer-attachment span {
+  max-width: min(50vw, 320px);
+  overflow: hidden;
+  color: #505050;
+  font-size: .85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment button {
+  width: 32px;
+  min-height: 32px;
+  margin: 0;
+  border-color: transparent;
+  background: transparent;
+  color: #505050;
+  font-size: 1.25rem;
+}
+
+.composer-attachment button:hover {
+  border-color: #dededb;
+  background: #f0f0ed;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
 }
 
 #start-screen {
@@ -355,28 +479,6 @@ input[type="file"]::file-selector-button {
   display: none !important;
 }
 
-@media (max-width: 800px) {
-  #panel {
-    top: 12px;
-    right: 12px;
-    bottom: auto;
-    left: 12px;
-    max-width: none;
-    max-height: 25dvh;
-    overflow-y: auto;
-  }
-
-  .main-input-panel {
-    top: auto;
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    width: auto;
-    max-height: 45dvh;
-    padding: 16px;
-  }
-}
-
 @media (max-width: 480px) {
   .input-page {
     display: block;
@@ -390,6 +492,30 @@ input[type="file"]::file-selector-button {
 
   #start-card {
     padding: 32px 24px;
+  }
+
+  .main-bottom {
+    bottom: max(8px, env(safe-area-inset-bottom));
+    width: calc(100vw - 16px);
+  }
+
+  #panel {
+    max-height: 32dvh;
+    overflow-y: auto;
+    padding: 12px 14px;
+  }
+
+  .composer {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 14px;
+  }
+
+  .composer-icon-button,
+  .composer-send-button {
+    width: 42px;
+    min-height: 42px;
   }
 
   .admin-page {
