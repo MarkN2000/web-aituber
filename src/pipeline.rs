@@ -55,14 +55,19 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
     *state.current.write().await = None;
 
     match result {
-        Ok(audio_files) => {
+        Ok(completed) => {
+            state
+                .history
+                .lock()
+                .await
+                .record(submission.text.clone(), completed.answer);
             send_event(
                 state,
                 ServerEvent::Complete {
                     turn_id: submission.id.clone(),
                 },
             );
-            schedule_audio_cleanup(audio_files);
+            schedule_audio_cleanup(completed.audio_files);
         }
         Err(ProcessError::Cancelled(audio_files)) => {
             send_event(
@@ -94,12 +99,14 @@ async fn process_active_submission(
     state: &AppState,
     submission: &Submission,
     cancel: &CancellationToken,
-) -> std::result::Result<Vec<PathBuf>, ProcessError> {
+) -> std::result::Result<CompletedSubmission, ProcessError> {
     let mut audio_files = Vec::new();
+
+    let history = state.history.lock().await.snapshot();
 
     let answer = cancellable(
         cancel,
-        crate::llm::generate(&state.http, &state.config.llm, submission),
+        crate::llm::generate(&state.http, &state.config.llm, submission, &history),
     )
     .await
     .map_err(|error| error.with_files(audio_files.clone()))?;
@@ -185,7 +192,10 @@ async fn process_active_submission(
         .map_err(|error| error.with_files(audio_files.clone()))?;
     }
 
-    Ok(audio_files)
+    Ok(CompletedSubmission {
+        audio_files,
+        answer,
+    })
 }
 
 async fn publish_state(state: &AppState, turn: TurnState) {
@@ -246,6 +256,11 @@ enum ProcessError {
         error: anyhow::Error,
         audio_files: Vec<PathBuf>,
     },
+}
+
+struct CompletedSubmission {
+    audio_files: Vec<PathBuf>,
+    answer: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]

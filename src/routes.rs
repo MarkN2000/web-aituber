@@ -274,7 +274,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::config::AppConfig;
+    use crate::{config::AppConfig, state::ConversationHistory};
 
     fn test_state_with_receiver() -> (AppState, mpsc::Receiver<Submission>) {
         let mut config: AppConfig =
@@ -290,6 +290,7 @@ mod tests {
                 events,
                 current: Arc::new(RwLock::new(None)),
                 active: Arc::new(Mutex::new(None)),
+                history: Arc::new(Mutex::new(ConversationHistory::default())),
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
             },
             receiver,

@@ -2,34 +2,20 @@ use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
-use crate::{config::LlmConfig, protocol::Submission};
+use crate::{config::LlmConfig, protocol::Submission, state::ConversationTurn};
 
 pub async fn generate(
     client: &Client,
     config: &LlmConfig,
     submission: &Submission,
+    history: &[ConversationTurn],
 ) -> Result<String> {
-    let mut content = vec![json!({ "type": "text", "text": submission.text })];
-    if let Some(image) = &submission.image {
-        let data_url = format!(
-            "data:{};base64,{}",
-            image.mime_type,
-            STANDARD.encode(&image.data)
-        );
-        content.push(json!({
-            "type": "image_url",
-            "image_url": { "url": data_url }
-        }));
-    }
-
+    let messages = build_messages(config, submission, history);
     let request = json!({
         "model": config.model,
-        "messages": [
-            { "role": "system", "content": config.system_prompt },
-            { "role": "user", "content": content }
-        ]
+        "messages": messages
     });
     let response = client
         .post(&config.api_url)
@@ -66,6 +52,35 @@ pub async fn generate(
     }
 }
 
+fn build_messages(
+    config: &LlmConfig,
+    submission: &Submission,
+    history: &[ConversationTurn],
+) -> Vec<Value> {
+    let mut messages = Vec::with_capacity(history.len() * 2 + 2);
+    messages.push(json!({ "role": "system", "content": config.system_prompt }));
+
+    for turn in history {
+        messages.push(json!({ "role": "user", "content": turn.question }));
+        messages.push(json!({ "role": "assistant", "content": turn.answer }));
+    }
+
+    let mut content = vec![json!({ "type": "text", "text": submission.text })];
+    if let Some(image) = &submission.image {
+        let data_url = format!(
+            "data:{};base64,{}",
+            image.mime_type,
+            STANDARD.encode(&image.data)
+        );
+        content.push(json!({
+            "type": "image_url",
+            "image_url": { "url": data_url }
+        }));
+    }
+    messages.push(json!({ "role": "user", "content": content }));
+    messages
+}
+
 #[derive(Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<Choice>,
@@ -89,4 +104,43 @@ struct ApiErrorResponse {
 #[derive(Deserialize)]
 struct ApiErrorDetail {
     message: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::AppConfig, protocol::InputImage};
+
+    #[test]
+    fn conversation_history_is_added_before_current_submission() {
+        let config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        let history = vec![ConversationTurn {
+            question: "前の質問".to_owned(),
+            answer: "前の回答".to_owned(),
+        }];
+        let submission = Submission {
+            id: "turn-2".to_owned(),
+            text: "今回の質問".to_owned(),
+            image: Some(InputImage {
+                mime_type: "image/png".to_owned(),
+                data: vec![1, 2, 3],
+            }),
+        };
+
+        let messages = build_messages(&config.llm, &submission, &history);
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "前の質問");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "前の回答");
+        assert_eq!(messages[3]["content"][0]["text"], "今回の質問");
+        assert!(
+            messages[3]["content"][1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+    }
 }

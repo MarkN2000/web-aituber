@@ -4,7 +4,11 @@ use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
-use web_aituber::{config::AppConfig, pipeline, routes, state::AppState};
+use web_aituber::{
+    config::AppConfig,
+    pipeline, routes,
+    state::{AppState, ConversationHistory},
+};
 
 const SUBMISSION_QUEUE_SIZE: usize = 100;
 const DISPLAY_EVENT_BUFFER_SIZE: usize = 128;
@@ -30,6 +34,7 @@ async fn main() -> Result<()> {
         events,
         current: Arc::new(RwLock::new(None)),
         active: Arc::new(Mutex::new(None)),
+        history: Arc::new(Mutex::new(ConversationHistory::default())),
         audio_dir: Arc::new(audio_dir.clone()),
     };
 
