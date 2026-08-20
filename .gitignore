@@ -2,3 +2,5 @@
 /config.json
 *.webm
 *.wav
+/assets/*.vrm
+/assets/motions/*.vrma
