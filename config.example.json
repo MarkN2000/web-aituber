@@ -1,0 +1,41 @@
+{
+  "bind": "127.0.0.1:3000",
+  "display_token": "イベント用に十分長いランダム文字列へ変更",
+  "llm": {
+    "api_url": "https://api.openai.com/v1/chat/completions",
+    "api_key": "ここにAPIキーを設定",
+    "model": "gpt-5.6-luna",
+    "system_prompt": "あなたはイベント会場の案内役です。各文の文頭に [neutral]、[happy]、[sad]、[angry]、[surprised] のいずれかを一つ付けて、日本語で簡潔に答えてください。"
+  },
+  "tts": {
+    "engine_url": "http://127.0.0.1:10101",
+    "speaker_id": 1878365376
+  },
+  "ffmpeg_path": "ffmpeg",
+  "character": {
+    "vrm_url": "/assets/model.vrm",
+    "idle_motions": [
+      "/assets/motions/VRMA_01.vrma",
+      "/assets/motions/VRMA_02.vrma",
+      "/assets/motions/VRMA_03.vrma"
+    ],
+    "emotion_motions": {
+      "happy": "/assets/motions/VRMA_04.vrma",
+      "sad": "/assets/motions/VRMA_05.vrma",
+      "angry": "/assets/motions/VRMA_06.vrma",
+      "surprised": "/assets/motions/VRMA_07.vrma"
+    },
+    "camera": {
+      "fov": 30.0,
+      "position": [0.0, 1.4, 2.5],
+      "target": [0.0, 1.2, 0.0]
+    },
+    "background_color": "#1b1b22",
+    "light": {
+      "color": "#ffffff",
+      "intensity": 1.5,
+      "position": [2.0, 3.0, 2.0],
+      "ambient_intensity": 0.8
+    }
+  }
+}

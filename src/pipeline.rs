@@ -1,0 +1,331 @@
+use std::{future::Future, path::PathBuf, time::Duration};
+
+use anyhow::{Result, anyhow};
+use tokio::{sync::mpsc, time::Instant};
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    audio,
+    protocol::{Emotion, ServerEvent, Submission, TurnState, TurnStatus},
+    state::{ActiveTurn, AppState},
+    tts,
+};
+
+const AUDIO_RETENTION: Duration = Duration::from_secs(300);
+
+pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
+    while let Some(submission) = submissions.recv().await {
+        if let Err(error) = process_submission(&state, submission).await {
+            tracing::error!(error = ?error, "投稿の処理に失敗しました");
+        }
+    }
+}
+
+async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
+    let cancel = CancellationToken::new();
+    {
+        let mut active = state.active.lock().await;
+        *active = Some(ActiveTurn {
+            turn_id: submission.id.clone(),
+            cancel: cancel.clone(),
+        });
+    }
+
+    publish_state(
+        state,
+        TurnState {
+            turn_id: submission.id.clone(),
+            question: submission.text.clone(),
+            status: TurnStatus::Generating,
+        },
+    )
+    .await;
+
+    let result = process_active_submission(state, &submission, &cancel).await;
+
+    {
+        let mut active = state.active.lock().await;
+        if active
+            .as_ref()
+            .is_some_and(|turn| turn.turn_id == submission.id)
+        {
+            *active = None;
+        }
+    }
+    *state.current.write().await = None;
+
+    match result {
+        Ok(audio_files) => {
+            send_event(
+                state,
+                ServerEvent::Complete {
+                    turn_id: submission.id.clone(),
+                },
+            );
+            schedule_audio_cleanup(audio_files);
+        }
+        Err(ProcessError::Cancelled(audio_files)) => {
+            send_event(
+                state,
+                ServerEvent::Cancelled {
+                    turn_id: submission.id.clone(),
+                },
+            );
+            schedule_audio_cleanup(audio_files);
+        }
+        Err(ProcessError::Failed { error, audio_files }) => {
+            tracing::error!(turn_id = %submission.id, error = ?error, "回答処理に失敗しました");
+            send_event(
+                state,
+                ServerEvent::Error {
+                    turn_id: submission.id.clone(),
+                    message: "回答または音声の生成に失敗しました".to_owned(),
+                },
+            );
+            schedule_audio_cleanup(audio_files);
+        }
+    }
+
+    send_event(state, ServerEvent::Idle);
+    Ok(())
+}
+
+async fn process_active_submission(
+    state: &AppState,
+    submission: &Submission,
+    cancel: &CancellationToken,
+) -> std::result::Result<Vec<PathBuf>, ProcessError> {
+    let mut audio_files = Vec::new();
+
+    let answer = cancellable(
+        cancel,
+        crate::llm::generate(&state.http, &state.config.llm, submission),
+    )
+    .await
+    .map_err(|error| error.with_files(audio_files.clone()))?;
+
+    let segments = split_answer(&answer);
+    if segments.is_empty() {
+        return Err(ProcessError::Failed {
+            error: anyhow!("LLMの回答が空です"),
+            audio_files,
+        });
+    }
+
+    let mut playback_deadline: Option<Instant> = None;
+    let mut motion_sent = false;
+
+    for (index, segment) in segments.iter().enumerate() {
+        let wav = cancellable(
+            cancel,
+            tts::synthesize(&state.http, &state.config.tts, &segment.text),
+        )
+        .await
+        .map_err(|error| error.with_files(audio_files.clone()))?;
+
+        let file_name = format!("{}-{index}.webm", submission.id);
+        let output_path = state.audio_dir.join(&file_name);
+        let duration_ms = cancellable(
+            cancel,
+            audio::transcode_to_opus(&state.config.ffmpeg_path, &wav, &output_path),
+        )
+        .await
+        .map_err(|error| error.with_files(audio_files.clone()))?;
+        audio_files.push(output_path);
+
+        if index == 0 {
+            publish_state(
+                state,
+                TurnState {
+                    turn_id: submission.id.clone(),
+                    question: submission.text.clone(),
+                    status: TurnStatus::Speaking,
+                },
+            )
+            .await;
+        }
+
+        let motion = if motion_sent {
+            None
+        } else {
+            state
+                .config
+                .character
+                .emotion_motions
+                .get(segment.emotion.as_str())
+                .cloned()
+                .inspect(|_| motion_sent = true)
+        };
+
+        send_event(
+            state,
+            ServerEvent::Segment {
+                turn_id: submission.id.clone(),
+                sequence: index as u32,
+                text: segment.text.clone(),
+                emotion: segment.emotion,
+                motion,
+                audio_url: format!("/audio/{file_name}"),
+                duration_ms,
+                is_last: index + 1 == segments.len(),
+            },
+        );
+
+        let now = Instant::now();
+        let playback_start = playback_deadline.map_or(now, |deadline| deadline.max(now));
+        playback_deadline = Some(playback_start + Duration::from_millis(duration_ms));
+    }
+
+    if let Some(due) = playback_deadline {
+        cancellable(cancel, async {
+            tokio::time::sleep_until(due).await;
+            Ok(())
+        })
+        .await
+        .map_err(|error| error.with_files(audio_files.clone()))?;
+    }
+
+    Ok(audio_files)
+}
+
+async fn publish_state(state: &AppState, turn: TurnState) {
+    *state.current.write().await = Some(turn.clone());
+    send_event(state, ServerEvent::State { turn });
+}
+
+fn send_event(state: &AppState, event: ServerEvent) {
+    let _ = state.events.send(event);
+}
+
+fn schedule_audio_cleanup(paths: Vec<PathBuf>) {
+    if paths.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        tokio::time::sleep(AUDIO_RETENTION).await;
+        for path in paths {
+            if let Err(error) = tokio::fs::remove_file(&path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(path = %path.display(), error = ?error, "一時音声を削除できませんでした");
+            }
+        }
+    });
+}
+
+async fn cancellable<T, F>(
+    cancel: &CancellationToken,
+    future: F,
+) -> std::result::Result<T, CancellableError>
+where
+    F: Future<Output = Result<T>>,
+{
+    tokio::select! {
+        _ = cancel.cancelled() => Err(CancellableError::Cancelled),
+        result = future => result.map_err(CancellableError::Failed),
+    }
+}
+
+enum CancellableError {
+    Cancelled,
+    Failed(anyhow::Error),
+}
+
+impl CancellableError {
+    fn with_files(self, audio_files: Vec<PathBuf>) -> ProcessError {
+        match self {
+            Self::Cancelled => ProcessError::Cancelled(audio_files),
+            Self::Failed(error) => ProcessError::Failed { error, audio_files },
+        }
+    }
+}
+
+enum ProcessError {
+    Cancelled(Vec<PathBuf>),
+    Failed {
+        error: anyhow::Error,
+        audio_files: Vec<PathBuf>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AnswerSegment {
+    text: String,
+    emotion: Emotion,
+}
+
+fn split_answer(answer: &str) -> Vec<AnswerSegment> {
+    let mut raw_segments = Vec::new();
+    let mut current = String::new();
+
+    for character in answer.chars() {
+        if character == '\r' {
+            continue;
+        }
+        current.push(character);
+        if matches!(character, '。' | '！' | '？' | '!' | '?' | '\n') {
+            if !current.trim().is_empty() {
+                raw_segments.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+        }
+    }
+    if !current.trim().is_empty() {
+        raw_segments.push(current);
+    }
+
+    raw_segments
+        .into_iter()
+        .filter_map(|raw| parse_segment(&raw))
+        .collect()
+}
+
+fn parse_segment(raw: &str) -> Option<AnswerSegment> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let (emotion, text) = if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            let tag = &rest[..end];
+            (
+                Emotion::from_tag(tag).unwrap_or_default(),
+                rest[end + 1..].trim(),
+            )
+        } else {
+            (Emotion::Neutral, trimmed)
+        }
+    } else {
+        (Emotion::Neutral, trimmed)
+    };
+
+    (!text.is_empty()).then(|| AnswerSegment {
+        text: text.to_owned(),
+        emotion,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 文と感情タグを分割する() {
+        let result = split_answer("[happy]こんにちは！\n[sad]今日は雨です。タグなしです");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].text, "こんにちは！");
+        assert_eq!(result[0].emotion, Emotion::Happy);
+        assert_eq!(result[1].text, "今日は雨です。");
+        assert_eq!(result[1].emotion, Emotion::Sad);
+        assert_eq!(result[2].emotion, Emotion::Neutral);
+    }
+
+    #[test]
+    fn 不正なタグを読み上げない() {
+        let result = split_answer("[joy]こんにちは。");
+        assert_eq!(result[0].text, "こんにちは。");
+        assert_eq!(result[0].emotion, Emotion::Neutral);
+    }
+}

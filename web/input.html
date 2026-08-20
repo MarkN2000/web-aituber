@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web AITuber | 質問</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body class="input-page">
+    <main class="input-card">
+      <p class="eyebrow">Web AITuber</p>
+      <h1>AIキャラクターへ質問</h1>
+      <p class="lead">質問を送ると、順番にキャラクターがお答えします。</p>
+
+      <form id="submission-form" novalidate>
+        <label for="text">質問</label>
+        <textarea id="text" name="text" maxlength="2000" required placeholder="質問を入力してください" rows="6"></textarea>
+        <p class="field-note"><span id="text-count">0</span> / 2000文字</p>
+
+        <label for="image">画像（任意・1枚）</label>
+        <input id="image" name="image" type="file" accept="image/*">
+
+        <button id="submit-button" type="submit">質問を送る</button>
+      </form>
+
+      <p id="submission-status" class="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="/static/js/input.js"></script>
+  </body>
+</html>
