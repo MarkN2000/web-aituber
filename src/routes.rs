@@ -78,6 +78,9 @@ async fn submit(
                 );
             }
             Some("image") if image.is_none() => {
+                if field.file_name().is_some_and(str::is_empty) {
+                    continue;
+                }
                 let mime_type = field
                     .content_type()
                     .unwrap_or("application/octet-stream")
@@ -273,21 +276,28 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
 
-    fn test_state() -> AppState {
+    fn test_state_with_receiver() -> (AppState, mpsc::Receiver<Submission>) {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         config.display_token = "test-token".to_owned();
-        let (submissions, _) = mpsc::channel(1);
+        let (submissions, receiver) = mpsc::channel(1);
         let (events, _) = broadcast::channel(1);
-        AppState {
-            config: Arc::new(config),
-            http: reqwest::Client::new(),
-            submissions,
-            events,
-            current: Arc::new(RwLock::new(None)),
-            active: Arc::new(Mutex::new(None)),
-            audio_dir: Arc::new(PathBuf::from("target/test-audio")),
-        }
+        (
+            AppState {
+                config: Arc::new(config),
+                http: reqwest::Client::new(),
+                submissions,
+                events,
+                current: Arc::new(RwLock::new(None)),
+                active: Arc::new(Mutex::new(None)),
+                audio_dir: Arc::new(PathBuf::from("target/test-audio")),
+            },
+            receiver,
+        )
+    }
+
+    fn test_state() -> AppState {
+        test_state_with_receiver().0
     }
 
     #[tokio::test]
@@ -336,5 +346,38 @@ mod tests {
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
+    }
+
+    #[tokio::test]
+    async fn empty_image_field_is_treated_as_no_image() {
+        let boundary = "test-boundary";
+        let body = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"text\"\r\n\r\n\
+             画像なしの質問\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"image\"; filename=\"\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n\r\n\
+             --{boundary}--\r\n"
+        );
+        let (state, mut submissions) = test_state_with_receiver();
+
+        let response = router(state)
+            .oneshot(
+                Request::post("/api/submissions")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let submission = submissions.recv().await.unwrap();
+        assert_eq!(submission.text, "画像なしの質問");
+        assert!(submission.image.is_none());
     }
 }

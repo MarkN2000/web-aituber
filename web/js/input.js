@@ -38,9 +38,14 @@ form.addEventListener("submit", async (event) => {
   setStatus("質問を送信しています…");
 
   try {
+    const formData = new FormData(form);
+    if (!image.files[0]) {
+      formData.delete("image");
+    }
+
     const response = await fetch("/api/submissions", {
       method: "POST",
-      body: new FormData(form),
+      body: formData,
     });
 
     if (!response.ok) {
