@@ -1,6 +1,6 @@
 {
   "bind": "127.0.0.1:3000",
-  "display_token": "イベント用に十分長いランダム文字列へ変更",
+  "admin_token": "イベント用に十分長いランダム文字列へ変更",
   "llm": {
     "api_url": "https://api.openai.com/v1/chat/completions",
     "api_key": "ここにAPIキーを設定",

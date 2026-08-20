@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
     pub bind: String,
-    pub display_token: String,
+    pub admin_token: String,
     pub llm: LlmConfig,
     pub tts: TtsConfig,
     pub ffmpeg_path: String,
@@ -116,7 +116,7 @@ impl AppConfig {
 
     fn validate(&self) -> Result<()> {
         required("bind", &self.bind)?;
-        required("display_token", &self.display_token)?;
+        required("admin_token", &self.admin_token)?;
         required("llm.api_url", &self.llm.api_url)?;
         required("llm.api_key", &self.llm.api_key)?;
         required("llm.model", &self.llm.model)?;

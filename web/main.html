@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
-  <link rel="stylesheet" href="/static/style.css?v=1">
+  <link rel="stylesheet" href="/static/style.css?v=2">
   <script type="importmap">
     {
       "imports": {
@@ -16,25 +16,44 @@
     }
   </script>
 </head>
-<body class="display-page">
+<body class="main-page">
   <main id="stage">
     <canvas id="vrm-canvas" aria-label="VRMキャラクター表示"></canvas>
     <p id="viewer-message" hidden></p>
   </main>
+
   <section id="panel" aria-live="polite">
     <p id="status">表示開始を待っています</p>
     <p id="question"></p>
     <p id="answer"></p>
   </section>
-  <button id="skip" type="button" disabled>回答を中断</button>
+
+  <aside class="main-input-panel">
+    <p class="eyebrow">Web AITuber</p>
+    <h1>質問する</h1>
+    <form id="submission-form" class="compact-form" novalidate>
+      <label for="text">質問</label>
+      <textarea id="text" name="text" maxlength="2000" required placeholder="質問を入力してください" rows="3"></textarea>
+      <p class="field-note"><span id="text-count">0</span> / 2000文字</p>
+
+      <label for="image">画像（任意・1枚）</label>
+      <input id="image" name="image" type="file" accept="image/*">
+
+      <button id="submit-button" type="submit">質問を送る</button>
+    </form>
+    <p id="submission-status" class="status" role="status" aria-live="polite"></p>
+  </aside>
+
   <section id="start-screen">
     <div id="start-card">
       <h1>Web AITuber</h1>
-      <p>音声の再生を許可して表示を開始します。</p>
-      <button id="start" type="button">表示開始</button>
+      <p>VRM表示と音声再生を開始します。</p>
+      <button id="start" type="button">表示・音声を開始</button>
       <p id="start-error" role="alert"></p>
     </div>
   </section>
-  <script type="module" src="/static/js/display.js"></script>
+
+  <script type="module" src="/static/js/main.js?v=2"></script>
+  <script type="module" src="/static/js/input.js?v=2"></script>
 </body>
 </html>

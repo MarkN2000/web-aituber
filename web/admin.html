@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web AITuber | 管理</title>
+  <link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body class="admin-page">
+  <main class="admin-card">
+    <p class="eyebrow">Web AITuber</p>
+    <h1>管理画面</h1>
+    <p class="lead">現在の回答状態を確認し、必要な場合だけ中断できます。</p>
+
+    <dl class="admin-details">
+      <div>
+        <dt>状態</dt>
+        <dd id="admin-status">サーバーへ接続中です</dd>
+      </div>
+      <div>
+        <dt>質問</dt>
+        <dd id="admin-question">—</dd>
+      </div>
+      <div>
+        <dt>回答</dt>
+        <dd id="admin-answer">—</dd>
+      </div>
+    </dl>
+
+    <button id="skip" type="button" disabled>現在の回答を中断</button>
+    <p id="admin-error" class="status" role="alert"></p>
+  </main>
+  <script type="module" src="/static/js/admin.js?v=2"></script>
+</body>
+</html>

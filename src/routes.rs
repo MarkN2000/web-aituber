@@ -12,7 +12,7 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
-    protocol::{ClientMessage, InputImage, ServerEvent, Submission},
+    protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission},
     state::AppState,
 };
 
@@ -22,10 +22,12 @@ const MAX_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(input_page))
-        .route("/display", get(display_page))
+        .route("/", get(main_page))
+        .route("/input", get(input_page))
+        .route("/admin", get(admin_page))
         .route("/api/submissions", post(submit))
         .route("/api/display-config", get(display_config))
+        .route("/api/admin/skip", post(skip))
         .route("/ws", get(websocket))
         .nest_service("/static", ServeDir::new("web"))
         .nest_service("/assets", ServeDir::new("assets"))
@@ -35,15 +37,19 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+async fn main_page() -> Response {
+    html_file("web/main.html").await
+}
+
 async fn input_page() -> Response {
     html_file("web/input.html").await
 }
 
-async fn display_page(State(state): State<AppState>, Query(auth): Query<DisplayAuth>) -> Response {
-    if !has_valid_token(&state, &auth) {
+async fn admin_page(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    html_file("web/display.html").await
+    html_file("web/admin.html").await
 }
 
 async fn html_file(path: &str) -> Response {
@@ -132,25 +138,31 @@ async fn submit(
     Ok((StatusCode::ACCEPTED, Json(SubmitResponse { id })))
 }
 
-async fn display_config(
-    State(state): State<AppState>,
-    Query(auth): Query<DisplayAuth>,
-) -> Response {
-    if !has_valid_token(&state, &auth) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
+async fn display_config(State(state): State<AppState>) -> Response {
     Json(state.config.character.clone()).into_response()
 }
 
-async fn websocket(
-    websocket: WebSocketUpgrade,
+async fn websocket(websocket: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    websocket.on_upgrade(move |socket| handle_websocket(socket, state))
+}
+
+async fn skip(
     State(state): State<AppState>,
-    Query(auth): Query<DisplayAuth>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminSkipRequest>,
 ) -> Response {
-    if !has_valid_token(&state, &auth) {
+    if !has_valid_admin_token(&state, &auth) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    websocket.on_upgrade(move |socket| handle_websocket(socket, state))
+
+    let active = state.active.lock().await;
+    if let Some(active) = active.as_ref()
+        && active.turn_id == request.turn_id
+        && !active.cancel.is_cancelled()
+    {
+        active.cancel.cancel();
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState) {
@@ -169,11 +181,6 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState)
         tokio::select! {
             incoming = receiver.next() => {
                 match incoming {
-                    Some(Ok(Message::Text(text))) => {
-                        if let Ok(message) = serde_json::from_str::<ClientMessage>(&text) {
-                            handle_client_message(&state, message).await;
-                        }
-                    }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => {}
                 }
@@ -198,20 +205,6 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState)
     }
 }
 
-async fn handle_client_message(state: &AppState, message: ClientMessage) {
-    match message {
-        ClientMessage::Skip { turn_id } => {
-            let active = state.active.lock().await;
-            if let Some(active) = active.as_ref()
-                && active.turn_id == turn_id
-                && !active.cancel.is_cancelled()
-            {
-                active.cancel.cancel();
-            }
-        }
-    }
-}
-
 async fn send_json(
     sender: &mut futures_util::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
     event: &ServerEvent,
@@ -220,12 +213,12 @@ async fn send_json(
     sender.send(Message::Text(json.into())).await
 }
 
-fn has_valid_token(state: &AppState, auth: &DisplayAuth) -> bool {
-    auth.token.as_deref() == Some(state.config.display_token.as_str())
+fn has_valid_admin_token(state: &AppState, auth: &AdminAuth) -> bool {
+    auth.token.as_deref() == Some(state.config.admin_token.as_str())
 }
 
 #[derive(Deserialize)]
-struct DisplayAuth {
+struct AdminAuth {
     token: Option<String>,
 }
 
@@ -271,6 +264,7 @@ mod tests {
 
     use axum::{body::to_bytes, http::Request};
     use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+    use tokio_util::sync::CancellationToken;
     use tower::ServiceExt;
 
     use super::*;
@@ -279,7 +273,7 @@ mod tests {
     fn test_state_with_receiver() -> (AppState, mpsc::Receiver<Submission>) {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
-        config.display_token = "test-token".to_owned();
+        config.admin_token = "test-token".to_owned();
         let (submissions, receiver) = mpsc::channel(1);
         let (events, _) = broadcast::channel(1);
         (
@@ -302,40 +296,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn input_page_is_public() {
-        let response = router(test_state())
+    async fn main_and_input_pages_are_public() {
+        let app = router(test_state());
+        let main = app
+            .clone()
             .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(main.status(), StatusCode::OK);
+
+        let input = app
+            .oneshot(Request::get("/input").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(input.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_page_requires_token() {
+        let app = router(test_state());
+        let unauthorized = app
+            .clone()
+            .oneshot(Request::get("/admin").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router(test_state())
+            .oneshot(
+                Request::get("/admin?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn display_page_requires_token() {
-        let app = router(test_state());
-        let unauthorized = app
-            .clone()
-            .oneshot(Request::get("/display").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
-
-        let authorized = app
-            .oneshot(
-                Request::get("/display?token=test-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(authorized.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn display_config_does_not_expose_secrets() {
+    async fn display_config_is_public_and_does_not_expose_secrets() {
         let response = router(test_state())
             .oneshot(
-                Request::get("/api/display-config?token=test-token")
+                Request::get("/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -347,6 +349,43 @@ mod tests {
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
+    }
+
+    #[tokio::test]
+    async fn admin_skip_requires_token_and_cancels_matching_turn() {
+        let state = test_state();
+        let cancel = CancellationToken::new();
+        *state.active.lock().await = Some(crate::state::ActiveTurn {
+            turn_id: "turn-1".to_owned(),
+            cancel: cancel.clone(),
+        });
+        let app = router(state);
+        let request_body = r#"{"turn_id":"turn-1"}"#;
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/skip")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert!(!cancel.is_cancelled());
+
+        let authorized = app
+            .oneshot(
+                Request::post("/api/admin/skip?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), StatusCode::NO_CONTENT);
+        assert!(cancel.is_cancelled());
     }
 
     #[tokio::test]

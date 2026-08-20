@@ -20,11 +20,13 @@ src/
 
 web/
 ├─ input.html
-├─ display.html
+├─ main.html
+├─ admin.html
 ├─ style.css
 └─ js/
    ├─ input.js
-   ├─ display.js
+   ├─ main.js
+   ├─ admin.js
    ├─ audio-queue.js
    ├─ vrm-viewer.js
    └─ motion.js
@@ -36,9 +38,9 @@ assets/
    └─ その他の待機・感情モーション
 ```
 
-実際の設定は、`config.example.json`を複製した`config.json`に記載する。`config.json`にはAPIキーと表示用トークンを含むため、Gitの管理対象にしない。
+実際の設定は、`config.example.json`を複製した`config.json`に記載する。`config.json`にはAPIキーと管理用トークンを含むため、Gitの管理対象にしない。
 
-バックエンドはHTTP・WebSocketから `pipeline` を呼び出し、`pipeline` が `llm`、`tts`、`audio` の処理順序を管理する。フロントエンドの `display` は、音声再生、VRM表示、モーションを各モジュールへ委譲する。
+バックエンドはHTTP・WebSocketから `pipeline` を呼び出し、`pipeline` が `llm`、`tts`、`audio` の処理順序を管理する。フロントエンドの `main` は、音声再生、VRM表示、モーションを各モジュールへ委譲する。
 
 ## 分割方針
 
@@ -55,4 +57,4 @@ assets/
 - WAVからWebM/Opusへの変換にはFFmpegを使用する。
 - VRMモデルは `assets/model.vrm` に配置する。
 - VRMAは `assets/motions/` に配置する。
-- 表示画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。
+- メイン画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。

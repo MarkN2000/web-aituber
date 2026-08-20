@@ -94,9 +94,8 @@ pub enum ServerEvent {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClientMessage {
-    Skip { turn_id: String },
+pub struct AdminSkipRequest {
+    pub turn_id: String,
 }
 
 #[cfg(test)]
