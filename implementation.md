@@ -5,6 +5,9 @@
 開始時点では以下を目安とする。
 
 ```text
+.github/
+└─ workflows/
+   └─ release.yml
 Cargo.toml
 config.example.json
 src/

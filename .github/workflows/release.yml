@@ -1,0 +1,100 @@
+name: リリース
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.display_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - display_name: Windows x64
+            os: windows-latest
+            artifact_name: windows-x64
+            package_name: web-aituber-windows-x64.zip
+          - display_name: Linux x64
+            os: ubuntu-latest
+            artifact_name: linux-x64
+            package_name: web-aituber-linux-x64.tar.gz
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: ソースを取得
+        uses: actions/checkout@v6
+
+      - name: Rustバージョンを確認
+        run: rustc --version
+
+      - name: テスト
+        run: cargo test --locked
+
+      - name: 静的解析
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: リリースビルド
+        run: cargo build --release --locked
+
+      - name: Windows版をパッケージ
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageRoot = "dist/web-aituber-windows-x64"
+          New-Item -ItemType Directory -Path "$packageRoot/assets/motions" -Force | Out-Null
+          Copy-Item -LiteralPath "target/release/web-aituber.exe" -Destination $packageRoot
+          Copy-Item -LiteralPath "web" -Destination $packageRoot -Recurse
+          Copy-Item -LiteralPath "assets/README.md" -Destination "$packageRoot/assets"
+          Copy-Item -LiteralPath "config.example.json" -Destination $packageRoot
+          Copy-Item -LiteralPath "README.md" -Destination $packageRoot
+          Compress-Archive -Path $packageRoot -DestinationPath "dist/web-aituber-windows-x64.zip"
+
+      - name: Linux版をパッケージ
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package_root="dist/web-aituber-linux-x64"
+          mkdir -p "$package_root/assets/motions"
+          cp "target/release/web-aituber" "$package_root/"
+          chmod +x "$package_root/web-aituber"
+          cp -R "web" "$package_root/"
+          cp "assets/README.md" "$package_root/assets/"
+          cp "config.example.json" "$package_root/"
+          cp "README.md" "$package_root/"
+          tar -C dist -czf "web-aituber-linux-x64.tar.gz" "web-aituber-linux-x64"
+
+      - name: 配布物を保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.package_name }}
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Releaseへ公開
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 配布物を取得
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: リリースを作成
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/*/* --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
