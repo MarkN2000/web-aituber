@@ -150,10 +150,6 @@ input[type="file"]::file-selector-button {
   line-height: 1.5;
 }
 
-.status[data-kind="success"] {
-  color: #26734d;
-}
-
 .status[data-kind="error"] {
   color: #b3261e;
 }
@@ -185,21 +181,36 @@ input[type="file"]::file-selector-button {
   color: #202020;
 }
 
-#status {
-  margin: 0 0 8px;
-  color: #707070;
-  font-size: .9rem;
-}
-
-#question {
-  margin: 0 0 8px;
-  font-weight: 700;
-}
-
 #answer {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.6;
+}
+
+.answer-loader {
+  display: grid;
+  min-height: 32px;
+  place-items: center;
+}
+
+.answer-spinner,
+.composer-send-loader {
+  border: 2px solid rgb(0 0 0 / 18%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: loading-spin 700ms linear infinite;
+}
+
+.answer-spinner {
+  width: 22px;
+  height: 22px;
+  color: #505050;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .main-bottom {
@@ -286,6 +297,21 @@ input[type="file"]::file-selector-button {
   stroke-linejoin: round;
 }
 
+.composer-send-loader {
+  display: none;
+  width: 20px;
+  height: 20px;
+  color: #fff;
+}
+
+.composer-send-button[data-loading="true"] .composer-send-icon {
+  display: none;
+}
+
+.composer-send-button[data-loading="true"] .composer-send-loader {
+  display: block;
+}
+
 .composer-status {
   width: fit-content;
   max-width: 100%;
@@ -301,10 +327,6 @@ input[type="file"]::file-selector-button {
 
 .composer-status:empty {
   display: none;
-}
-
-.composer-status[data-kind="success"] {
-  color: #26734d;
 }
 
 .composer-status[data-kind="error"] {

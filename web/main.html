@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=4">
   <link rel="stylesheet" href="/static/history.css?v=2">
   <script type="importmap">
     {
@@ -29,9 +29,11 @@
 
   <div class="main-bottom">
     <section id="panel" aria-live="polite" hidden>
-      <p id="status"></p>
-      <p id="question"></p>
-      <p id="answer"></p>
+      <div id="answer-loader" class="answer-loader" role="status">
+        <span class="answer-spinner" aria-hidden="true"></span>
+        <span class="visually-hidden">回答を生成中です</span>
+      </div>
+      <p id="answer" hidden></p>
     </section>
 
     <p id="submission-status" class="composer-status" role="status" aria-live="polite"></p>
@@ -57,10 +59,11 @@
       <span id="text-count" class="visually-hidden">0</span>
 
       <button id="submit-button" class="composer-send-button" type="submit" aria-label="質問を送る" title="質問を送る">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="composer-send-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="m3.5 4.5 17 7.5-17 7.5 3-7.5z"></path>
           <path d="M6.5 12h14"></path>
         </svg>
+        <span class="composer-send-loader" aria-hidden="true"></span>
       </button>
     </form>
   </div>
@@ -74,7 +77,7 @@
     </div>
   </section>
 
-  <script type="module" src="/static/js/main.js?v=4"></script>
-  <script type="module" src="/static/js/input.js?v=3"></script>
+  <script type="module" src="/static/js/main.js?v=5"></script>
+  <script type="module" src="/static/js/input.js?v=4"></script>
 </body>
 </html>

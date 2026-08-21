@@ -10,9 +10,9 @@ const elements = {
   canvas: document.querySelector("#vrm-canvas"),
   viewerMessage: document.querySelector("#viewer-message"),
   panel: document.querySelector("#panel"),
-  status: document.querySelector("#status"),
-  question: document.querySelector("#question"),
+  loader: document.querySelector("#answer-loader"),
   answer: document.querySelector("#answer"),
+  notice: document.querySelector("#submission-status"),
   history: document.querySelector("#conversation-history"),
   historyList: document.querySelector("#history-list"),
 };
@@ -28,8 +28,9 @@ let motionPlayedForTurn;
 let reconnectTimer;
 const receivedTurns = new Set();
 
-function setStatus(message) {
-  elements.status.textContent = message;
+function showError(message) {
+  elements.notice.textContent = message;
+  elements.notice.dataset.kind = "error";
 }
 
 function showViewerMessage(message = "") {
@@ -38,12 +39,23 @@ function showViewerMessage(message = "") {
 }
 
 function setTurn(turn) {
+  const isNewTurn = turn?.turn_id !== currentTurn?.turn_id;
   currentTurn = turn;
-  elements.panel.hidden = !turn;
-  elements.question.textContent = turn ? `質問: ${turn.question}` : "";
   if (!turn) {
     elements.answer.textContent = "";
+    elements.answer.hidden = true;
+    elements.loader.hidden = true;
+    elements.panel.hidden = true;
+    return;
   }
+
+  if (isNewTurn) {
+    elements.answer.textContent = "";
+  }
+  const hasAnswer = Boolean(elements.answer.textContent);
+  elements.answer.hidden = !hasAnswer;
+  elements.loader.hidden = hasAnswer;
+  elements.panel.hidden = false;
 }
 
 function setEmotion(value) {
@@ -56,29 +68,22 @@ function cleanTurn(turnId) {
   setEmotion("neutral");
   viewer?.resumeIdle();
   setTurn(undefined);
-  setStatus("次の質問を待っています");
 }
 
 function connect() {
   if (!started) return;
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(`${scheme}//${window.location.host}/ws`);
-  setStatus("サーバーへ接続中です");
-
-  socket.addEventListener("open", () => {
-    setStatus(currentTurn ? "回答を受信中です" : "次の質問を待っています");
-  });
   socket.addEventListener("message", (event) => {
     try {
       handleServerEvent(JSON.parse(event.data));
     } catch (error) {
       console.error("表示イベントを処理できませんでした", error);
-      setStatus("表示イベントの処理に失敗しました");
+      showError("表示の更新に失敗しました。ページを再読み込みしてください。");
     }
   });
   socket.addEventListener("close", () => {
     if (!started) return;
-    setStatus("接続が切れました。再接続しています");
     window.clearTimeout(reconnectTimer);
     reconnectTimer = window.setTimeout(connect, 2000);
   });
@@ -97,10 +102,8 @@ function handleServerEvent(event) {
       }
       if (event.current) {
         setTurn(event.current);
-        setStatus(event.current.status === "generating" ? "回答を生成中です" : "回答を受信中です");
       } else {
         setTurn(undefined);
-        setStatus("次の質問を待っています");
       }
       break;
     case "history":
@@ -118,15 +121,12 @@ function handleServerEvent(event) {
         motionPlayedForTurn = undefined;
       }
       setTurn(event.turn);
-      setStatus(event.turn.status === "generating" ? "回答を生成中です" : "回答を受信中です");
       break;
     case "segment":
       receiveSegment(event);
       break;
     case "complete":
-      if (receivedTurns.has(event.turn_id)) {
-        setStatus("回答を再生中です");
-      } else {
+      if (!receivedTurns.has(event.turn_id)) {
         cleanTurn(event.turn_id);
       }
       break;
@@ -139,12 +139,11 @@ function handleServerEvent(event) {
       queue.cancelTurn(event.turn_id);
       receivedTurns.delete(event.turn_id);
       if (currentTurn?.turn_id === event.turn_id) {
-        setStatus(`回答を続けられませんでした: ${event.message}`);
-        setEmotion("neutral");
+        showError(event.message || "回答の生成に失敗しました。");
+        cleanTurn(event.turn_id);
       }
       break;
     case "idle":
-      if (!currentTurn) setStatus("次の質問を待っています");
       break;
     default:
       console.warn("未対応の表示イベントです", event);
@@ -164,8 +163,9 @@ function receiveSegment(segment) {
     elements.answer.textContent = "";
     motionPlayedForTurn = undefined;
   }
+  elements.loader.hidden = true;
+  elements.answer.hidden = false;
   elements.answer.textContent += segment.text;
-  setStatus("回答を再生中です");
   queue.enqueue({
     url: segment.audio_url,
     turnId: segment.turn_id,
@@ -197,7 +197,7 @@ async function startMain() {
     queue = new AudioQueue({
       onStart: onAudioStart,
       onEnd: onAudioEnd,
-      onError: () => setStatus("音声を再生できませんでした"),
+      onError: () => showError("音声を再生できませんでした。"),
     });
     await queue.unlock();
 

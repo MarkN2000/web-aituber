@@ -12,23 +12,20 @@ const imageRemove = document.querySelector("#image-remove");
 
 let isSubmitting = false;
 let previewUrl;
-let statusTimer;
 
-function setStatus(message, kind = "", autoClear = false) {
-  window.clearTimeout(statusTimer);
+function setStatus(message, kind = "") {
   status.textContent = message;
   status.dataset.kind = kind;
-
-  if (autoClear) {
-    statusTimer = window.setTimeout(() => {
-      status.textContent = "";
-      status.dataset.kind = "";
-    }, 4000);
-  }
 }
 
 function updateSubmitState() {
   submitButton.disabled = isSubmitting || !text.value.trim();
+  submitButton.dataset.loading = String(isSubmitting);
+  if (submitButton.classList.contains("composer-send-button")) {
+    const label = isSubmitting ? "質問を送信中" : "質問を送る";
+    submitButton.setAttribute("aria-label", label);
+    submitButton.title = label;
+  }
 }
 
 function updateTextCount() {
@@ -88,7 +85,7 @@ form.addEventListener("submit", async (event) => {
 
   isSubmitting = true;
   updateSubmitState();
-  setStatus("質問を送信しています…");
+  setStatus("");
 
   try {
     const formData = new FormData(form);
@@ -109,7 +106,7 @@ form.addEventListener("submit", async (event) => {
     form.reset();
     updateTextCount();
     updateImagePreview();
-    setStatus("受け付けました。順番にお答えします。", "success", true);
+    setStatus("");
   } catch (error) {
     console.error(error);
     setStatus(error.message || "送信に失敗しました。通信を確認して、もう一度お試しください。", "error");
@@ -120,7 +117,6 @@ form.addEventListener("submit", async (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
-  window.clearTimeout(statusTimer);
   if (previewUrl) URL.revokeObjectURL(previewUrl);
 });
 
