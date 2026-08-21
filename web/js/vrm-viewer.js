@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
 import { isEmotion } from './motion.js';
+import { LipSyncAnalyzer } from './lip-sync.js';
 
 export class VrmViewer {
   constructor(canvas, report) {
@@ -20,6 +21,7 @@ export class VrmViewer {
     this.emotionClips = new Map();
     this.currentAction = undefined;
     this.currentExpression = 'neutral';
+    this.lipSync = new LipSyncAnalyzer();
     this.blinkTimer = 2 + Math.random() * 3;
     this.blinkTime = 0;
     this.frame = this.frame.bind(this);
@@ -159,24 +161,21 @@ export class VrmViewer {
   }
 
   startLipSync(analyser) {
-    this.analyser = analyser;
-    this.frequencyData = new Uint8Array(analyser.frequencyBinCount);
+    this.lipSync.start(analyser);
   }
 
   stopLipSync() {
-    this.analyser = undefined;
-    this.setExpressionValue('aa', 0);
+    this.applyMouthWeights(this.lipSync.stop());
   }
 
-  updateLipSync() {
-    if (!this.analyser || !this.frequencyData) return;
-    this.analyser.getByteFrequencyData(this.frequencyData);
-    let total = 0;
-    for (const value of this.frequencyData) total += value;
-    const average = total / (this.frequencyData.length * 255);
-    const target = THREE.MathUtils.clamp((average - 0.015) * 7, 0, 1);
-    this.mouthValue = THREE.MathUtils.lerp(this.mouthValue || 0, target, 0.35);
-    this.setExpressionValue('aa', this.mouthValue);
+  updateLipSync(delta) {
+    this.applyMouthWeights(this.lipSync.update(delta));
+  }
+
+  applyMouthWeights(weights) {
+    for (const [vowel, value] of Object.entries(weights)) {
+      this.setExpressionValue(vowel, value);
+    }
   }
 
   updateBlink(delta) {
@@ -197,7 +196,7 @@ export class VrmViewer {
     const delta = Math.min(this.clock.getDelta(), 0.1);
     this.mixer?.update(delta);
     this.updateBlink(delta);
-    this.updateLipSync();
+    this.updateLipSync(delta);
     this.vrm?.update(delta);
     this.renderer.render(this.scene, this.camera);
   }
