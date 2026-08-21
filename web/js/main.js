@@ -1,6 +1,7 @@
 import { AudioQueue } from "./audio-queue.js";
 import { ConversationHistory } from "./history.js";
 import { isEmotion } from "./motion.js";
+import { createSourceButton, SourceDialog } from "./sources.js";
 import { VrmViewer } from "./vrm-viewer.js";
 
 const elements = {
@@ -12,12 +13,21 @@ const elements = {
   panel: document.querySelector("#panel"),
   loader: document.querySelector("#answer-loader"),
   answer: document.querySelector("#answer"),
+  answerText: document.querySelector("#answer-text"),
   notice: document.querySelector("#submission-status"),
   history: document.querySelector("#conversation-history"),
   historyList: document.querySelector("#history-list"),
+  sourceDialog: document.querySelector("#source-dialog"),
+  sourceList: document.querySelector("#source-list"),
+  sourceClose: document.querySelector("#source-close"),
 };
 
-const historyView = new ConversationHistory(elements.history, elements.historyList);
+const sourceDialog = new SourceDialog(elements.sourceDialog, elements.sourceList, elements.sourceClose);
+const historyView = new ConversationHistory(
+  elements.history,
+  elements.historyList,
+  (sources) => sourceDialog.open(sources),
+);
 
 let viewer;
 let queue;
@@ -27,6 +37,19 @@ let currentTurn;
 let motionPlayedForTurn;
 let reconnectTimer;
 const receivedTurns = new Set();
+let currentSourceButton;
+
+function clearAnswer() {
+  elements.answerText.textContent = "";
+  currentSourceButton?.remove();
+  currentSourceButton = undefined;
+}
+
+function showCurrentSources(sources) {
+  currentSourceButton?.remove();
+  currentSourceButton = createSourceButton(sources, (links) => sourceDialog.open(links));
+  if (currentSourceButton) elements.answer.append(currentSourceButton);
+}
 
 function showError(message) {
   elements.notice.textContent = message;
@@ -42,7 +65,7 @@ function setTurn(turn) {
   const isNewTurn = turn?.turn_id !== currentTurn?.turn_id;
   currentTurn = turn;
   if (!turn) {
-    elements.answer.textContent = "";
+    clearAnswer();
     elements.answer.hidden = true;
     elements.loader.hidden = true;
     elements.panel.hidden = true;
@@ -50,9 +73,9 @@ function setTurn(turn) {
   }
 
   if (isNewTurn) {
-    elements.answer.textContent = "";
+    clearAnswer();
   }
-  const hasAnswer = Boolean(elements.answer.textContent);
+  const hasAnswer = Boolean(elements.answerText.textContent);
   elements.answer.hidden = !hasAnswer;
   elements.loader.hidden = hasAnswer;
   elements.panel.hidden = false;
@@ -117,7 +140,7 @@ function handleServerEvent(event) {
           viewer.stopLipSync();
           setEmotion("neutral");
         }
-        elements.answer.textContent = "";
+        clearAnswer();
         motionPlayedForTurn = undefined;
       }
       setTurn(event.turn);
@@ -160,12 +183,16 @@ function receiveSegment(segment) {
     viewer.stopLipSync();
     setEmotion("neutral");
     setTurn({ turn_id: segment.turn_id, question: "" });
-    elements.answer.textContent = "";
+    clearAnswer();
     motionPlayedForTurn = undefined;
   }
-  elements.loader.hidden = true;
-  elements.answer.hidden = false;
-  elements.answer.textContent += segment.text;
+  const isFiller = segment.kind === "filler";
+  if (!isFiller) {
+    elements.loader.hidden = true;
+    elements.answer.hidden = false;
+    elements.answerText.textContent += segment.text;
+    if (segment.is_last) showCurrentSources(segment.sources);
+  }
   queue.enqueue({
     url: segment.audio_url,
     turnId: segment.turn_id,
@@ -177,9 +204,9 @@ function receiveSegment(segment) {
 
 function onAudioStart(item, analyser) {
   const segment = item.meta;
-  setEmotion(segment.emotion);
+  setEmotion(segment.kind === "filler" ? "neutral" : segment.emotion);
   viewer.startLipSync(analyser);
-  if (motionPlayedForTurn !== segment.turn_id && segment.motion && isEmotion(segment.emotion)) {
+  if (segment.kind !== "filler" && motionPlayedForTurn !== segment.turn_id && segment.motion && isEmotion(segment.emotion)) {
     motionPlayedForTurn = segment.turn_id;
     viewer.playEmotionMotion(segment.emotion);
   }

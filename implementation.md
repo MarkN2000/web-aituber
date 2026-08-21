@@ -27,6 +27,7 @@ web/
 └─ js/
    ├─ input.js
    ├─ image-compression.js
+   ├─ sources.js
    ├─ main.js
    ├─ admin.js
    ├─ history.js
@@ -62,3 +63,4 @@ assets/
 - VRMモデルは `assets/model.vrm` に配置する。
 - VRMAは `assets/motions/` に配置する。
 - メイン画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。
+- LLMはResponses APIのWeb検索開始イベントだけをフィラー生成の合図にし、最終回答は1回だけ処理する。

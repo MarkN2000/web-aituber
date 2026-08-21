@@ -69,6 +69,7 @@ function handleServerEvent(event) {
     case "history":
       break;
     case "segment":
+      if (event.kind === "filler") break;
       if (currentTurn?.turn_id !== event.turn_id) {
         setCurrentTurn({ turn_id: event.turn_id, question: "" });
         elements.answer.textContent = "";

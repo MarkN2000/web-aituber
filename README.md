@@ -7,7 +7,7 @@
 - Rust
 - FFmpeg（PATHに追加するか、設定で実行ファイルの絶対パスを指定）
 - VOICEVOXまたはAivisSpeech Engine
-- テキスト・画像入力対応のOpenAI Chat Completions互換API
+- テキスト・画像入力・Web検索対応のOpenAI Responses API
 - `assets/model.vrm`
 - `assets/motions/*.vrma`（待機・感情モーション）
 
@@ -17,7 +17,9 @@
 2. LLM、TTS、管理用トークン、キャラクター設定を編集する。
 3. VRMとVRMAを設定したパスへ配置する。
 
-`llm.api_url`にはChat Completions互換エンドポイントの完全なURLを指定します。`ffmpeg_path`は通常`ffmpeg`のままで構いません。PATHにない場合は`ffmpeg.exe`の絶対パスを指定してください。
+`llm.api_url`にはResponses APIエンドポイントの完全なURLを指定します。OpenAIでは`https://api.openai.com/v1/responses`です。`llm.search_filler`はWeb検索を開始した場合だけ読み上げる短い文です。`ffmpeg_path`は通常`ffmpeg`のままで構いません。PATHにない場合は`ffmpeg.exe`の絶対パスを指定してください。
+
+Web検索の使用はLLMが質問内容から判断します。検索時も最終回答は1回だけ表示・読み上げし、回答末尾の地球儀アイコンから出典URLを確認できます。
 
 AivisSpeechを使用する場合、通常の接続先は`http://127.0.0.1:10101`です。`speaker_id`には、AivisSpeech Engineの`GET /speakers`で確認できる使用モデル・スタイルのIDを指定します。
 

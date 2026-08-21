@@ -1,7 +1,10 @@
+import { createSourceButton } from "./sources.js";
+
 export class ConversationHistory {
-  constructor(root, list) {
+  constructor(root, list, onOpenSources) {
     this.root = root;
     this.list = list;
+    this.onOpenSources = onOpenSources;
     this.hasRendered = false;
   }
 
@@ -11,7 +14,7 @@ export class ConversationHistory {
     const fragment = document.createDocumentFragment();
 
     for (const turn of turns) {
-      fragment.append(createTurn(turn));
+      fragment.append(createTurn(turn, this.onOpenSources));
     }
 
     this.list.replaceChildren(fragment);
@@ -26,7 +29,7 @@ export class ConversationHistory {
   }
 }
 
-function createTurn(turn) {
+function createTurn(turn, onOpenSources) {
   const article = document.createElement("article");
   article.className = "history-turn";
   article.dataset.turnId = turn.turn_id;
@@ -43,6 +46,8 @@ function createTurn(turn) {
   answer.className = "history-message history-message-ai";
   answer.setAttribute("aria-label", "AIの回答");
   answer.textContent = turn.answer;
+  const sourceButton = createSourceButton(turn.sources, onOpenSources);
+  if (sourceButton) answer.append(sourceButton);
 
   article.append(question, answer);
   return article;

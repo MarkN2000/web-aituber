@@ -88,16 +88,14 @@ fn build_request(
         "input": input,
         "tools": [{ "type": "web_search", "search_context_size": "low" }],
         "tool_choice": "auto",
+        "include": ["web_search_call.action.sources"],
         "store": false,
         "stream": true
     })
 }
 
 fn input_message(role: &str, text: &str) -> Value {
-    json!({
-        "role": role,
-        "content": [{ "type": "input_text", "text": text }]
-    })
+    json!({ "role": role, "content": text })
 }
 
 async fn read_stream(
@@ -120,10 +118,10 @@ async fn read_stream(
                 serde_json::from_str(&data).context("LLM API のストリーム応答を解釈できません")?;
             let event_type = event["type"].as_str().unwrap_or_default();
 
-            if is_web_search_event(event_type, &event) {
-                if let Some(sender) = search_started.take() {
-                    let _ = sender.send(());
-                }
+            if is_web_search_event(event_type, &event)
+                && let Some(sender) = search_started.take()
+            {
+                let _ = sender.send(());
             }
 
             match event_type {
@@ -210,6 +208,16 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
     let mut sources = Vec::new();
 
     for item in response["output"].as_array().into_iter().flatten() {
+        if item["type"].as_str() == Some("web_search_call") {
+            for source in item
+                .pointer("/action/sources")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                push_source(&mut sources, source);
+            }
+        }
         if item["type"].as_str() != Some("message") {
             continue;
         }
@@ -234,22 +242,7 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
                 if annotation["type"].as_str() != Some("url_citation") {
                     continue;
                 }
-                let Some(url) = annotation["url"].as_str().filter(|url| is_web_url(url)) else {
-                    continue;
-                };
-                if sources.iter().any(|source: &SourceLink| source.url == url) {
-                    continue;
-                }
-                let title = annotation["title"]
-                    .as_str()
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or(url)
-                    .trim()
-                    .to_owned();
-                sources.push(SourceLink {
-                    title,
-                    url: url.to_owned(),
-                });
+                push_source(&mut sources, annotation);
             }
         }
     }
@@ -258,6 +251,28 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
         answer: answer_parts.join("\n"),
         sources,
     })
+}
+
+fn push_source(sources: &mut Vec<SourceLink>, source: &Value) {
+    if sources.len() == MAX_SOURCES {
+        return;
+    }
+    let Some(url) = source["url"].as_str().filter(|url| is_web_url(url)) else {
+        return;
+    };
+    if sources.iter().any(|source| source.url == url) {
+        return;
+    }
+    let title = source["title"]
+        .as_str()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(url)
+        .trim()
+        .to_owned();
+    sources.push(SourceLink {
+        title,
+        url: url.to_owned(),
+    });
 }
 
 fn strip_citations(text: &str, annotations: &[Value]) -> String {
@@ -347,6 +362,7 @@ mod tests {
         assert_eq!(request["model"], "gpt-5.6-luna");
         assert_eq!(request["tools"][0]["type"], "web_search");
         assert_eq!(request["tool_choice"], "auto");
+        assert_eq!(request["include"][0], "web_search_call.action.sources");
         assert_eq!(request["stream"], true);
         assert_eq!(request["store"], false);
         assert!(
@@ -356,8 +372,9 @@ mod tests {
                 .contains("現在日時（日本時間）: 2026-08-07T03:00:00+09:00")
         );
         assert_eq!(request["input"][0]["role"], "user");
-        assert_eq!(request["input"][0]["content"][0]["text"], "前の質問");
+        assert_eq!(request["input"][0]["content"], "前の質問");
         assert_eq!(request["input"][1]["role"], "assistant");
+        assert_eq!(request["input"][1]["content"], "前の回答");
         assert_eq!(request["input"][2]["content"][0]["text"], "今回の質問");
         assert_eq!(request["input"][2]["content"][1]["type"], "input_image");
         assert_eq!(request["input"][2]["content"][1]["detail"], "low");
@@ -367,6 +384,14 @@ mod tests {
     fn extracts_answer_and_unique_sources_without_inline_citation() {
         let response = json!({
             "output": [{
+                "type": "web_search_call",
+                "action": {
+                    "sources": [{
+                        "url": "https://example.com/consulted",
+                        "title": "参照ページ"
+                    }]
+                }
+            }, {
                 "type": "message",
                 "content": [{
                     "type": "output_text",
@@ -390,8 +415,9 @@ mod tests {
 
         let result = extract_response(&response).unwrap();
         assert_eq!(result.answer, "最新情報です。");
-        assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].title, "ニュース");
+        assert_eq!(result.sources.len(), 2);
+        assert_eq!(result.sources[0].title, "参照ページ");
+        assert_eq!(result.sources[1].title, "ニュース");
     }
 
     #[test]
