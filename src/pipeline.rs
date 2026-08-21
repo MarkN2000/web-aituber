@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio,
+    config::AppConfig,
     protocol::{
         ConversationTurn, Emotion, SegmentKind, ServerEvent, SourceLink, Submission, TurnState,
         TurnStatus,
@@ -25,6 +26,7 @@ pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
 }
 
 async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
+    let config = state.config.current();
     let cancel = CancellationToken::new();
     {
         let mut active = state.active.lock().await;
@@ -44,7 +46,7 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
     )
     .await;
 
-    let result = process_active_submission(state, &submission, &cancel).await;
+    let result = process_active_submission(state, &config, &submission, &cancel).await;
 
     {
         let mut active = state.active.lock().await;
@@ -107,6 +109,7 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
 
 async fn process_active_submission(
     state: &AppState,
+    config: &AppConfig,
     submission: &Submission,
     cancel: &CancellationToken,
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
@@ -118,7 +121,7 @@ async fn process_active_submission(
     let (search_sender, mut search_started) = tokio::sync::oneshot::channel();
     let llm = crate::llm::generate(
         &state.http,
-        &state.config.llm,
+        &config.llm,
         submission,
         &history,
         search_sender,
@@ -135,10 +138,10 @@ async fn process_active_submission(
             if search.is_ok() {
                 let file_name = format!("{}-search.webm", submission.id);
                 let output_path = state.audio_dir.join(&file_name);
-                let filler = state.next_search_filler();
+                let filler = state.next_search_filler(&config.llm.search_fillers);
                 match cancellable(
                     cancel,
-                    prepare_search_filler(state, filler, &output_path),
+                    prepare_search_filler(state, config, filler, &output_path),
                 ).await {
                     Ok(duration_ms) => {
                         audio_files.push(output_path);
@@ -192,7 +195,7 @@ async fn process_active_submission(
     for (index, segment) in segments.iter().enumerate() {
         let wav = cancellable(
             cancel,
-            tts::synthesize(&state.http, &state.config.tts, &segment.text),
+            tts::synthesize(&state.http, &config.tts, &segment.text),
         )
         .await
         .map_err(|error| error.with_files(audio_files.clone()))?;
@@ -201,7 +204,7 @@ async fn process_active_submission(
         let output_path = state.audio_dir.join(&file_name);
         let duration_ms = cancellable(
             cancel,
-            audio::transcode_to_opus(&state.config.ffmpeg_path, &wav, &output_path),
+            audio::transcode_to_opus(&config.ffmpeg_path, &wav, &output_path),
         )
         .await
         .map_err(|error| error.with_files(audio_files.clone()))?;
@@ -222,8 +225,7 @@ async fn process_active_submission(
         let motion = if motion_sent {
             None
         } else {
-            state
-                .config
+            config
                 .character
                 .emotion_motions
                 .get(segment.emotion.as_str())
@@ -274,11 +276,12 @@ async fn process_active_submission(
 
 async fn prepare_search_filler(
     state: &AppState,
+    config: &AppConfig,
     filler: &str,
     output_path: &std::path::Path,
 ) -> Result<u64> {
-    let wav = tts::synthesize(&state.http, &state.config.tts, filler).await?;
-    audio::transcode_to_opus(&state.config.ffmpeg_path, &wav, output_path).await
+    let wav = tts::synthesize(&state.http, &config.tts, filler).await?;
+    audio::transcode_to_opus(&config.ffmpeg_path, &wav, output_path).await
 }
 
 async fn publish_state(state: &AppState, turn: TurnState) {

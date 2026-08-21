@@ -5,6 +5,8 @@ const elements = {
   question: document.querySelector("#admin-question"),
   answer: document.querySelector("#admin-answer"),
   skip: document.querySelector("#skip"),
+  reloadConfig: document.querySelector("#reload-config"),
+  configStatus: document.querySelector("#admin-config-status"),
   error: document.querySelector("#admin-error"),
 };
 
@@ -127,6 +129,33 @@ async function skipCurrentTurn() {
   }
 }
 
+async function reloadConfig() {
+  if (!token) return;
+  elements.reloadConfig.disabled = true;
+  elements.reloadConfig.textContent = "再読み込み中…";
+  elements.configStatus.textContent = "";
+  elements.error.textContent = "";
+
+  try {
+    const response = await fetch(`/api/admin/reload-config?token=${encodeURIComponent(token)}`, {
+      method: "POST",
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || `設定の再読み込みに失敗しました (${response.status})`);
+    }
+    elements.configStatus.textContent = result.restart_required
+      ? "設定を再読み込みしました。待受アドレスとポートの変更は、サーバー再起動後に反映されます。"
+      : "設定を再読み込みしました。次に処理を開始する質問から反映されます。";
+  } catch (error) {
+    console.error(error);
+    elements.error.textContent = error.message || "設定の再読み込みに失敗しました。";
+  } finally {
+    elements.reloadConfig.disabled = false;
+    elements.reloadConfig.textContent = "設定を再読み込み";
+  }
+}
+
 if (!token) {
   elements.error.textContent = "管理用トークンが指定されていません。";
 } else {
@@ -134,6 +163,7 @@ if (!token) {
 }
 
 elements.skip.addEventListener("click", skipCurrentTurn);
+elements.reloadConfig.addEventListener("click", reloadConfig);
 window.addEventListener("beforeunload", () => {
   window.clearTimeout(reconnectTimer);
   socket?.close();

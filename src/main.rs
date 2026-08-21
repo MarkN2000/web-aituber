@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 use web_aituber::{
-    config::AppConfig,
+    config::ConfigStore,
     pipeline, routes,
     state::{AppState, ConversationHistory, SearchFillerRotation},
 };
@@ -21,8 +21,12 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let config = Arc::new(AppConfig::load()?);
-    let bind: SocketAddr = config.bind.parse().context("bindの形式が不正です")?;
+    let config = ConfigStore::load()?;
+    let bind: SocketAddr = config
+        .current()
+        .bind
+        .parse()
+        .context("bindの形式が不正です")?;
     let audio_dir = create_audio_directory().await?;
     let (submissions, submission_receiver) = mpsc::channel(SUBMISSION_QUEUE_SIZE);
     let (events, _) = broadcast::channel(DISPLAY_EVENT_BUFFER_SIZE);

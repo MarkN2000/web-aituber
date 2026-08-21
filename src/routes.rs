@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/submissions", post(submit))
         .route("/api/display-config", get(display_config))
         .route("/api/admin/skip", post(skip))
+        .route("/api/admin/reload-config", post(reload_config))
         .route("/ws", get(websocket))
         .nest_service("/static", ServeDir::new("web"))
         .nest_service("/assets", ServeDir::new("assets"))
@@ -139,7 +140,8 @@ async fn submit(
 }
 
 async fn display_config(State(state): State<AppState>) -> Response {
-    Json(state.config.character.clone()).into_response()
+    let config = state.config.current();
+    Json(config.character.clone()).into_response()
 }
 
 async fn websocket(websocket: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -163,6 +165,29 @@ async fn skip(
         active.cancel.cancel();
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    match state.config.reload() {
+        Ok(result) => Json(AdminReloadResponse {
+            restart_required: result.restart_required,
+        })
+        .into_response(),
+        Err(error) => {
+            tracing::warn!(error = ?error, "設定の再読み込みに失敗しました");
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("設定を再読み込みできません: {error}"),
+                })),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState) {
@@ -216,7 +241,8 @@ async fn send_json(
 }
 
 fn has_valid_admin_token(state: &AppState, auth: &AdminAuth) -> bool {
-    auth.token.as_deref() == Some(state.config.admin_token.as_str())
+    let config = state.config.current();
+    auth.token.as_deref() == Some(config.admin_token.as_str())
 }
 
 #[derive(Deserialize)]
@@ -227,6 +253,11 @@ struct AdminAuth {
 #[derive(Serialize)]
 struct SubmitResponse {
     id: String,
+}
+
+#[derive(Serialize)]
+struct AdminReloadResponse {
+    restart_required: bool,
 }
 
 struct ApiError {
@@ -271,7 +302,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::AppConfig,
+        config::{AppConfig, ConfigStore},
         state::{ConversationHistory, SearchFillerRotation},
     };
 
@@ -283,7 +314,7 @@ mod tests {
         let (events, _) = broadcast::channel(1);
         (
             AppState {
-                config: Arc::new(config),
+                config: ConfigStore::new("config.example.json", config),
                 http: reqwest::Client::new(),
                 submissions,
                 events,
@@ -331,6 +362,29 @@ mod tests {
         let response = router(test_state())
             .oneshot(
                 Request::get("/admin?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn config_reload_requires_admin_token_and_succeeds() {
+        let unauthorized = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/reload-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/reload-config?token=test-token")
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body class="admin-page">
   <main class="admin-card">
     <p class="eyebrow">Web AITuber</p>
     <h1>管理画面</h1>
-    <p class="lead">現在の回答状態を確認し、必要な場合だけ中断できます。</p>
+    <p class="lead">現在の回答状態の確認、中断、設定の再読み込みができます。</p>
 
     <dl class="admin-details">
       <div>
@@ -27,9 +27,13 @@
       </div>
     </dl>
 
-    <button id="skip" type="button" disabled>現在の回答を中断</button>
+    <div class="admin-actions">
+      <button id="skip" type="button" disabled>現在の回答を中断</button>
+      <button id="reload-config" type="button">設定を再読み込み</button>
+    </div>
+    <p id="admin-config-status" class="status" role="status"></p>
     <p id="admin-error" class="status" role="alert"></p>
   </main>
-  <script type="module" src="/static/js/admin.js?v=2"></script>
+  <script type="module" src="/static/js/admin.js?v=3"></script>
 </body>
 </html>

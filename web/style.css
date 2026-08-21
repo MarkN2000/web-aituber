@@ -487,13 +487,35 @@ input[type="file"]::file-selector-button {
   overflow-wrap: anywhere;
 }
 
-.admin-card #skip {
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-card .admin-actions button {
   min-height: 46px;
   padding: 10px 20px;
 }
 
-.admin-card #admin-error {
+.admin-card #reload-config {
+  border-color: #c9c9c5;
+  background: #fff;
+  color: #202020;
+}
+
+.admin-card #reload-config:hover {
+  border-color: #aaa;
+  background: #f2f2f0;
+}
+
+.admin-card #admin-config-status {
   margin-top: 16px;
+  color: #287a46;
+}
+
+.admin-card #admin-error {
+  margin-top: 8px;
   color: #b3261e;
 }
 

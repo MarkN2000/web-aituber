@@ -11,13 +11,13 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::AppConfig,
+    config::ConfigStore,
     protocol::{ConversationTurn, ServerEvent, Submission, TurnState},
 };
 
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<AppConfig>,
+    pub config: ConfigStore,
     pub http: reqwest::Client,
     pub submissions: mpsc::Sender<Submission>,
     pub events: broadcast::Sender<ServerEvent>,
@@ -41,9 +41,8 @@ impl SearchFillerRotation {
 }
 
 impl AppState {
-    pub fn next_search_filler(&self) -> &str {
-        self.search_filler_rotation
-            .select(&self.config.llm.search_fillers)
+    pub fn next_search_filler<'a>(&self, fillers: &'a [String]) -> &'a str {
+        self.search_filler_rotation.select(fillers)
     }
 }
 

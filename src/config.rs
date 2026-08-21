@@ -1,7 +1,23 @@
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
+
+#[derive(Clone)]
+pub struct ConfigStore {
+    current: watch::Sender<Arc<AppConfig>>,
+    path: Arc<PathBuf>,
+}
+
+pub struct ConfigReloadResult {
+    pub restart_required: bool,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
@@ -135,6 +151,37 @@ impl AppConfig {
     }
 }
 
+impl ConfigStore {
+    pub fn load() -> Result<Self> {
+        let path = env::var("APP_CONFIG_FILE").unwrap_or_else(|_| "config.json".to_owned());
+        let config = AppConfig::load_from_path(&path)?;
+        Ok(Self::new(path, config))
+    }
+
+    pub fn new(path: impl Into<PathBuf>, config: AppConfig) -> Self {
+        let (current, _) = watch::channel(Arc::new(config));
+        Self {
+            current,
+            path: Arc::new(path.into()),
+        }
+    }
+
+    pub fn current(&self) -> Arc<AppConfig> {
+        self.current.borrow().clone()
+    }
+
+    pub fn reload(&self) -> Result<ConfigReloadResult> {
+        let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        let current = self.current();
+        let restart_required = replacement.bind != current.bind;
+        if restart_required {
+            replacement.bind.clone_from(&current.bind);
+        }
+        self.current.send_replace(Arc::new(replacement));
+        Ok(ConfigReloadResult { restart_required })
+    }
+}
+
 fn default_search_fillers() -> Vec<String> {
     vec!["少し調べてみますね。".to_owned()]
 }
@@ -149,6 +196,7 @@ fn required(name: &str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn character_defaults_are_available() {
@@ -175,5 +223,29 @@ mod tests {
 
         config.llm.search_fillers = vec!["   ".to_owned()];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn reload_replaces_valid_settings_and_keeps_the_previous_settings_on_error() {
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let source = include_str!("../config.example.json");
+        fs::write(&path, source).unwrap();
+        let initial: AppConfig = serde_json::from_str(source).unwrap();
+        let store = ConfigStore::new(&path, initial);
+
+        let replacement = source
+            .replacen("0.0.0.0:3000", "127.0.0.1:4000", 1)
+            .replacen("gpt-5.6-luna", "new-model", 1);
+        fs::write(&path, replacement).unwrap();
+        let result = store.reload().unwrap();
+        assert!(result.restart_required);
+        assert_eq!(store.current().bind, "0.0.0.0:3000");
+        assert_eq!(store.current().llm.model, "new-model");
+
+        fs::write(&path, "{}").unwrap();
+        assert!(store.reload().is_err());
+        assert_eq!(store.current().llm.model, "new-model");
+
+        fs::remove_file(path).unwrap();
     }
 }
