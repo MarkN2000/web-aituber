@@ -58,6 +58,7 @@ mod tests {
                 question: format!("質問{index}"),
                 answer: format!("回答{index}"),
                 has_image: index == 10,
+                sources: Vec::new(),
             });
         }
 

@@ -2,10 +2,11 @@
   "bind": "0.0.0.0:3000",
   "admin_token": "イベント用に十分長いランダム文字列へ変更",
   "llm": {
-    "api_url": "https://api.openai.com/v1/chat/completions",
+    "api_url": "https://api.openai.com/v1/responses",
     "api_key": "ここにAPIキーを設定",
     "model": "gpt-5.6-luna",
-    "system_prompt": "あなたはイベント会場の案内役です。各文の文頭に [neutral]、[happy]、[sad]、[angry]、[surprised] のいずれかを一つ付けて、日本語で簡潔に答えてください。"
+    "system_prompt": "あなたはイベント会場の案内役です。各文の文頭に [neutral]、[happy]、[sad]、[angry]、[surprised] のいずれかを一つ付けて、日本語で簡潔に答えてください。",
+    "search_filler": "少し調べてみますね。"
   },
   "tts": {
     "engine_url": "http://127.0.0.1:10101",

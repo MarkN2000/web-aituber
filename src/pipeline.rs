@@ -6,7 +6,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio,
-    protocol::{ConversationTurn, Emotion, ServerEvent, Submission, TurnState, TurnStatus},
+    protocol::{
+        ConversationTurn, Emotion, SegmentKind, ServerEvent, SourceLink, Submission, TurnState,
+        TurnStatus,
+    },
     state::{ActiveTurn, AppState},
     tts,
 };
@@ -63,6 +66,7 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
                     question: submission.text.clone(),
                     answer: completed.answer,
                     has_image: submission.image.is_some(),
+                    sources: completed.sources,
                 });
                 history.snapshot()
             };
@@ -107,17 +111,74 @@ async fn process_active_submission(
     cancel: &CancellationToken,
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
     let mut audio_files = Vec::new();
+    let mut playback_deadline: Option<Instant> = None;
+    let mut sequence_offset = 0_u32;
 
     let history = state.history.lock().await.snapshot();
+    let (search_sender, mut search_started) = tokio::sync::oneshot::channel();
+    let llm = crate::llm::generate(
+        &state.http,
+        &state.config.llm,
+        submission,
+        &history,
+        search_sender,
+    );
+    tokio::pin!(llm);
 
-    let answer = cancellable(
-        cancel,
-        crate::llm::generate(&state.http, &state.config.llm, submission, &history),
-    )
-    .await
-    .map_err(|error| error.with_files(audio_files.clone()))?;
+    let generated = tokio::select! {
+        _ = cancel.cancelled() => return Err(ProcessError::Cancelled(audio_files)),
+        result = &mut llm => result.map_err(|error| ProcessError::Failed {
+            error,
+            audio_files: audio_files.clone(),
+        })?,
+        search = &mut search_started => {
+            if search.is_ok() {
+                let file_name = format!("{}-search.webm", submission.id);
+                let output_path = state.audio_dir.join(&file_name);
+                match cancellable(
+                    cancel,
+                    prepare_search_filler(state, &output_path),
+                ).await {
+                    Ok(duration_ms) => {
+                        audio_files.push(output_path);
+                        send_event(
+                            state,
+                            ServerEvent::Segment {
+                                turn_id: submission.id.clone(),
+                                sequence: 0,
+                                text: String::new(),
+                                emotion: Emotion::Neutral,
+                                motion: None,
+                                audio_url: format!("/audio/{file_name}"),
+                                duration_ms,
+                                is_last: false,
+                                kind: SegmentKind::Filler,
+                                sources: Vec::new(),
+                            },
+                        );
+                        playback_deadline = Some(Instant::now() + Duration::from_millis(duration_ms));
+                        sequence_offset = 1;
+                    }
+                    Err(CancellableError::Cancelled) => {
+                        return Err(ProcessError::Cancelled(vec![output_path]));
+                    }
+                    Err(CancellableError::Failed(error)) => {
+                        tracing::warn!(error = ?error, "検索中フィラーの生成に失敗しました");
+                        if let Err(remove_error) = tokio::fs::remove_file(&output_path).await
+                            && remove_error.kind() != std::io::ErrorKind::NotFound
+                        {
+                            tracing::warn!(error = ?remove_error, "未完成のフィラー音声を削除できませんでした");
+                        }
+                    }
+                }
+            }
+            cancellable(cancel, llm.as_mut())
+                .await
+                .map_err(|error| error.with_files(audio_files.clone()))?
+        }
+    };
 
-    let segments = split_answer(&answer);
+    let segments = split_answer(&generated.answer);
     if segments.is_empty() {
         return Err(ProcessError::Failed {
             error: anyhow!("LLMの回答が空です"),
@@ -125,7 +186,6 @@ async fn process_active_submission(
         });
     }
 
-    let mut playback_deadline: Option<Instant> = None;
     let mut motion_sent = false;
 
     for (index, segment) in segments.iter().enumerate() {
@@ -174,13 +234,19 @@ async fn process_active_submission(
             state,
             ServerEvent::Segment {
                 turn_id: submission.id.clone(),
-                sequence: index as u32,
+                sequence: sequence_offset + index as u32,
                 text: segment.text.clone(),
                 emotion: segment.emotion,
                 motion,
                 audio_url: format!("/audio/{file_name}"),
                 duration_ms,
                 is_last: index + 1 == segments.len(),
+                kind: SegmentKind::Answer,
+                sources: if index + 1 == segments.len() {
+                    generated.sources.clone()
+                } else {
+                    Vec::new()
+                },
             },
         );
 
@@ -201,7 +267,18 @@ async fn process_active_submission(
     Ok(CompletedSubmission {
         audio_files,
         answer: display_answer(&segments),
+        sources: generated.sources,
     })
+}
+
+async fn prepare_search_filler(state: &AppState, output_path: &std::path::Path) -> Result<u64> {
+    let wav = tts::synthesize(
+        &state.http,
+        &state.config.tts,
+        &state.config.llm.search_filler,
+    )
+    .await?;
+    audio::transcode_to_opus(&state.config.ffmpeg_path, &wav, output_path).await
 }
 
 async fn publish_state(state: &AppState, turn: TurnState) {
@@ -267,6 +344,7 @@ enum ProcessError {
 struct CompletedSubmission {
     audio_files: Vec<PathBuf>,
     answer: String,
+    sources: Vec<SourceLink>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

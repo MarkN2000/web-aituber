@@ -19,6 +19,21 @@ pub struct ConversationTurn {
     pub question: String,
     pub answer: String,
     pub has_image: bool,
+    pub sources: Vec<SourceLink>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SourceLink {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SegmentKind {
+    #[default]
+    Answer,
+    Filler,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -91,6 +106,8 @@ pub enum ServerEvent {
         audio_url: String,
         duration_ms: u64,
         is_last: bool,
+        kind: SegmentKind,
+        sources: Vec<SourceLink>,
     },
     Complete {
         turn_id: String,
@@ -129,6 +146,26 @@ mod tests {
     }
 
     #[test]
+    fn filler_segment_is_distinguishable_from_an_answer() {
+        let event = ServerEvent::Segment {
+            turn_id: "turn-1".to_owned(),
+            sequence: 0,
+            text: String::new(),
+            emotion: Emotion::Neutral,
+            motion: None,
+            audio_url: "/audio/filler.webm".to_owned(),
+            duration_ms: 800,
+            is_last: false,
+            kind: SegmentKind::Filler,
+            sources: Vec::new(),
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "segment");
+        assert_eq!(value["kind"], "filler");
+        assert_eq!(value["text"], "");
+    }
+
+    #[test]
     fn snapshot_contains_shared_history() {
         let event = ServerEvent::Snapshot {
             current: None,
@@ -137,6 +174,10 @@ mod tests {
                 question: "質問".to_owned(),
                 answer: "回答".to_owned(),
                 has_image: true,
+                sources: vec![SourceLink {
+                    title: "出典".to_owned(),
+                    url: "https://example.com".to_owned(),
+                }],
             }],
         };
 
@@ -145,5 +186,9 @@ mod tests {
         assert_eq!(value["history"][0]["question"], "質問");
         assert_eq!(value["history"][0]["answer"], "回答");
         assert_eq!(value["history"][0]["has_image"], true);
+        assert_eq!(
+            value["history"][0]["sources"][0]["url"],
+            "https://example.com"
+        );
     }
 }

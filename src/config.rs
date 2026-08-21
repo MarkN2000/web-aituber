@@ -15,11 +15,13 @@ pub struct AppConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct LlmConfig {
-    /// OpenAI Chat Completions 互換エンドポイントの完全な URL。
+    /// OpenAI Responses API 互換エンドポイントの完全な URL。
     pub api_url: String,
     pub api_key: String,
     pub model: String,
     pub system_prompt: String,
+    #[serde(default = "default_search_filler")]
+    pub search_filler: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -120,11 +122,16 @@ impl AppConfig {
         required("llm.api_url", &self.llm.api_url)?;
         required("llm.api_key", &self.llm.api_key)?;
         required("llm.model", &self.llm.model)?;
+        required("llm.search_filler", &self.llm.search_filler)?;
         required("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         required("character.vrm_url", &self.character.vrm_url)?;
         Ok(())
     }
+}
+
+fn default_search_filler() -> String {
+    "少し調べてみますね。".to_owned()
 }
 
 fn required(name: &str, value: &str) -> Result<()> {
