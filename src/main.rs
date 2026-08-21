@@ -1,4 +1,9 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    io::ErrorKind,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -27,6 +32,9 @@ async fn main() -> Result<()> {
         .bind
         .parse()
         .context("bindの形式が不正です")?;
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("{bind}で待ち受けできません"))?;
     let audio_dir = create_audio_directory().await?;
     let (submissions, submission_receiver) = mpsc::channel(SUBMISSION_QUEUE_SIZE);
     let (events, _) = broadcast::channel(DISPLAY_EVENT_BUFFER_SIZE);
@@ -45,9 +53,6 @@ async fn main() -> Result<()> {
 
     tokio::spawn(pipeline::run(state.clone(), submission_receiver));
 
-    let listener = tokio::net::TcpListener::bind(bind)
-        .await
-        .with_context(|| format!("{bind}で待ち受けできません"))?;
     tracing::info!(address = %bind, "サーバーを開始しました");
 
     axum::serve(listener, routes::router(state))
@@ -62,9 +67,12 @@ async fn main() -> Result<()> {
 }
 
 async fn create_audio_directory() -> Result<PathBuf> {
-    let directory = std::env::temp_dir()
-        .join("web-aituber")
-        .join(Uuid::new_v4().to_string());
+    create_audio_directory_in(std::env::temp_dir().join("web-aituber")).await
+}
+
+async fn create_audio_directory_in(root: PathBuf) -> Result<PathBuf> {
+    remove_previous_audio_sessions(&root).await;
+    let directory = root.join(Uuid::new_v4().to_string());
     tokio::fs::create_dir_all(&directory)
         .await
         .with_context(|| {
@@ -76,8 +84,39 @@ async fn create_audio_directory() -> Result<PathBuf> {
     Ok(directory)
 }
 
+async fn remove_previous_audio_sessions(root: &Path) {
+    if let Err(error) = tokio::fs::remove_dir_all(root).await
+        && error.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(path = %root.display(), error = ?error, "過去の一時音声を削除できませんでした");
+    }
+}
+
 async fn shutdown_signal() {
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!(error = ?error, "終了シグナルを待機できませんでした");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn startup_removes_previous_audio_sessions() {
+        let root = std::env::temp_dir().join(format!("web-aituber-test-{}", Uuid::new_v4()));
+        let previous = root.join("previous");
+        tokio::fs::create_dir_all(&previous).await.unwrap();
+        tokio::fs::write(previous.join("audio.webm"), b"audio")
+            .await
+            .unwrap();
+
+        let current = create_audio_directory_in(root.clone()).await.unwrap();
+
+        assert!(!previous.exists());
+        assert!(current.exists());
+        assert_eq!(current.parent(), Some(root.as_path()));
+
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 }
