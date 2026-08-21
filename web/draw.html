@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Web AITuber | 食べ物を描く</title>
     <link rel="stylesheet" href="/static/style.css?v=5">
-    <link rel="stylesheet" href="/static/draw.css?v=1">
+    <link rel="stylesheet" href="/static/draw.css?v=3">
   </head>
   <body class="draw-page">
     <main class="draw-card">
@@ -26,13 +26,19 @@
           <span>太さ</span>
           <input id="brush-size" type="range" min="4" max="48" value="16">
         </label>
-        <button id="eraser" class="secondary-button" type="button" aria-pressed="false">消しゴム</button>
-        <button id="clear-canvas" class="secondary-button" type="button">全消去</button>
+        <div class="tool-mode-row">
+          <div class="tool-switcher" role="group" aria-label="描画方法">
+            <button class="secondary-button" type="button" data-draw-tool="pen" aria-pressed="true">ペン</button>
+            <button class="secondary-button" type="button" data-draw-tool="bucket" aria-pressed="false">バケツ</button>
+            <button class="secondary-button" type="button" data-draw-tool="eraser" aria-pressed="false">消しゴム</button>
+          </div>
+          <button id="clear-canvas" class="secondary-button" type="button">全消去</button>
+        </div>
       </div>
 
       <button id="submit-food" class="food-submit" type="button" disabled>食べてもらう</button>
       <p id="draw-status" class="status" role="status" aria-live="polite"></p>
     </main>
-    <script type="module" src="/static/js/draw.js?v=6"></script>
+    <script type="module" src="/static/js/draw.js?v=7"></script>
   </body>
 </html>

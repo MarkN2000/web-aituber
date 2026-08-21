@@ -5,6 +5,10 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const drawSource = fs.readFileSync(path.join(__dirname, "../web/js/draw.js"), "utf8");
+const bucketSource = drawSource.slice(
+  drawSource.indexOf("function rgbaFromHex"),
+  drawSource.indexOf("function fillAt"),
+);
 const algorithmSource = drawSource.slice(
   drawSource.indexOf("function closeGaps"),
   drawSource.indexOf("function createFilledCanvas"),
@@ -17,6 +21,11 @@ const context = vm.createContext({});
 vm.runInContext(
   `const ALPHA_THRESHOLD = 128; const GAP_CLOSE_RADIUS = 2; ${algorithmSource}; this.fill = fillEnclosedAreas;`,
   context,
+);
+const bucketContext = vm.createContext({});
+vm.runInContext(
+  `${bucketSource}; this.fill = floodFill; this.color = rgbaFromHex;`,
+  bucketContext,
 );
 
 function createImage(width, height) {
@@ -46,6 +55,34 @@ function drawRectangle(image, width, left, top, right, bottom, alpha = 255) {
     setPixel(image, width, right, y, 20, 40, 60, alpha);
   }
 }
+
+test("バケツで線に囲まれた透明領域だけを選択色で塗る", () => {
+  const width = 7;
+  const image = createImage(width, 7);
+  drawRectangle(image, width, 1, 1, 5, 5);
+
+  const changed = bucketContext.fill(image, width, 7, 3, 3, bucketContext.color("#e85d3f"));
+
+  assert.equal(changed, true);
+  assert.deepEqual(getPixel(image, width, 3, 3), [232, 93, 63, 255]);
+  assert.deepEqual(getPixel(image, width, 1, 3), [20, 40, 60, 255]);
+  assert.deepEqual(getPixel(image, width, 0, 0), [0, 0, 0, 0]);
+});
+
+test("バケツは斜めに接する同色領域へ広がらない", () => {
+  const width = 3;
+  const image = createImage(width, 3);
+  for (let y = 0; y < 3; y += 1) {
+    for (let x = 0; x < 3; x += 1) setPixel(image, width, x, y, 20, 40, 60, 255);
+  }
+  setPixel(image, width, 0, 0, 0, 0, 0, 0);
+  setPixel(image, width, 1, 1, 0, 0, 0, 0);
+
+  bucketContext.fill(image, width, 3, 1, 1, [255, 255, 255, 255]);
+
+  assert.deepEqual(getPixel(image, width, 1, 1), [255, 255, 255, 255]);
+  assert.deepEqual(getPixel(image, width, 0, 0), [0, 0, 0, 0]);
+});
 
 test("閉じた図形の内側だけを白くする", () => {
   const width = 16;

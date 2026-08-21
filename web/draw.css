@@ -38,9 +38,13 @@
   touch-action: none;
 }
 
+#food-canvas[data-tool="bucket"] {
+  cursor: cell;
+}
+
 .draw-tools {
   display: grid;
-  grid-template-columns: auto minmax(140px, 1fr) auto auto;
+  grid-template-columns: auto minmax(140px, 1fr);
   align-items: end;
   gap: 10px;
   width: min(100%, 512px);
@@ -68,6 +72,28 @@
 .draw-tools input[type="range"] {
   min-height: 42px;
   accent-color: #202020;
+}
+
+.draw-tools input[type="range"]:disabled {
+  opacity: .45;
+}
+
+.tool-mode-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.tool-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tool-switcher .secondary-button {
+  padding-inline: 6px;
+  white-space: nowrap;
 }
 
 .secondary-button {
@@ -115,6 +141,10 @@
 
   .draw-tools {
     grid-template-columns: auto minmax(110px, 1fr);
+  }
+
+  .tool-mode-row {
+    grid-template-columns: 1fr;
   }
 
   .secondary-button {

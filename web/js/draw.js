@@ -9,14 +9,14 @@ const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
 const color = document.querySelector("#draw-color");
 const brushSize = document.querySelector("#brush-size");
-const eraser = document.querySelector("#eraser");
+const toolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const clearButton = document.querySelector("#clear-canvas");
 const submitButton = document.querySelector("#submit-food");
 const status = document.querySelector("#draw-status");
 
 let activePointer;
 let previousPoint;
-let erasing = false;
+let activeTool = "pen";
 let hasDrawing = false;
 let isSubmitting = false;
 
@@ -42,7 +42,7 @@ function drawLine(from, to) {
   context.lineCap = "round";
   context.lineJoin = "round";
   context.lineWidth = Number(brushSize.value);
-  context.globalCompositeOperation = erasing ? "destination-out" : "source-over";
+  context.globalCompositeOperation = activeTool === "eraser" ? "destination-out" : "source-over";
   context.strokeStyle = color.value;
   context.stroke();
   context.restore();
@@ -53,8 +53,14 @@ function drawLine(from, to) {
 function startDrawing(event) {
   if (activePointer !== undefined || event.button > 0) return;
   event.preventDefault();
+  const point = canvasPoint(event);
+  if (activeTool === "bucket") {
+    fillAt(point);
+    return;
+  }
+
   activePointer = event.pointerId;
-  previousPoint = canvasPoint(event);
+  previousPoint = point;
   canvas.setPointerCapture(event.pointerId);
   drawLine(previousPoint, { x: previousPoint.x + 0.01, y: previousPoint.y });
 }
@@ -74,9 +80,75 @@ function stopDrawing(event) {
   previousPoint = undefined;
 }
 
-function setErasing(value) {
-  erasing = value;
-  eraser.setAttribute("aria-pressed", String(value));
+function setTool(tool) {
+  activeTool = tool;
+  for (const button of toolButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.drawTool === tool));
+  }
+  brushSize.disabled = tool === "bucket";
+  canvas.dataset.tool = tool;
+}
+
+function rgbaFromHex(hex) {
+  return [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+    255,
+  ];
+}
+
+function floodFill(image, width, height, startX, startY, fillColor) {
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) return false;
+
+  const startIndex = startY * width + startX;
+  const startOffset = startIndex * 4;
+  const targetColor = Array.from(image.data.slice(startOffset, startOffset + 4));
+  if (targetColor.every((value, index) => value === fillColor[index])) return false;
+
+  const matchesTarget = (index) => {
+    const offset = index * 4;
+    return targetColor.every((value, channel) => image.data[offset + channel] === value);
+  };
+  const paint = (index) => {
+    const offset = index * 4;
+    for (let channel = 0; channel < 4; channel += 1) {
+      image.data[offset + channel] = fillColor[channel];
+    }
+  };
+
+  const pending = [startIndex];
+  paint(startIndex);
+  const visit = (index) => {
+    if (!matchesTarget(index)) return;
+    paint(index);
+    pending.push(index);
+  };
+  while (pending.length > 0) {
+    const index = pending.pop();
+    const x = index % width;
+    if (x > 0) visit(index - 1);
+    if (x + 1 < width) visit(index + 1);
+    if (index >= width) visit(index - width);
+    if (index + width < width * height) visit(index + width);
+  }
+  return true;
+}
+
+function fillAt(point) {
+  const image = context.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  const changed = floodFill(
+    image,
+    CANVAS_SIZE,
+    CANVAS_SIZE,
+    Math.floor(point.x),
+    Math.floor(point.y),
+    rgbaFromHex(color.value),
+  );
+  if (!changed) return;
+  context.putImageData(image, 0, 0);
+  hasDrawing = true;
+  updateSubmitState();
 }
 
 function setStatus(message, kind = "") {
@@ -258,12 +330,14 @@ canvas.addEventListener("pointerdown", startDrawing);
 canvas.addEventListener("pointermove", continueDrawing);
 canvas.addEventListener("pointerup", stopDrawing);
 canvas.addEventListener("pointercancel", stopDrawing);
-color.addEventListener("input", () => setErasing(false));
-eraser.addEventListener("click", () => setErasing(!erasing));
+for (const button of toolButtons) {
+  button.addEventListener("click", () => setTool(button.dataset.drawTool));
+}
 clearButton.addEventListener("click", () => {
   clearCanvas();
   setStatus("");
 });
 submitButton.addEventListener("click", submitFood);
 
+setTool("pen");
 clearCanvas();
