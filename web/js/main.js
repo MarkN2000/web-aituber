@@ -2,12 +2,13 @@ import { AudioQueue } from "./audio-queue.js";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=6";
+import { VrmViewer } from "./vrm-viewer.js?v=7";
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),
   start: document.querySelector("#start"),
   startError: document.querySelector("#start-error"),
+  stage: document.querySelector("#stage"),
   canvas: document.querySelector("#vrm-canvas"),
   viewerMessage: document.querySelector("#viewer-message"),
   panel: document.querySelector("#panel"),
@@ -36,6 +37,13 @@ let started = false;
 let currentTurn;
 let motionPlayedForTurn;
 let reconnectTimer;
+
+function applyBackground(config) {
+  elements.stage.style.backgroundColor = config.background_color || "#202632";
+  elements.stage.style.backgroundImage = config.background_image_url
+    ? `url(${JSON.stringify(config.background_image_url)})`
+    : "none";
+}
 const receivedTurns = new Set();
 let currentSourceButton;
 
@@ -238,6 +246,7 @@ async function startMain() {
     const response = await fetch("/api/display-config", { cache: "no-store" });
     if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
     const config = await response.json();
+    applyBackground(config);
 
     viewer = new VrmViewer(elements.canvas, showViewerMessage);
     await viewer.load(config);

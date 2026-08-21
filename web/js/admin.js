@@ -1,4 +1,7 @@
 const token = new URLSearchParams(window.location.search).get("token");
+const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
+const MAX_BACKGROUND_DIMENSION = 3840;
+const BACKGROUND_WEBP_QUALITY = 0.85;
 const elements = {
   tabs: [...document.querySelectorAll('[role="tab"]')],
   status: document.querySelector("#admin-status"), skip: document.querySelector("#skip"), reload: document.querySelector("#reload-config"),
@@ -11,6 +14,11 @@ const elements = {
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
   engineUrl: document.querySelector("#tts-engine-url"),
+  backgroundForm: document.querySelector("#background-form"), backgroundInput: document.querySelector("#background-image"),
+  uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
+  currentBackgroundPreview: document.querySelector("#current-background-preview"), currentBackgroundEmpty: document.querySelector("#current-background-empty"),
+  selectedBackgroundPreview: document.querySelector("#selected-background-preview"), selectedBackgroundEmpty: document.querySelector("#selected-background-empty"),
+  displayStatus: document.querySelector("#display-config-status"), displayError: document.querySelector("#display-config-error"),
 };
 let currentTurn;
 let socket;
@@ -19,6 +27,10 @@ let previewAudio;
 let previewAudioUrl;
 let loadedConfig;
 let selectedSpeakerId;
+let selectedBackgroundBlob;
+let selectedBackgroundUrl;
+let currentBackgroundExists = false;
+let backgroundBusy = false;
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -38,9 +50,193 @@ function activateTab(tab, focus = false) {
 }
 function tabKeydown(event) {
   const index = elements.tabs.indexOf(event.currentTarget);
-  const byKey = { ArrowRight: (index + 1) % 3, ArrowLeft: (index + 2) % 3, Home: 0, End: 2 };
+  const lastIndex = elements.tabs.length - 1;
+  const byKey = { ArrowRight: (index + 1) % elements.tabs.length, ArrowLeft: (index + lastIndex) % elements.tabs.length, Home: 0, End: lastIndex };
   if (!(event.key in byKey)) return;
   event.preventDefault(); activateTab(elements.tabs[byKey[event.key]], true);
+}
+
+function updateBackgroundControls() {
+  elements.backgroundInput.disabled = backgroundBusy || !token;
+  elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
+  elements.deleteBackground.disabled = backgroundBusy || !currentBackgroundExists || !token;
+}
+async function showCurrentBackground(url) {
+  currentBackgroundExists = Boolean(url);
+  elements.currentBackgroundPreview.hidden = true;
+  elements.currentBackgroundPreview.removeAttribute("src");
+  elements.currentBackgroundEmpty.hidden = false;
+  elements.currentBackgroundEmpty.textContent = url ? "現在の背景画像を読み込み中です…" : "背景画像は設定されていません。";
+  updateBackgroundControls();
+  if (!url) return;
+  try {
+    await new Promise((resolve, reject) => {
+      elements.currentBackgroundPreview.onload = resolve;
+      elements.currentBackgroundPreview.onerror = () => reject(new Error("現在の背景画像を読み込めませんでした。"));
+      elements.currentBackgroundPreview.src = url;
+    });
+  } catch (error) {
+    elements.currentBackgroundPreview.removeAttribute("src");
+    elements.currentBackgroundEmpty.textContent = "現在の背景画像を読み込めませんでした。";
+    throw error;
+  } finally {
+    elements.currentBackgroundPreview.onload = null;
+    elements.currentBackgroundPreview.onerror = null;
+  }
+  elements.currentBackgroundPreview.hidden = false;
+  elements.currentBackgroundEmpty.hidden = true;
+  updateBackgroundControls();
+}
+function releaseSelectedBackground() {
+  if (selectedBackgroundUrl) URL.revokeObjectURL(selectedBackgroundUrl);
+  selectedBackgroundUrl = undefined;
+  selectedBackgroundBlob = undefined;
+  elements.selectedBackgroundPreview.removeAttribute("src");
+  elements.selectedBackgroundPreview.hidden = true;
+  elements.selectedBackgroundEmpty.hidden = false;
+  updateBackgroundControls();
+}
+function showSelectedBackground(blob) {
+  releaseSelectedBackground();
+  selectedBackgroundBlob = blob;
+  selectedBackgroundUrl = URL.createObjectURL(blob);
+  elements.selectedBackgroundPreview.src = selectedBackgroundUrl;
+  elements.selectedBackgroundPreview.hidden = false;
+  elements.selectedBackgroundEmpty.hidden = true;
+  updateBackgroundControls();
+}
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("画像を読み込めませんでした。")); };
+    image.src = url;
+  });
+}
+function canvasToWebp(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob || blob.type !== "image/webp") {
+        reject(new Error("このブラウザではWebPへ変換できません。"));
+        return;
+      }
+      resolve(blob);
+    }, "image/webp", BACKGROUND_WEBP_QUALITY);
+  });
+}
+async function convertBackground(file) {
+  if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("JPEG、PNG、WebP画像を選択してください。");
+  if (file.size > MAX_BACKGROUND_BYTES) throw new Error("元画像は10MiB以下にしてください。");
+  const image = await loadImage(file);
+  if (!image.naturalWidth || !image.naturalHeight) throw new Error("画像のサイズを確認できませんでした。");
+  const scale = Math.min(1, MAX_BACKGROUND_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("画像を変換する機能を利用できません。");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.src = "";
+  let blob;
+  try {
+    blob = await canvasToWebp(canvas);
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+  if (blob.size > MAX_BACKGROUND_BYTES) throw new Error("WebP変換後の画像が10MiBを超えています。別の画像を選択してください。");
+  return blob;
+}
+async function loadDisplayConfig() {
+  const response = await fetch("/api/display-config", { cache: "no-store" });
+  if (!response.ok) throw new Error("現在の背景画像を確認できませんでした。");
+  const config = await response.json();
+  await showCurrentBackground(config.background_image_url);
+}
+async function selectBackground() {
+  if (backgroundBusy) return;
+  backgroundBusy = true;
+  releaseSelectedBackground();
+  updateBackgroundControls();
+  setMessage(elements.displayStatus, elements.displayError);
+  const [file] = elements.backgroundInput.files;
+  if (!file) {
+    backgroundBusy = false;
+    updateBackgroundControls();
+    return;
+  }
+  elements.selectedBackgroundEmpty.textContent = "画像を変換中です…";
+  try {
+    showSelectedBackground(await convertBackground(file));
+    setMessage(elements.displayStatus, elements.displayError, "画像をWebPへ変換しました。アップロードすると現在の背景画像を上書きします。");
+  } catch (error) {
+    console.error(error);
+    elements.backgroundInput.value = "";
+    setMessage(elements.displayStatus, elements.displayError, error.message || "画像を変換できませんでした。", true);
+  } finally {
+    backgroundBusy = false;
+    elements.selectedBackgroundEmpty.textContent = "画像を選択してください。";
+    updateBackgroundControls();
+  }
+}
+async function uploadBackground(event) {
+  event.preventDefault();
+  if (!token || !selectedBackgroundBlob || backgroundBusy) return;
+  backgroundBusy = true;
+  updateBackgroundControls();
+  const original = elements.uploadBackground.textContent;
+  elements.uploadBackground.textContent = "アップロード中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const body = new FormData();
+    body.append("image", selectedBackgroundBlob, "background.webp");
+    const response = await fetch(adminUrl("/api/admin/background-image"), { method: "POST", body });
+    if (!response.ok) throw new Error(await readError(response, "背景画像をアップロードできませんでした。"));
+    releaseSelectedBackground();
+    elements.backgroundInput.value = "";
+    try {
+      await loadDisplayConfig();
+      setMessage(elements.displayStatus, elements.displayError, "背景画像を更新しました。メイン画面を再読み込みすると反映されます。");
+    } catch (error) {
+      console.error(error);
+      setMessage(elements.displayStatus, elements.displayError, "背景画像は更新されましたが、現在のプレビューを更新できませんでした。", true);
+    }
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "背景画像をアップロードできませんでした。", true);
+  } finally {
+    backgroundBusy = false;
+    elements.uploadBackground.textContent = original;
+    updateBackgroundControls();
+  }
+}
+async function deleteBackground() {
+  if (!token || backgroundBusy || !window.confirm("現在の背景画像を削除しますか？")) return;
+  backgroundBusy = true;
+  updateBackgroundControls();
+  const original = elements.deleteBackground.textContent;
+  elements.deleteBackground.textContent = "削除中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/background-image"), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, "背景画像を削除できませんでした。"));
+    await showCurrentBackground(null);
+    try {
+      await loadDisplayConfig();
+      setMessage(elements.displayStatus, elements.displayError, "背景画像を削除しました。メイン画面を再読み込みすると背景色へ戻ります。");
+    } catch (error) {
+      console.error(error);
+      setMessage(elements.displayStatus, elements.displayError, "背景画像は削除されましたが、現在のプレビューを更新できませんでした。", true);
+    }
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "背景画像を削除できませんでした。", true);
+  } finally {
+    backgroundBusy = false;
+    elements.deleteBackground.textContent = original;
+    updateBackgroundControls();
+  }
 }
 
 function handleServerEvent(event) {
@@ -174,6 +370,9 @@ for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements])
 }
 elements.skip.addEventListener("click", skip); elements.reload.addEventListener("click", reload); elements.preview.addEventListener("click", previewTts);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
+elements.backgroundInput.addEventListener("change", selectBackground);
+elements.backgroundForm.addEventListener("submit", uploadBackground);
+elements.deleteBackground.addEventListener("click", deleteBackground);
 elements.engineUrl.addEventListener("input", () => {
   selectedSpeakerId = undefined;
   resetSpeakerList("エンジンURLを変更しました。話者一覧を再取得してください。");
@@ -189,6 +388,13 @@ elements.speakerList.addEventListener("change", () => {
 });
 elements.aiForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("ai", elements.aiForm, elements.saveAi, elements.aiStatus, elements.aiError); });
 elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("tts", elements.ttsForm, elements.saveTts, elements.ttsStatus, elements.ttsError); });
-if (!token) { setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true); [...elements.aiForm.elements, ...elements.ttsForm.elements, elements.reload].forEach((element) => { element.disabled = true; }); }
-else { connect(); loadConfig(); }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); });
+if (!token) {
+  setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
+  setMessage(elements.displayStatus, elements.displayError, "背景画像を変更するには管理用トークンが必要です。", true);
+  [...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+} else {
+  connect();
+  loadConfig();
+  loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
+}
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); releaseSelectedBackground(); });

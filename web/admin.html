@@ -4,17 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <link rel="stylesheet" href="/static/style.css?v=10">
 </head>
 <body class="admin-page">
   <main class="admin-card">
     <p class="eyebrow">Web AITuber</p>
     <h1>管理画面</h1>
-    <p class="lead">運用状況の確認と、AI・音声の設定を変更できます。</p>
+    <p class="lead">運用状況の確認と、AI・音声・表示の設定を変更できます。</p>
     <div class="admin-tabs" role="tablist" aria-label="管理項目">
       <button id="tab-operation" type="button" role="tab" aria-selected="true" aria-controls="panel-operation">運用</button>
       <button id="tab-ai" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" tabindex="-1">AI設定</button>
       <button id="tab-tts" type="button" role="tab" aria-selected="false" aria-controls="panel-tts" tabindex="-1">音声設定</button>
+      <button id="tab-display" type="button" role="tab" aria-selected="false" aria-controls="panel-display" tabindex="-1">表示設定</button>
     </div>
 
     <section id="panel-operation" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-operation">
@@ -74,7 +75,39 @@
       <p id="tts-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="tts-config-error" class="status" role="alert"></p>
     </section>
+
+    <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
+      <h2>表示設定</h2>
+      <p class="admin-help">背景画像をアップロードまたは削除した後は、メイン画面を再読み込みしてください。</p>
+      <div class="background-previews">
+        <figure class="background-preview">
+          <figcaption>現在の背景画像</figcaption>
+          <div class="background-preview-frame">
+            <img id="current-background-preview" alt="現在設定されている背景画像" hidden>
+            <p id="current-background-empty">背景画像は設定されていません。</p>
+          </div>
+        </figure>
+        <figure class="background-preview">
+          <figcaption>選択した画像</figcaption>
+          <div class="background-preview-frame">
+            <img id="selected-background-preview" alt="アップロードする背景画像のプレビュー" hidden>
+            <p id="selected-background-empty">画像を選択してください。</p>
+          </div>
+        </figure>
+      </div>
+      <form id="background-form" novalidate>
+        <label for="background-image">背景画像</label>
+        <input id="background-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="background-image-note">
+        <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺3840px以内のWebPへ変換して保存します。</p>
+        <div class="admin-form-actions">
+          <button id="upload-background" type="submit" disabled>背景画像をアップロード</button>
+          <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
+        </div>
+      </form>
+      <p id="display-config-status" class="status" role="status" aria-live="polite"></p>
+      <p id="display-config-error" class="status" role="alert"></p>
+    </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=9"></script>
+  <script type="module" src="/static/js/admin.js?v=10"></script>
 </body>
 </html>

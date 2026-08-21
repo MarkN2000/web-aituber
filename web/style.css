@@ -146,6 +146,9 @@ textarea::placeholder {
   position: fixed;
   inset: 0;
   overflow: hidden;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 #vrm-canvas {
@@ -526,16 +529,59 @@ textarea::placeholder {
 
 .admin-card #operation-status,
 .admin-card #ai-config-status,
-.admin-card #tts-config-status {
+.admin-card #tts-config-status,
+.admin-card #display-config-status {
   margin-top: 16px;
   color: #287a46;
 }
 
 .admin-card #operation-error,
 .admin-card #ai-config-error,
-.admin-card #tts-config-error {
+.admin-card #tts-config-error,
+.admin-card #display-config-error {
   margin-top: 8px;
   color: #b3261e;
+}
+
+.background-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.background-preview {
+  min-width: 0;
+  margin: 0;
+}
+
+.background-preview figcaption {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.background-preview-frame {
+  display: grid;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid #dededb;
+  border-radius: 8px;
+  background: #f2f2f0;
+}
+
+.background-preview-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.background-preview-frame p {
+  margin: 0;
+  padding: 16px;
+  color: #686868;
+  font-size: .85rem;
+  text-align: center;
 }
 
 [hidden] {
@@ -607,6 +653,10 @@ textarea::placeholder {
   }
 
   .tts-speaker-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .background-previews {
     grid-template-columns: 1fr;
   }
 }

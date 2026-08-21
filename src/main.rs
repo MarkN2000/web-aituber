@@ -50,6 +50,8 @@ async fn main() -> Result<()> {
         history: Arc::new(Mutex::new(ConversationHistory::default())),
         food_images: Arc::new(RwLock::new(HashMap::new())),
         audio_dir: Arc::new(audio_dir.clone()),
+        assets_dir: Arc::new(PathBuf::from("assets")),
+        background_image_lock: Arc::new(Mutex::new(())),
         search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };
 

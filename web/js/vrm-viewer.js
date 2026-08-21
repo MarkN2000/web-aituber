@@ -12,7 +12,7 @@ export class VrmViewer {
     this.clock = new THREE.Clock();
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.loader = new GLTFLoader();
     this.loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -69,7 +69,7 @@ export class VrmViewer {
     this.camera.position.fromArray(camera.position || [0, 1.35, 3]);
     this.camera.lookAt(...(camera.target || [0, 1.25, 0]));
     this.camera.updateProjectionMatrix();
-    this.renderer.setClearColor(config.background_color || '#202632');
+    this.renderer.setClearColor(0x000000, 0);
     const light = config.light || {};
     const directional = new THREE.DirectionalLight(light.color || '#ffffff', light.intensity ?? 2.2);
     directional.position.fromArray(light.position || [1, 2, 3]);

@@ -12,7 +12,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{fs, io::Write, path::Path as FilePath, time::Duration};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use uuid::Uuid;
 
@@ -27,6 +27,8 @@ const MAX_TEXT_CHARS: usize = 2_000;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_TEXT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_FOOD_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
+const MAX_BACKGROUND_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
+const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 
 pub fn router(state: AppState) -> Router {
     let admin_api = Router::new()
@@ -38,6 +40,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/tts-preview", post(tts_preview))
         .route("/api/admin/tts-speakers", post(tts_speakers))
+        .route(
+            "/api/admin/background-image",
+            post(upload_background_image)
+                .delete(delete_background_image)
+                .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
+        )
         .layer(middleware::map_response(add_admin_response_headers));
 
     Router::new()
@@ -58,7 +66,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/food-images/{id}", get(food_image))
         .nest_service("/static", ServeDir::new("web"))
-        .nest_service("/assets", ServeDir::new("assets"))
+        .nest_service("/assets", ServeDir::new(state.assets_dir.as_ref()))
         .nest_service("/audio", ServeDir::new(state.audio_dir.as_ref()))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -222,7 +230,195 @@ fn queue_error(error: tokio::sync::mpsc::error::TrySendError<Submission>) -> Api
 
 async fn display_config(State(state): State<AppState>) -> Response {
     let config = state.config.current();
-    Json(config.character.clone()).into_response()
+    let background_image_path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+    let background_image_url = match tokio::fs::try_exists(&background_image_path).await {
+        Ok(true) => Some(format!(
+            "/assets/{BACKGROUND_IMAGE_FILE_NAME}?v={}",
+            Uuid::new_v4()
+        )),
+        Ok(false) => None,
+        Err(error) => {
+            tracing::warn!(path = %background_image_path.display(), error = ?error, "背景画像の存在を確認できませんでした");
+            None
+        }
+    };
+    let response = DisplayConfigDto {
+        character: config.character.clone(),
+        background_image_url,
+    };
+    no_store(Json(response).into_response())
+}
+
+async fn upload_background_image(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    mut multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let mut image = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "背景画像を読み取れませんでした"),
+    } {
+        if field.name() != Some("image") || image.is_some() {
+            continue;
+        }
+        if field.content_type() != Some("image/webp") {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "背景画像はWebP形式で送信してください",
+            );
+        }
+        let bytes = match field.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return admin_error(StatusCode::BAD_REQUEST, "背景画像を読み取れませんでした");
+            }
+        };
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return admin_error(StatusCode::BAD_REQUEST, "背景画像は10MiB以下にしてください");
+        }
+        if !has_valid_webp_container(&bytes) {
+            return admin_error(StatusCode::BAD_REQUEST, "背景画像のWebP形式が不正です");
+        }
+        image = Some(bytes);
+    }
+
+    let Some(image) = image else {
+        return admin_error(StatusCode::BAD_REQUEST, "背景画像がありません");
+    };
+    let _guard = state.background_image_lock.lock().await;
+    let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
+        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Err(error)) => {
+            tracing::error!(error = ?error, "背景画像を保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "背景画像を保存できませんでした",
+            )
+        }
+        Err(error) => {
+            tracing::error!(error = ?error, "背景画像の保存処理を実行できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "背景画像を保存できませんでした",
+            )
+        }
+    }
+}
+
+async fn delete_background_image(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let _guard = state.background_image_lock.lock().await;
+    let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), error = ?error, "背景画像を削除できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "背景画像を削除できませんでした",
+            )
+        }
+    }
+}
+
+fn has_valid_webp_container(bytes: &[u8]) -> bool {
+    if bytes.len() < 20 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return false;
+    }
+    let riff_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    if riff_size.checked_add(8) != Some(bytes.len()) {
+        return false;
+    }
+    if !matches!(&bytes[12..16], b"VP8 " | b"VP8L" | b"VP8X") {
+        return false;
+    }
+    let chunk_size = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
+    let padded_chunk_size = match chunk_size.checked_add(chunk_size % 2) {
+        Some(size) => size,
+        None => return false,
+    };
+    20_usize
+        .checked_add(padded_chunk_size)
+        .is_some_and(|end| end <= bytes.len())
+}
+
+fn write_file_atomically(path: &FilePath, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| FilePath::new("."));
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(BACKGROUND_IMAGE_FILE_NAME);
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        replace_or_create_file(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_or_create_file(temporary: &FilePath, path: &FilePath) -> anyhow::Result<()> {
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_or_create_file(temporary: &FilePath, path: &FilePath) -> anyhow::Result<()> {
+    if !path.exists() {
+        fs::rename(temporary, path)?;
+        return Ok(());
+    }
+
+    use anyhow::bail;
+    use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+    fn wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(Some(0)).collect()
+    }
+
+    let destination = wide(path.as_os_str());
+    let replacement = wide(temporary.as_os_str());
+    let result = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if result == 0 {
+        bail!("背景画像を原子的に置き換えられません: {}", path.display());
+    }
+    Ok(())
 }
 
 async fn food_image(Path(id): Path<String>, State(state): State<AppState>) -> Response {
@@ -495,6 +691,13 @@ struct SubmitResponse {
 }
 
 #[derive(Serialize)]
+struct DisplayConfigDto {
+    #[serde(flatten)]
+    character: crate::config::CharacterConfig,
+    background_image_url: Option<String>,
+}
+
+#[derive(Serialize)]
 struct AdminReloadResponse {
     restart_required: bool,
 }
@@ -565,6 +768,18 @@ fn admin_no_store(mut response: Response) -> Response {
     response
 }
 
+fn no_store(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+fn admin_error(status: StatusCode, message: &'static str) -> Response {
+    admin_no_store((status, Json(serde_json::json!({ "error": message }))).into_response())
+}
+
 async fn add_admin_response_headers(response: Response) -> Response {
     admin_no_store(response)
 }
@@ -632,6 +847,8 @@ mod tests {
                 history: Arc::new(Mutex::new(ConversationHistory::default())),
                 food_images: Arc::new(RwLock::new(HashMap::new())),
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
+                assets_dir: Arc::new(PathBuf::from("target/test-assets")),
+                background_image_lock: Arc::new(Mutex::new(())),
                 search_filler_rotation: Arc::new(SearchFillerRotation::default()),
             },
             receiver,
@@ -640,6 +857,40 @@ mod tests {
 
     fn test_state() -> AppState {
         test_state_with_receiver().0
+    }
+
+    fn state_with_temporary_assets() -> (AppState, PathBuf) {
+        let assets_dir =
+            std::env::temp_dir().join(format!("web-aituber-assets-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let mut state = test_state();
+        state.assets_dir = Arc::new(assets_dir.clone());
+        (state, assets_dir)
+    }
+
+    fn multipart_image_body(boundary: &str, content_type: &str, image: &[u8]) -> Vec<u8> {
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"background.webp\"\r\nContent-Type: {content_type}\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(image);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    fn webp_container(payload: &[u8]) -> Vec<u8> {
+        let padding = payload.len() % 2;
+        let file_size = 20 + payload.len() + padding;
+        let mut image = Vec::with_capacity(file_size);
+        image.extend_from_slice(b"RIFF");
+        image.extend_from_slice(&u32::try_from(file_size - 8).unwrap().to_le_bytes());
+        image.extend_from_slice(b"WEBPVP8L");
+        image.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+        image.extend_from_slice(payload);
+        if padding != 0 {
+            image.push(0);
+        }
+        image
     }
 
     #[tokio::test]
@@ -1040,6 +1291,245 @@ mod tests {
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
+    }
+
+    #[tokio::test]
+    async fn background_image_upload_requires_token_and_atomically_replaces_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+        std::fs::write(&path, b"old-image").unwrap();
+        let boundary = "background-upload-boundary";
+        let image = webp_container(b"new-image");
+        let body = multipart_image_body(boundary, "image/webp", &image);
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/background-image")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(std::fs::read(&path).unwrap(), b"old-image");
+
+        let response = app
+            .oneshot(
+                Request::post("/api/admin/background-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(std::fs::read(&path).unwrap(), image);
+        assert!(std::fs::read_dir(&assets_dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_image_upload_creates_initial_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+        let boundary = "initial-background-boundary";
+        let image = webp_container(b"initial-image");
+        let body = multipart_image_body(boundary, "image/webp", &image);
+
+        let response = router(state)
+            .oneshot(
+                Request::post("/api/admin/background-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(std::fs::read(&path).unwrap(), image);
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_background_image_does_not_replace_current_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+        std::fs::write(&path, b"current-image").unwrap();
+        let boundary = "invalid-background-boundary";
+        let body = multipart_image_body(boundary, "image/webp", b"not-a-webp");
+
+        let response = router(state)
+            .oneshot(
+                Request::post("/api/admin/background-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(std::fs::read(&path).unwrap(), b"current-image");
+
+        let boundary = "wrong-mime-background-boundary";
+        let body = multipart_image_body(boundary, "image/png", &webp_container(b"valid-container"));
+        let mut state = test_state();
+        state.assets_dir = Arc::new(assets_dir.clone());
+        let response = router(state)
+            .oneshot(
+                Request::post("/api/admin/background-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(&path).unwrap(), b"current-image");
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_background_image_does_not_replace_current_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+        std::fs::write(&path, b"current-image").unwrap();
+        let boundary = "oversized-background-boundary";
+        let mut image = vec![0_u8; MAX_IMAGE_BYTES + 1];
+        let image_len = image.len();
+        image[..4].copy_from_slice(b"RIFF");
+        image[4..8].copy_from_slice(&u32::try_from(image_len - 8).unwrap().to_le_bytes());
+        image[8..12].copy_from_slice(b"WEBP");
+        image[12..16].copy_from_slice(b"VP8L");
+        image[16..20].copy_from_slice(&u32::try_from(image_len - 20).unwrap().to_le_bytes());
+        let body = multipart_image_body(boundary, "image/webp", &image);
+
+        let response = router(state)
+            .oneshot(
+                Request::post("/api/admin/background-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(&path).unwrap(), b"current-image");
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_image_delete_is_authenticated_and_idempotent() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
+        std::fs::write(&path, b"background").unwrap();
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/admin/background-image")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert!(path.exists());
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::delete("/api/admin/background-image?token=test-token")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+        assert!(!path.exists());
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn display_config_returns_fresh_background_url_only_when_image_exists() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let app = router(state);
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::get("/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
+        let missing_body = to_bytes(missing.into_body(), 64 * 1024).await.unwrap();
+        let missing_json: serde_json::Value = serde_json::from_slice(&missing_body).unwrap();
+        assert_eq!(
+            missing_json["background_image_url"],
+            serde_json::Value::Null
+        );
+
+        std::fs::write(assets_dir.join(BACKGROUND_IMAGE_FILE_NAME), b"background").unwrap();
+        let mut urls = Vec::new();
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/api/display-config")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let url = json["background_image_url"].as_str().unwrap().to_owned();
+            assert!(url.starts_with("/assets/background.webp?v="));
+            urls.push(url);
+        }
+        assert_ne!(urls[0], urls[1]);
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]
