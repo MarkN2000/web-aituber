@@ -23,10 +23,12 @@ web/
 ├─ main.html
 ├─ admin.html
 ├─ style.css
+├─ history.css
 └─ js/
    ├─ input.js
    ├─ main.js
    ├─ admin.js
+   ├─ history.js
    ├─ audio-queue.js
    ├─ vrm-viewer.js
    └─ motion.js

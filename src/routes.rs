@@ -169,8 +169,9 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState)
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
     let current = state.current.read().await.clone();
+    let history = state.history.lock().await.snapshot();
 
-    if send_json(&mut sender, &ServerEvent::Snapshot { current })
+    if send_json(&mut sender, &ServerEvent::Snapshot { current, history })
         .await
         .is_err()
     {
@@ -194,7 +195,8 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState)
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         let current = state.current.read().await.clone();
-                        if send_json(&mut sender, &ServerEvent::Snapshot { current }).await.is_err() {
+                        let history = state.history.lock().await.snapshot();
+                        if send_json(&mut sender, &ServerEvent::Snapshot { current, history }).await.is_err() {
                             break;
                         }
                     }

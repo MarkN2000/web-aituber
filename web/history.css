@@ -1,0 +1,118 @@
+:root {
+  --history-width: 560px;
+  --history-max-height: 58dvh;
+  --history-left: 24px;
+  --history-bottom: 112px;
+  --history-user-size: 1rem;
+  --history-ai-size: 1.28rem;
+  --history-user-outline: #087bb7;
+  --history-ai-outline: #d63f76;
+}
+
+.conversation-history {
+  position: fixed;
+  z-index: 2;
+  bottom: max(var(--history-bottom), calc(env(safe-area-inset-bottom) + 88px));
+  left: var(--history-left);
+  width: min(var(--history-width), calc(100vw - (var(--history-left) * 2)));
+  max-height: var(--history-max-height);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 34px);
+}
+
+.conversation-history::-webkit-scrollbar {
+  display: none;
+}
+
+.history-list {
+  display: flex;
+  min-height: var(--history-max-height);
+  flex-direction: column;
+  gap: 20px;
+  padding: 38px 4px 6px;
+}
+
+.history-turn:first-child {
+  margin-top: auto;
+}
+
+.history-message {
+  margin: 0;
+  color: #fff;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.history-message-user {
+  font-size: var(--history-user-size);
+  font-weight: 400;
+  line-height: 1.55;
+  -webkit-text-stroke: .55px var(--history-user-outline);
+  paint-order: stroke fill;
+  text-shadow:
+    1px 0 var(--history-user-outline),
+    -1px 0 var(--history-user-outline),
+    0 1px var(--history-user-outline),
+    0 -1px var(--history-user-outline),
+    0 2px 3px rgb(0 0 0 / 35%);
+}
+
+.history-message-ai {
+  margin-top: 5px;
+  padding-left: 18px;
+  font-family: "Arial Rounded MT Bold", "Hiragino Maru Gothic ProN", "Yu Gothic UI", system-ui, sans-serif;
+  font-size: var(--history-ai-size);
+  font-weight: 900;
+  letter-spacing: .025em;
+  line-height: 1.48;
+  -webkit-text-stroke: .9px var(--history-ai-outline);
+  paint-order: stroke fill;
+  text-shadow:
+    1px 0 var(--history-ai-outline),
+    -1px 0 var(--history-ai-outline),
+    0 1px var(--history-ai-outline),
+    0 -1px var(--history-ai-outline),
+    0 2px 4px rgb(0 0 0 / 42%);
+}
+
+.history-image-icon {
+  display: inline-grid;
+  width: 1.35em;
+  height: 1.35em;
+  margin-right: .35em;
+  vertical-align: -.25em;
+  place-items: center;
+}
+
+.history-image-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: rgb(255 255 255 / 30%);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 700px) {
+  :root {
+    --history-width: calc(100vw - 24px);
+    --history-max-height: 54dvh;
+    --history-left: 12px;
+    --history-bottom: 92px;
+    --history-user-size: .92rem;
+    --history-ai-size: 1.12rem;
+  }
+
+  .history-list {
+    gap: 15px;
+  }
+
+  .history-message-ai {
+    padding-left: 12px;
+  }
+}

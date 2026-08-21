@@ -13,6 +13,14 @@ pub struct InputImage {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ConversationTurn {
+    pub turn_id: String,
+    pub question: String,
+    pub answer: String,
+    pub has_image: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Emotion {
@@ -66,6 +74,10 @@ pub struct TurnState {
 pub enum ServerEvent {
     Snapshot {
         current: Option<TurnState>,
+        history: Vec<ConversationTurn>,
+    },
+    History {
+        turns: Vec<ConversationTurn>,
     },
     State {
         turn: TurnState,
@@ -114,5 +126,24 @@ mod tests {
         let value = serde_json::to_value(event).unwrap();
         assert_eq!(value["type"], "state");
         assert_eq!(value["turn"]["status"], "generating");
+    }
+
+    #[test]
+    fn snapshot_contains_shared_history() {
+        let event = ServerEvent::Snapshot {
+            current: None,
+            history: vec![ConversationTurn {
+                turn_id: "turn-1".to_owned(),
+                question: "質問".to_owned(),
+                answer: "回答".to_owned(),
+                has_image: true,
+            }],
+        };
+
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "snapshot");
+        assert_eq!(value["history"][0]["question"], "質問");
+        assert_eq!(value["history"][0]["answer"], "回答");
+        assert_eq!(value["history"][0]["has_image"], true);
     }
 }

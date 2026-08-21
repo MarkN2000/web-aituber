@@ -4,7 +4,10 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{config::LlmConfig, protocol::Submission, state::ConversationTurn};
+use crate::{
+    config::LlmConfig,
+    protocol::{ConversationTurn, Submission},
+};
 
 pub async fn generate(
     client: &Client,
@@ -116,8 +119,10 @@ mod tests {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         let history = vec![ConversationTurn {
+            turn_id: "turn-1".to_owned(),
             question: "前の質問".to_owned(),
             answer: "前の回答".to_owned(),
+            has_image: false,
         }];
         let submission = Submission {
             id: "turn-2".to_owned(),

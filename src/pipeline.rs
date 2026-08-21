@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio,
-    protocol::{Emotion, ServerEvent, Submission, TurnState, TurnStatus},
+    protocol::{ConversationTurn, Emotion, ServerEvent, Submission, TurnState, TurnStatus},
     state::{ActiveTurn, AppState},
     tts,
 };
@@ -56,11 +56,17 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
 
     match result {
         Ok(completed) => {
-            state
-                .history
-                .lock()
-                .await
-                .record(submission.text.clone(), completed.answer);
+            let history = {
+                let mut history = state.history.lock().await;
+                history.record(ConversationTurn {
+                    turn_id: submission.id.clone(),
+                    question: submission.text.clone(),
+                    answer: completed.answer,
+                    has_image: submission.image.is_some(),
+                });
+                history.snapshot()
+            };
+            send_event(state, ServerEvent::History { turns: history });
             send_event(
                 state,
                 ServerEvent::Complete {
@@ -194,7 +200,7 @@ async fn process_active_submission(
 
     Ok(CompletedSubmission {
         audio_files,
-        answer,
+        answer: display_answer(&segments),
     })
 }
 
@@ -267,6 +273,13 @@ struct CompletedSubmission {
 struct AnswerSegment {
     text: String,
     emotion: Emotion,
+}
+
+fn display_answer(segments: &[AnswerSegment]) -> String {
+    segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect()
 }
 
 fn split_answer(answer: &str) -> Vec<AnswerSegment> {
@@ -342,5 +355,11 @@ mod tests {
         let result = split_answer("[joy]こんにちは。");
         assert_eq!(result[0].text, "こんにちは。");
         assert_eq!(result[0].emotion, Emotion::Neutral);
+    }
+
+    #[test]
+    fn 履歴用回答から感情タグを除去する() {
+        let segments = split_answer("[happy]こんにちは！[sad]また明日。");
+        assert_eq!(display_answer(&segments), "こんにちは！また明日。");
     }
 }

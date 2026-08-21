@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::AppConfig,
-    protocol::{ServerEvent, Submission, TurnState},
+    protocol::{ConversationTurn, ServerEvent, Submission, TurnState},
 };
 
 #[derive(Clone)]
@@ -27,12 +27,6 @@ pub struct ActiveTurn {
 
 const CONVERSATION_HISTORY_LIMIT: usize = 10;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConversationTurn {
-    pub question: String,
-    pub answer: String,
-}
-
 #[derive(Default)]
 pub struct ConversationHistory {
     turns: VecDeque<ConversationTurn>,
@@ -43,11 +37,11 @@ impl ConversationHistory {
         self.turns.iter().cloned().collect()
     }
 
-    pub fn record(&mut self, question: String, answer: String) {
+    pub fn record(&mut self, turn: ConversationTurn) {
         if self.turns.len() == CONVERSATION_HISTORY_LIMIT {
             self.turns.pop_front();
         }
-        self.turns.push_back(ConversationTurn { question, answer });
+        self.turns.push_back(turn);
     }
 }
 
@@ -59,12 +53,18 @@ mod tests {
     fn conversation_history_keeps_latest_ten_turns() {
         let mut history = ConversationHistory::default();
         for index in 0..11 {
-            history.record(format!("質問{index}"), format!("回答{index}"));
+            history.record(ConversationTurn {
+                turn_id: format!("turn-{index}"),
+                question: format!("質問{index}"),
+                answer: format!("回答{index}"),
+                has_image: index == 10,
+            });
         }
 
         let turns = history.snapshot();
         assert_eq!(turns.len(), 10);
         assert_eq!(turns.first().unwrap().question, "質問1");
         assert_eq!(turns.last().unwrap().answer, "回答10");
+        assert!(turns.last().unwrap().has_image);
     }
 }

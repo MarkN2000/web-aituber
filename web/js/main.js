@@ -1,4 +1,5 @@
 import { AudioQueue } from "./audio-queue.js";
+import { ConversationHistory } from "./history.js";
 import { isEmotion } from "./motion.js";
 import { VrmViewer } from "./vrm-viewer.js";
 
@@ -12,7 +13,11 @@ const elements = {
   status: document.querySelector("#status"),
   question: document.querySelector("#question"),
   answer: document.querySelector("#answer"),
+  history: document.querySelector("#conversation-history"),
+  historyList: document.querySelector("#history-list"),
 };
+
+const historyView = new ConversationHistory(elements.history, elements.historyList);
 
 let viewer;
 let queue;
@@ -83,6 +88,7 @@ function connect() {
 function handleServerEvent(event) {
   switch (event.type) {
     case "snapshot":
+      historyView.render(event.history || []);
       if (currentTurn && currentTurn.turn_id !== event.current?.turn_id) {
         queue.cancelTurn(currentTurn.turn_id);
         receivedTurns.delete(currentTurn.turn_id);
@@ -96,6 +102,9 @@ function handleServerEvent(event) {
         setTurn(undefined);
         setStatus("次の質問を待っています");
       }
+      break;
+    case "history":
+      historyView.render(event.turns || []);
       break;
     case "state":
       if (currentTurn?.turn_id !== event.turn.turn_id) {

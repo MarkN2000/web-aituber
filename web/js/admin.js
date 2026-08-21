@@ -66,6 +66,8 @@ function handleServerEvent(event) {
       setCurrentTurn(event.turn);
       setStatus(event.turn.status === "generating" ? "回答生成中" : "発話中");
       break;
+    case "history":
+      break;
     case "segment":
       if (currentTurn?.turn_id !== event.turn_id) {
         setCurrentTurn({ turn_id: event.turn_id, question: "" });
