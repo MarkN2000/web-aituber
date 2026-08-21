@@ -44,6 +44,7 @@
     },
     "background_color": "#1b1b22",
     "background_music_volume": 0.3,
+    "background_music_duck_ratio": 0.4,
     "light": {
       "color": "#ffffff",
       "intensity": 1.5,

@@ -1,5 +1,5 @@
 import { AudioQueue } from "./audio-queue.js";
-import { BackgroundMusic } from "./background-music.js?v=2";
+import { BackgroundMusic } from "./background-music.js?v=3";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
@@ -276,7 +276,11 @@ async function startMain() {
     if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
     const config = await response.json();
     applyBackground(config);
-    void backgroundMusic?.play(config.background_music_url, config.background_music_volume);
+    void backgroundMusic?.play(
+      config.background_music_url,
+      config.background_music_volume,
+      config.background_music_duck_ratio,
+    );
 
     viewer = new VrmViewer(elements.canvas, showViewerMessage);
     await viewer.load(config);

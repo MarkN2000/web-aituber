@@ -129,7 +129,12 @@
             <input id="background-music-volume" type="range" min="0" max="100" step="1" value="30">
             <output id="background-music-volume-value" for="background-music-volume">30%</output>
           </div>
-          <p class="field-note admin-field-note">発話中は、この音量の40%まで自動的に下がります。</p>
+          <label for="background-music-duck-ratio">発話中の音量（通常時に対する割合）</label>
+          <div class="volume-control">
+            <input id="background-music-duck-ratio" type="range" min="0" max="100" step="1" value="40">
+            <output id="background-music-duck-ratio-value" for="background-music-duck-ratio">40%</output>
+          </div>
+          <p class="field-note admin-field-note">通常時30%、発話中40%なら、発話中の実効音量は12%です。</p>
           <div class="admin-form-actions">
             <button id="save-background-music-volume" type="submit">音量を保存</button>
           </div>
@@ -139,6 +144,6 @@
       </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=11"></script>
+  <script type="module" src="/static/js/admin.js?v=12"></script>
 </body>
 </html>

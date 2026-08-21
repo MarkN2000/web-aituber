@@ -24,6 +24,7 @@ const elements = {
   currentMusic: document.querySelector("#current-background-music"), currentMusicEmpty: document.querySelector("#current-background-music-empty"), selectedMusic: document.querySelector("#selected-background-music"),
   musicVolumeForm: document.querySelector("#background-music-volume-form"), musicVolume: document.querySelector("#background-music-volume"),
   musicVolumeValue: document.querySelector("#background-music-volume-value"), saveMusicVolume: document.querySelector("#save-background-music-volume"),
+  musicDuckRatio: document.querySelector("#background-music-duck-ratio"), musicDuckRatioValue: document.querySelector("#background-music-duck-ratio-value"),
   musicStatus: document.querySelector("#background-music-status"), musicError: document.querySelector("#background-music-error"),
   displayStatus: document.querySelector("#display-config-status"), displayError: document.querySelector("#display-config-error"),
 };
@@ -76,11 +77,14 @@ function updateMusicControls() {
   elements.uploadMusic.disabled = musicBusy || !selectedMusicFile || !token;
   elements.deleteMusic.disabled = musicBusy || !currentMusicExists || !token;
   elements.musicVolume.disabled = musicBusy || !token;
+  elements.musicDuckRatio.disabled = musicBusy || !token;
   elements.saveMusicVolume.disabled = musicBusy || !token;
 }
-function updateMusicVolumeLabel() {
+function updateMusicVolumeLabels() {
   elements.musicVolumeValue.value = `${elements.musicVolume.value}%`;
   elements.musicVolumeValue.textContent = `${elements.musicVolume.value}%`;
+  elements.musicDuckRatioValue.value = `${elements.musicDuckRatio.value}%`;
+  elements.musicDuckRatioValue.textContent = `${elements.musicDuckRatio.value}%`;
   elements.currentMusic.volume = Number(elements.musicVolume.value) / 100;
 }
 function showCurrentMusic(url) {
@@ -213,7 +217,9 @@ async function loadDisplayConfig({ background = true, music = true, volume = tru
   if (volume) {
     const configuredVolume = Number(config.background_music_volume);
     elements.musicVolume.value = String(Math.round((Number.isFinite(configuredVolume) ? configuredVolume : 0.3) * 100));
-    updateMusicVolumeLabel();
+    const configuredDuckRatio = Number(config.background_music_duck_ratio);
+    elements.musicDuckRatio.value = String(Math.round((Number.isFinite(configuredDuckRatio) ? configuredDuckRatio : 0.4) * 100));
+    updateMusicVolumeLabels();
   }
   if (background) await showCurrentBackground(config.background_image_url);
 }
@@ -367,10 +373,11 @@ async function saveMusicVolume(event) {
   setMessage(elements.musicStatus, elements.musicError);
   try {
     const volume = Number(elements.musicVolume.value) / 100;
+    const duckRatio = Number(elements.musicDuckRatio.value) / 100;
     const response = await fetch(adminUrl("/api/admin/background-music-volume"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ volume }),
+      body: JSON.stringify({ volume, duck_ratio: duckRatio }),
     });
     if (!response.ok) throw new Error(await readError(response, "BGM音量を保存できませんでした。"));
     setMessage(elements.musicStatus, elements.musicError, "BGM音量を保存しました。メイン画面を再読み込みすると反映されます。");
@@ -521,7 +528,8 @@ elements.deleteBackground.addEventListener("click", deleteBackground);
 elements.musicInput.addEventListener("change", selectMusic);
 elements.musicForm.addEventListener("submit", uploadMusic);
 elements.deleteMusic.addEventListener("click", deleteMusic);
-elements.musicVolume.addEventListener("input", updateMusicVolumeLabel);
+elements.musicVolume.addEventListener("input", updateMusicVolumeLabels);
+elements.musicDuckRatio.addEventListener("input", updateMusicVolumeLabels);
 elements.musicVolumeForm.addEventListener("submit", saveMusicVolume);
 elements.engineUrl.addEventListener("input", () => {
   selectedSpeakerId = undefined;

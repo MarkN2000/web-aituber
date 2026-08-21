@@ -1,4 +1,3 @@
-const DUCK_RATIO = 0.4;
 const TRANSITION_SECONDS = 0.25;
 const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA";
 
@@ -18,6 +17,7 @@ export class BackgroundMusic {
     this.source.connect(this.gain);
     this.gain.connect(this.context.destination);
     this.volume = 0.3;
+    this.duckRatio = 0.4;
     this.ducked = false;
     this.transition = undefined;
     this.disposed = false;
@@ -41,9 +41,9 @@ export class BackgroundMusic {
     }
   }
 
-  async play(url, volume) {
+  async play(url, volume, duckRatio) {
     if (this.disposed) return;
-    this.setVolume(volume, false);
+    this.setLevels(volume, duckRatio, false);
     if (!url) return;
     this.audio.src = url;
     try {
@@ -53,16 +53,18 @@ export class BackgroundMusic {
     }
   }
 
-  setVolume(volume, transition = true) {
+  setLevels(volume, duckRatio, transition = true) {
     const parsed = Number(volume);
     this.volume = Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 0.3;
-    this.moveTo(this.volume * (this.ducked ? DUCK_RATIO : 1), transition);
+    const parsedDuckRatio = Number(duckRatio);
+    this.duckRatio = Number.isFinite(parsedDuckRatio) ? Math.min(1, Math.max(0, parsedDuckRatio)) : 0.4;
+    this.moveTo(this.volume * (this.ducked ? this.duckRatio : 1), transition);
   }
 
   setDucked(ducked) {
     if (this.disposed) return;
     this.ducked = Boolean(ducked);
-    this.moveTo(this.volume * (this.ducked ? DUCK_RATIO : 1), true);
+    this.moveTo(this.volume * (this.ducked ? this.duckRatio : 1), true);
   }
 
   moveTo(target, transition) {

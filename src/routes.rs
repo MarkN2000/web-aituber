@@ -531,15 +531,20 @@ async fn update_background_music_volume(
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
-    if !request.volume.is_finite() || !(0.0..=1.0).contains(&request.volume) {
+    if !request.volume.is_finite()
+        || !(0.0..=1.0).contains(&request.volume)
+        || !request.duck_ratio.is_finite()
+        || !(0.0..=1.0).contains(&request.duck_ratio)
+    {
         return admin_error(
             StatusCode::BAD_REQUEST,
-            "BGM音量は0.0から1.0で指定してください",
+            "BGM音量と発話中比率は0.0から1.0で指定してください",
         );
     }
 
     match state.config.update_and_save(move |config| {
         config.character.background_music_volume = request.volume;
+        config.character.background_music_duck_ratio = request.duck_ratio;
     }) {
         Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
@@ -914,6 +919,7 @@ struct DisplayConfigDto {
 #[derive(Deserialize)]
 struct BackgroundMusicVolumeRequest {
     volume: f32,
+    duck_ratio: f32,
 }
 
 #[derive(Serialize)]
@@ -2091,6 +2097,7 @@ mod tests {
         let body = to_bytes(missing.into_body(), 64 * 1024).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["background_music_volume"], 0.3);
+        assert_eq!(json["background_music_duck_ratio"], 0.4);
         assert_eq!(json["background_music_url"], serde_json::Value::Null);
 
         std::fs::write(assets_dir.join(background_music::FILE_NAME), b"music").unwrap();
@@ -2116,7 +2123,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn background_music_volume_update_validates_range_and_preserves_other_settings() {
+    async fn background_music_volume_update_validates_ranges_and_preserves_other_settings() {
         let assets_dir =
             std::env::temp_dir().join(format!("web-aituber-assets-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&assets_dir).unwrap();
@@ -2137,14 +2144,19 @@ mod tests {
             .oneshot(
                 Request::put("/api/admin/background-music-volume")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"volume":0.7}"#))
+                    .body(Body::from(r#"{"volume":0.7,"duck_ratio":0.6}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
-        for invalid in [r#"{"volume":-0.1}"#, r#"{"volume":1.1}"#] {
+        for invalid in [
+            r#"{"volume":-0.1,"duck_ratio":0.4}"#,
+            r#"{"volume":1.1,"duck_ratio":0.4}"#,
+            r#"{"volume":0.3,"duck_ratio":-0.1}"#,
+            r#"{"volume":0.3,"duck_ratio":1.1}"#,
+        ] {
             let response = app
                 .clone()
                 .oneshot(
@@ -2158,13 +2170,15 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
-        for valid in [0.0, 1.0, 0.7] {
+        for (volume, duck_ratio) in [(0.0, 0.0), (1.0, 1.0), (0.7, 0.6)] {
             let response = app
                 .clone()
                 .oneshot(
                     Request::put("/api/admin/background-music-volume?token=test-token")
                         .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(format!(r#"{{"volume":{valid}}}"#)))
+                        .body(Body::from(format!(
+                            r#"{{"volume":{volume},"duck_ratio":{duck_ratio}}}"#
+                        )))
                         .unwrap(),
                 )
                 .await
@@ -2175,11 +2189,16 @@ mod tests {
 
         let saved = AppConfig::load_from_path(&config_path).unwrap();
         assert_eq!(saved.character.background_music_volume, 0.7);
+        assert_eq!(saved.character.background_music_duck_ratio, 0.6);
         assert_eq!(saved.llm.model, "externally-updated-model");
         assert_eq!(state.config.current().llm.model, "externally-updated-model");
         assert_eq!(
             state.config.current().character.background_music_volume,
             0.7
+        );
+        assert_eq!(
+            state.config.current().character.background_music_duck_ratio,
+            0.6
         );
         std::fs::remove_file(config_path).unwrap();
         std::fs::remove_dir_all(assets_dir).unwrap();
