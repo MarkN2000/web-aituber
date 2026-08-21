@@ -36,10 +36,10 @@ jobs:
         run: rustc --version
 
       - name: テスト
-        run: cargo test --locked
+        run: cargo test --release --locked
 
       - name: 静的解析
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --release --locked --all-targets -- -D warnings
 
       - name: リリースビルド
         run: cargo build --release --locked
@@ -69,7 +69,7 @@ jobs:
           cp "assets/README.md" "$package_root/assets/"
           cp "config.example.json" "$package_root/"
           cp "README.md" "$package_root/"
-          tar -C dist -czf "web-aituber-linux-x64.tar.gz" "web-aituber-linux-x64"
+          tar -C dist -czf "$GITHUB_WORKSPACE/dist/web-aituber-linux-x64.tar.gz" "web-aituber-linux-x64"
 
       - name: 配布物を保存
         uses: actions/upload-artifact@v4
