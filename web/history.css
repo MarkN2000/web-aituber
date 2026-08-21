@@ -3,7 +3,7 @@
   --history-max-height: 58dvh;
   --history-left: 24px;
   --history-bottom: 112px;
-  --history-user-size: 1rem;
+  --history-user-size: .55rem;
   --history-ai-size: 1.28rem;
   --history-user-outline: #087bb7;
   --history-ai-outline: #d63f76;
@@ -104,7 +104,7 @@
     --history-max-height: 54dvh;
     --history-left: 12px;
     --history-bottom: 92px;
-    --history-user-size: .92rem;
+    --history-user-size: .52rem;
     --history-ai-size: 1.12rem;
   }
 
