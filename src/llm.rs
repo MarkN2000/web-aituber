@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use chrono::{FixedOffset, SecondsFormat, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -15,7 +16,8 @@ pub async fn generate(
     submission: &Submission,
     history: &[ConversationTurn],
 ) -> Result<String> {
-    let messages = build_messages(config, submission, history);
+    let current_time = current_japan_time();
+    let messages = build_messages(config, submission, history, &current_time);
     let request = json!({
         "model": config.model,
         "messages": messages
@@ -59,9 +61,14 @@ fn build_messages(
     config: &LlmConfig,
     submission: &Submission,
     history: &[ConversationTurn],
+    current_time: &str,
 ) -> Vec<Value> {
     let mut messages = Vec::with_capacity(history.len() * 2 + 2);
-    messages.push(json!({ "role": "system", "content": config.system_prompt }));
+    let system_prompt = format!(
+        "{}\n\n現在日時（日本時間）: {current_time}",
+        config.system_prompt.trim_end()
+    );
+    messages.push(json!({ "role": "system", "content": system_prompt }));
 
     for turn in history {
         messages.push(json!({ "role": "user", "content": turn.question }));
@@ -82,6 +89,13 @@ fn build_messages(
     }
     messages.push(json!({ "role": "user", "content": content }));
     messages
+}
+
+fn current_japan_time() -> String {
+    let japan_offset = FixedOffset::east_opt(9 * 60 * 60).expect("日本時間のUTCオフセットは有効");
+    Utc::now()
+        .with_timezone(&japan_offset)
+        .to_rfc3339_opts(SecondsFormat::Secs, false)
 }
 
 #[derive(Deserialize)]
@@ -133,9 +147,20 @@ mod tests {
             }),
         };
 
-        let messages = build_messages(&config.llm, &submission, &history);
+        let messages = build_messages(
+            &config.llm,
+            &submission,
+            &history,
+            "2026-08-07T03:00:00+09:00",
+        );
 
         assert_eq!(messages.len(), 4);
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .unwrap()
+                .ends_with("現在日時（日本時間）: 2026-08-07T03:00:00+09:00")
+        );
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[1]["content"], "前の質問");
         assert_eq!(messages[2]["role"], "assistant");
@@ -147,5 +172,10 @@ mod tests {
                 .unwrap()
                 .starts_with("data:image/png;base64,")
         );
+    }
+
+    #[test]
+    fn current_time_uses_japan_offset() {
+        assert!(current_japan_time().ends_with("+09:00"));
     }
 }
