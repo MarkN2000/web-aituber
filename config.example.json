@@ -6,7 +6,12 @@
     "api_key": "ここにAPIキーを設定",
     "model": "gpt-5.6-luna",
     "system_prompt": "あなたはイベント会場の案内役です。各文の文頭に [neutral]、[happy]、[sad]、[angry]、[surprised] のいずれかを一つ付けて、日本語で簡潔に答えてください。",
-    "search_filler": "少し調べてみますね。"
+    "search_fillers": [
+      "少し調べてみますね。",
+      "確認してみます。",
+      "ちょっと待ってくださいね。",
+      "詳しく調べてみます。"
+    ]
   },
   "tts": {
     "engine_url": "http://127.0.0.1:10101",

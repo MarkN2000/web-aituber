@@ -135,9 +135,10 @@ async fn process_active_submission(
             if search.is_ok() {
                 let file_name = format!("{}-search.webm", submission.id);
                 let output_path = state.audio_dir.join(&file_name);
+                let filler = state.next_search_filler();
                 match cancellable(
                     cancel,
-                    prepare_search_filler(state, &output_path),
+                    prepare_search_filler(state, filler, &output_path),
                 ).await {
                     Ok(duration_ms) => {
                         audio_files.push(output_path);
@@ -271,13 +272,12 @@ async fn process_active_submission(
     })
 }
 
-async fn prepare_search_filler(state: &AppState, output_path: &std::path::Path) -> Result<u64> {
-    let wav = tts::synthesize(
-        &state.http,
-        &state.config.tts,
-        &state.config.llm.search_filler,
-    )
-    .await?;
+async fn prepare_search_filler(
+    state: &AppState,
+    filler: &str,
+    output_path: &std::path::Path,
+) -> Result<u64> {
+    let wav = tts::synthesize(&state.http, &state.config.tts, filler).await?;
     audio::transcode_to_opus(&state.config.ffmpeg_path, &wav, output_path).await
 }
 

@@ -20,8 +20,8 @@ pub struct LlmConfig {
     pub api_key: String,
     pub model: String,
     pub system_prompt: String,
-    #[serde(default = "default_search_filler")]
-    pub search_filler: String,
+    #[serde(default = "default_search_fillers")]
+    pub search_fillers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -122,7 +122,12 @@ impl AppConfig {
         required("llm.api_url", &self.llm.api_url)?;
         required("llm.api_key", &self.llm.api_key)?;
         required("llm.model", &self.llm.model)?;
-        required("llm.search_filler", &self.llm.search_filler)?;
+        if self.llm.search_fillers.is_empty() {
+            bail!("設定項目 llm.search_fillers は1件以上必要です");
+        }
+        for (index, filler) in self.llm.search_fillers.iter().enumerate() {
+            required(&format!("llm.search_fillers[{index}]"), filler)?;
+        }
         required("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         required("character.vrm_url", &self.character.vrm_url)?;
@@ -130,8 +135,8 @@ impl AppConfig {
     }
 }
 
-fn default_search_filler() -> String {
-    "少し調べてみますね。".to_owned()
+fn default_search_fillers() -> Vec<String> {
+    vec!["少し調べてみますね。".to_owned()]
 }
 
 fn required(name: &str, value: &str) -> Result<()> {
@@ -158,5 +163,17 @@ mod tests {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn search_fillers_require_at_least_one_non_empty_sentence() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+
+        config.llm.search_fillers.clear();
+        assert!(config.validate().is_err());
+
+        config.llm.search_fillers = vec!["   ".to_owned()];
+        assert!(config.validate().is_err());
     }
 }

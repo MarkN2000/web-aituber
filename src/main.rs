@@ -7,7 +7,7 @@ use uuid::Uuid;
 use web_aituber::{
     config::AppConfig,
     pipeline, routes,
-    state::{AppState, ConversationHistory},
+    state::{AppState, ConversationHistory, SearchFillerRotation},
 };
 
 const SUBMISSION_QUEUE_SIZE: usize = 100;
@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
         active: Arc::new(Mutex::new(None)),
         history: Arc::new(Mutex::new(ConversationHistory::default())),
         audio_dir: Arc::new(audio_dir.clone()),
+        search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };
 
     tokio::spawn(pipeline::run(state.clone(), submission_receiver));

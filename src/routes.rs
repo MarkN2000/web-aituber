@@ -270,7 +270,10 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::{config::AppConfig, state::ConversationHistory};
+    use crate::{
+        config::AppConfig,
+        state::{ConversationHistory, SearchFillerRotation},
+    };
 
     fn test_state_with_receiver() -> (AppState, mpsc::Receiver<Submission>) {
         let mut config: AppConfig =
@@ -288,6 +291,7 @@ mod tests {
                 active: Arc::new(Mutex::new(None)),
                 history: Arc::new(Mutex::new(ConversationHistory::default())),
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
+                search_filler_rotation: Arc::new(SearchFillerRotation::default()),
             },
             receiver,
         )
