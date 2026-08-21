@@ -28,6 +28,7 @@ pub struct AppState {
     pub audio_dir: Arc<PathBuf>,
     pub assets_dir: Arc<PathBuf>,
     pub background_image_lock: Arc<Mutex<()>>,
+    pub background_music_lock: Arc<Mutex<()>>,
     pub search_filler_rotation: Arc<SearchFillerRotation>,
 }
 

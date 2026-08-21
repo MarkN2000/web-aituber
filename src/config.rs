@@ -63,6 +63,8 @@ pub struct CharacterConfig {
     pub camera: CameraConfig,
     #[serde(default)]
     pub background_color: String,
+    #[serde(default = "default_background_music_volume")]
+    pub background_music_volume: f32,
     #[serde(default)]
     pub light: LightConfig,
 }
@@ -98,6 +100,7 @@ impl Default for CharacterConfig {
             food_prop: FoodPropConfig::default(),
             camera: CameraConfig::default(),
             background_color: "#1b1b22".to_owned(),
+            background_music_volume: default_background_music_volume(),
             light: LightConfig::default(),
         }
     }
@@ -138,6 +141,10 @@ fn default_vrm_url() -> String {
     "/assets/model.vrm".to_owned()
 }
 
+fn default_background_music_volume() -> f32 {
+    0.3
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let path = env::var("APP_CONFIG_FILE").unwrap_or_else(|_| "config.json".to_owned());
@@ -173,6 +180,11 @@ impl AppConfig {
         validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         required("character.vrm_url", &self.character.vrm_url)?;
+        if !self.character.background_music_volume.is_finite()
+            || !(0.0..=1.0).contains(&self.character.background_music_volume)
+        {
+            bail!("設定項目 character.background_music_volume は0.0から1.0の有限値にしてください");
+        }
         if !self.character.food_prop.size.is_finite() || self.character.food_prop.size <= 0.0 {
             bail!("設定項目 character.food_prop.size は0より大きい有限値にしてください");
         }
@@ -358,6 +370,7 @@ mod tests {
         assert_eq!(character.vrm_url, "/assets/model.vrm");
         assert_eq!(character.food_prop.size, 0.2);
         assert_eq!(character.camera.fov, 30.0);
+        assert_eq!(character.background_music_volume, 0.3);
         assert_eq!(character.light.ambient_intensity, 0.8);
     }
 
@@ -391,6 +404,21 @@ mod tests {
         config.llm.system_prompt = "通常質問の指示".to_owned();
         config.llm.food_reaction_prompt = "   ".to_owned();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn background_music_volume_must_be_between_zero_and_one() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+
+        for valid in [0.0, 0.3, 1.0] {
+            config.character.background_music_volume = valid;
+            assert!(config.validate().is_ok());
+        }
+        for invalid in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+            config.character.background_music_volume = invalid;
+            assert!(config.validate().is_err());
+        }
     }
 
     #[test]

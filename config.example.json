@@ -43,6 +43,7 @@
       "target": [0.0, 1.2, 0.0]
     },
     "background_color": "#1b1b22",
+    "background_music_volume": 0.3,
     "light": {
       "color": "#ffffff",
       "intensity": 1.5,

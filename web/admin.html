@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=10">
+  <link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -78,7 +78,7 @@
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
-      <p class="admin-help">背景画像をアップロードまたは削除した後は、メイン画面を再読み込みしてください。</p>
+      <p class="admin-help">背景画像やBGMを変更した後は、メイン画面を再読み込みしてください。</p>
       <div class="background-previews">
         <figure class="background-preview">
           <figcaption>現在の背景画像</figcaption>
@@ -106,8 +106,39 @@
       </form>
       <p id="display-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="display-config-error" class="status" role="alert"></p>
+      <section class="display-setting-section" aria-labelledby="background-music-title">
+        <h3 id="background-music-title">BGM</h3>
+        <p class="admin-help">MP3、OGG、WAVをWebM/Opusへ変換し、メイン画面でループ再生します。</p>
+        <div class="background-music-preview">
+          <p class="background-music-label">現在のBGM</p>
+          <audio id="current-background-music" controls loop preload="metadata" hidden></audio>
+          <p id="current-background-music-empty">BGMは設定されていません。</p>
+        </div>
+        <form id="background-music-form" novalidate>
+          <label for="background-music">BGM音源</label>
+          <input id="background-music" type="file" accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" aria-describedby="background-music-note">
+          <p id="background-music-note" class="field-note admin-field-note">MP3、OGG、WAV（100MiB以下）。選択中: <span id="selected-background-music">なし</span></p>
+          <div class="admin-form-actions">
+            <button id="upload-background-music" type="submit" disabled>BGMをアップロード</button>
+            <button id="delete-background-music" class="secondary-button" type="button" disabled>BGMを削除</button>
+          </div>
+        </form>
+        <form id="background-music-volume-form" novalidate>
+          <label for="background-music-volume">通常再生時の音量</label>
+          <div class="volume-control">
+            <input id="background-music-volume" type="range" min="0" max="100" step="1" value="30">
+            <output id="background-music-volume-value" for="background-music-volume">30%</output>
+          </div>
+          <p class="field-note admin-field-note">発話中は、この音量の30%まで自動的に下がります。</p>
+          <div class="admin-form-actions">
+            <button id="save-background-music-volume" type="submit">音量を保存</button>
+          </div>
+        </form>
+        <p id="background-music-status" class="status" role="status" aria-live="polite"></p>
+        <p id="background-music-error" class="status" role="alert"></p>
+      </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=10"></script>
+  <script type="module" src="/static/js/admin.js?v=11"></script>
 </body>
 </html>

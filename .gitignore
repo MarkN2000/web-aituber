@@ -4,4 +4,5 @@
 *.wav
 *.log
 /assets/*.vrm
+/assets/background.webp
 /assets/motions/*.vrma

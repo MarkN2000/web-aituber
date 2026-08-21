@@ -1,5 +1,6 @@
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
+const MAX_BACKGROUND_MUSIC_BYTES = 100 * 1024 * 1024;
 const MAX_BACKGROUND_DIMENSION = 3840;
 const BACKGROUND_WEBP_QUALITY = 0.85;
 const elements = {
@@ -18,6 +19,12 @@ const elements = {
   uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
   currentBackgroundPreview: document.querySelector("#current-background-preview"), currentBackgroundEmpty: document.querySelector("#current-background-empty"),
   selectedBackgroundPreview: document.querySelector("#selected-background-preview"), selectedBackgroundEmpty: document.querySelector("#selected-background-empty"),
+  musicForm: document.querySelector("#background-music-form"), musicInput: document.querySelector("#background-music"),
+  uploadMusic: document.querySelector("#upload-background-music"), deleteMusic: document.querySelector("#delete-background-music"),
+  currentMusic: document.querySelector("#current-background-music"), currentMusicEmpty: document.querySelector("#current-background-music-empty"), selectedMusic: document.querySelector("#selected-background-music"),
+  musicVolumeForm: document.querySelector("#background-music-volume-form"), musicVolume: document.querySelector("#background-music-volume"),
+  musicVolumeValue: document.querySelector("#background-music-volume-value"), saveMusicVolume: document.querySelector("#save-background-music-volume"),
+  musicStatus: document.querySelector("#background-music-status"), musicError: document.querySelector("#background-music-error"),
   displayStatus: document.querySelector("#display-config-status"), displayError: document.querySelector("#display-config-error"),
 };
 let currentTurn;
@@ -31,6 +38,9 @@ let selectedBackgroundBlob;
 let selectedBackgroundUrl;
 let currentBackgroundExists = false;
 let backgroundBusy = false;
+let selectedMusicFile;
+let currentMusicExists = false;
+let musicBusy = false;
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -60,6 +70,53 @@ function updateBackgroundControls() {
   elements.backgroundInput.disabled = backgroundBusy || !token;
   elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
   elements.deleteBackground.disabled = backgroundBusy || !currentBackgroundExists || !token;
+}
+function updateMusicControls() {
+  elements.musicInput.disabled = musicBusy || !token;
+  elements.uploadMusic.disabled = musicBusy || !selectedMusicFile || !token;
+  elements.deleteMusic.disabled = musicBusy || !currentMusicExists || !token;
+  elements.musicVolume.disabled = musicBusy || !token;
+  elements.saveMusicVolume.disabled = musicBusy || !token;
+}
+function updateMusicVolumeLabel() {
+  elements.musicVolumeValue.value = `${elements.musicVolume.value}%`;
+  elements.musicVolumeValue.textContent = `${elements.musicVolume.value}%`;
+  elements.currentMusic.volume = Number(elements.musicVolume.value) / 100;
+}
+function showCurrentMusic(url) {
+  currentMusicExists = Boolean(url);
+  elements.currentMusic.pause();
+  elements.currentMusic.removeAttribute("src");
+  elements.currentMusic.load();
+  elements.currentMusic.hidden = !url;
+  elements.currentMusicEmpty.hidden = Boolean(url);
+  elements.currentMusicEmpty.textContent = url ? "" : "BGMは設定されていません。";
+  if (url) elements.currentMusic.src = url;
+  updateMusicControls();
+}
+function selectMusic() {
+  if (musicBusy) return;
+  const [file] = elements.musicInput.files;
+  selectedMusicFile = undefined;
+  elements.selectedMusic.textContent = "なし";
+  setMessage(elements.musicStatus, elements.musicError);
+  if (!file) {
+    updateMusicControls();
+    return;
+  }
+  const extension = file.name.toLowerCase().split(".").pop();
+  if (!["mp3", "ogg", "wav"].includes(extension)) {
+    elements.musicInput.value = "";
+    setMessage(elements.musicStatus, elements.musicError, "MP3、OGG、WAV音源を選択してください。", true);
+  } else if (file.size > MAX_BACKGROUND_MUSIC_BYTES) {
+    elements.musicInput.value = "";
+    setMessage(elements.musicStatus, elements.musicError, "BGM音源は100MiB以下にしてください。", true);
+  } else {
+    selectedMusicFile = file;
+    elements.selectedMusic.textContent = file.name;
+    setMessage(elements.musicStatus, elements.musicError, "アップロードすると現在のBGMを上書きします。");
+  }
+  updateMusicControls();
 }
 async function showCurrentBackground(url) {
   currentBackgroundExists = Boolean(url);
@@ -148,11 +205,17 @@ async function convertBackground(file) {
   if (blob.size > MAX_BACKGROUND_BYTES) throw new Error("WebP変換後の画像が10MiBを超えています。別の画像を選択してください。");
   return blob;
 }
-async function loadDisplayConfig() {
+async function loadDisplayConfig({ background = true, music = true, volume = true } = {}) {
   const response = await fetch("/api/display-config", { cache: "no-store" });
-  if (!response.ok) throw new Error("現在の背景画像を確認できませんでした。");
+  if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
-  await showCurrentBackground(config.background_image_url);
+  if (music) showCurrentMusic(config.background_music_url);
+  if (volume) {
+    const configuredVolume = Number(config.background_music_volume);
+    elements.musicVolume.value = String(Math.round((Number.isFinite(configuredVolume) ? configuredVolume : 0.3) * 100));
+    updateMusicVolumeLabel();
+  }
+  if (background) await showCurrentBackground(config.background_image_url);
 }
 async function selectBackground() {
   if (backgroundBusy) return;
@@ -196,7 +259,7 @@ async function uploadBackground(event) {
     releaseSelectedBackground();
     elements.backgroundInput.value = "";
     try {
-      await loadDisplayConfig();
+      await loadDisplayConfig({ music: false, volume: false });
       setMessage(elements.displayStatus, elements.displayError, "背景画像を更新しました。メイン画面を再読み込みすると反映されます。");
     } catch (error) {
       console.error(error);
@@ -223,7 +286,7 @@ async function deleteBackground() {
     if (!response.ok) throw new Error(await readError(response, "背景画像を削除できませんでした。"));
     await showCurrentBackground(null);
     try {
-      await loadDisplayConfig();
+      await loadDisplayConfig({ music: false, volume: false });
       setMessage(elements.displayStatus, elements.displayError, "背景画像を削除しました。メイン画面を再読み込みすると背景色へ戻ります。");
     } catch (error) {
       console.error(error);
@@ -236,6 +299,88 @@ async function deleteBackground() {
     backgroundBusy = false;
     elements.deleteBackground.textContent = original;
     updateBackgroundControls();
+  }
+}
+
+async function uploadMusic(event) {
+  event.preventDefault();
+  if (!token || !selectedMusicFile || musicBusy) return;
+  musicBusy = true;
+  updateMusicControls();
+  const original = elements.uploadMusic.textContent;
+  elements.uploadMusic.textContent = "変換・アップロード中…";
+  setMessage(elements.musicStatus, elements.musicError);
+  try {
+    const body = new FormData();
+    body.append("audio", selectedMusicFile, selectedMusicFile.name);
+    const response = await fetch(adminUrl("/api/admin/background-music"), { method: "POST", body });
+    if (!response.ok) throw new Error(await readError(response, "BGMをアップロードできませんでした。"));
+    selectedMusicFile = undefined;
+    elements.musicInput.value = "";
+    elements.selectedMusic.textContent = "なし";
+    try {
+      await loadDisplayConfig({ background: false, volume: false });
+      setMessage(elements.musicStatus, elements.musicError, "BGMを更新しました。メイン画面を再読み込みすると反映されます。");
+    } catch (error) {
+      console.error(error);
+      setMessage(elements.musicStatus, elements.musicError, "BGMは更新されましたが、現在の表示を更新できませんでした。", true);
+    }
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.musicStatus, elements.musicError, error.message || "BGMをアップロードできませんでした。", true);
+  } finally {
+    musicBusy = false;
+    elements.uploadMusic.textContent = original;
+    updateMusicControls();
+  }
+}
+
+async function deleteMusic() {
+  if (!token || musicBusy || !window.confirm("現在のBGMを削除しますか？")) return;
+  musicBusy = true;
+  updateMusicControls();
+  const original = elements.deleteMusic.textContent;
+  elements.deleteMusic.textContent = "削除中…";
+  setMessage(elements.musicStatus, elements.musicError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/background-music"), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, "BGMを削除できませんでした。"));
+    showCurrentMusic(null);
+    setMessage(elements.musicStatus, elements.musicError, "BGMを削除しました。メイン画面を再読み込みすると反映されます。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.musicStatus, elements.musicError, error.message || "BGMを削除できませんでした。", true);
+  } finally {
+    musicBusy = false;
+    elements.deleteMusic.textContent = original;
+    updateMusicControls();
+  }
+}
+
+async function saveMusicVolume(event) {
+  event.preventDefault();
+  if (!token || musicBusy) return;
+  musicBusy = true;
+  updateMusicControls();
+  const original = elements.saveMusicVolume.textContent;
+  elements.saveMusicVolume.textContent = "保存中…";
+  setMessage(elements.musicStatus, elements.musicError);
+  try {
+    const volume = Number(elements.musicVolume.value) / 100;
+    const response = await fetch(adminUrl("/api/admin/background-music-volume"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ volume }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "BGM音量を保存できませんでした。"));
+    setMessage(elements.musicStatus, elements.musicError, "BGM音量を保存しました。メイン画面を再読み込みすると反映されます。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.musicStatus, elements.musicError, error.message || "BGM音量を保存できませんでした。", true);
+  } finally {
+    musicBusy = false;
+    elements.saveMusicVolume.textContent = original;
+    updateMusicControls();
   }
 }
 
@@ -373,6 +518,11 @@ elements.loadSpeakers.addEventListener("click", loadSpeakers);
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
 elements.deleteBackground.addEventListener("click", deleteBackground);
+elements.musicInput.addEventListener("change", selectMusic);
+elements.musicForm.addEventListener("submit", uploadMusic);
+elements.deleteMusic.addEventListener("click", deleteMusic);
+elements.musicVolume.addEventListener("input", updateMusicVolumeLabel);
+elements.musicVolumeForm.addEventListener("submit", saveMusicVolume);
 elements.engineUrl.addEventListener("input", () => {
   selectedSpeakerId = undefined;
   resetSpeakerList("エンジンURLを変更しました。話者一覧を再取得してください。");
@@ -391,10 +541,11 @@ elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault();
 if (!token) {
   setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
   setMessage(elements.displayStatus, elements.displayError, "背景画像を変更するには管理用トークンが必要です。", true);
-  [...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+  setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
+  [...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadConfig();
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); releaseSelectedBackground(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); releaseSelectedBackground(); elements.currentMusic.pause(); });

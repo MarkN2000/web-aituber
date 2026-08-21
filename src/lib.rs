@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod background_music;
 pub mod config;
 pub mod llm;
 pub mod pipeline;

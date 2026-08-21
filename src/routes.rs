@@ -13,10 +13,12 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::Path as FilePath, time::Duration};
+use tokio::io::AsyncWriteExt;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
+    background_music,
     config::{TtsConfig, validate_http_url},
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
@@ -28,6 +30,7 @@ const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_TEXT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_FOOD_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 const MAX_BACKGROUND_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
+const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_BYTES + 128 * 1024;
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 
 pub fn router(state: AppState) -> Router {
@@ -45,6 +48,16 @@ pub fn router(state: AppState) -> Router {
             post(upload_background_image)
                 .delete(delete_background_image)
                 .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
+        )
+        .route(
+            "/api/admin/background-music",
+            post(upload_background_music)
+                .delete(delete_background_music)
+                .layer(DefaultBodyLimit::max(MAX_BACKGROUND_MUSIC_REQUEST_BYTES)),
+        )
+        .route(
+            "/api/admin/background-music-volume",
+            axum::routing::put(update_background_music_volume),
         )
         .layer(middleware::map_response(add_admin_response_headers));
 
@@ -242,9 +255,23 @@ async fn display_config(State(state): State<AppState>) -> Response {
             None
         }
     };
+    let background_music_path = state.assets_dir.join(background_music::FILE_NAME);
+    let background_music_url = match tokio::fs::try_exists(&background_music_path).await {
+        Ok(true) => Some(format!(
+            "/assets/{}?v={}",
+            background_music::FILE_NAME,
+            Uuid::new_v4()
+        )),
+        Ok(false) => None,
+        Err(error) => {
+            tracing::warn!(path = %background_music_path.display(), error = ?error, "BGMの存在を確認できませんでした");
+            None
+        }
+    };
     let response = DisplayConfigDto {
         character: config.character.clone(),
         background_image_url,
+        background_music_url,
     };
     no_store(Json(response).into_response())
 }
@@ -332,6 +359,192 @@ async fn delete_background_image(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "背景画像を削除できませんでした",
             )
+        }
+    }
+}
+
+async fn upload_background_music(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    mut multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let guard = state.background_music_lock.clone().lock_owned().await;
+    if let Err(error) = tokio::fs::create_dir_all(state.assets_dir.as_ref()).await {
+        tracing::error!(error = ?error, "BGMの保存先を作成できませんでした");
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "BGMを保存できませんでした",
+        );
+    }
+
+    let mut uploaded = None;
+    while let Some(mut field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "BGMを読み取れませんでした"),
+    } {
+        if field.name() != Some("audio") || uploaded.is_some() {
+            continue;
+        }
+        let Some(extension) = field
+            .file_name()
+            .and_then(background_music::accepted_extension)
+        else {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "BGMはMP3、OGG、WAV形式で送信してください",
+            );
+        };
+        let temporary = background_music::TemporaryFiles::new(&state.assets_dir, extension);
+        let mut file = match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temporary.input())
+            .await
+        {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::error!(error = ?error, "BGMの一時ファイルを作成できませんでした");
+                return admin_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "BGMを保存できませんでした",
+                );
+            }
+        };
+
+        let mut size = 0_usize;
+        loop {
+            let chunk = match field.chunk().await {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    return admin_error(StatusCode::BAD_REQUEST, "BGMを読み取れませんでした");
+                }
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
+            size = match checked_background_music_size(size, chunk.len()) {
+                Some(size) => size,
+                None => {
+                    return admin_error(StatusCode::BAD_REQUEST, "BGMは100MiB以下にしてください");
+                }
+            };
+            if let Err(error) = file.write_all(&chunk).await {
+                tracing::error!(error = ?error, "BGMの一時ファイルへ書き込めませんでした");
+                return admin_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "BGMを保存できませんでした",
+                );
+            }
+        }
+        if size == 0 {
+            return admin_error(StatusCode::BAD_REQUEST, "BGMが空です");
+        }
+        if let Err(error) = file.sync_all().await {
+            tracing::error!(error = ?error, "BGMの一時ファイルを同期できませんでした");
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BGMを保存できませんでした",
+            );
+        }
+        drop(file);
+        uploaded = Some(temporary);
+    }
+
+    let Some(temporary) = uploaded else {
+        return admin_error(StatusCode::BAD_REQUEST, "BGMがありません");
+    };
+    let ffmpeg_path = state.config.current().ffmpeg_path.clone();
+    let conversion = tokio::spawn(async move {
+        let result =
+            background_music::convert(&ffmpeg_path, temporary.input(), temporary.output()).await;
+        (result, temporary, guard)
+    });
+    let (conversion_result, temporary, _guard) = match conversion.await {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::error!(error = ?error, "BGM変換タスクが異常終了しました");
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BGMを変換できませんでした",
+            );
+        }
+    };
+    if let Err(error) = conversion_result {
+        tracing::warn!(error = ?error, "BGMを変換できませんでした");
+        return admin_error(StatusCode::BAD_REQUEST, "BGMを変換できませんでした");
+    }
+
+    let source = temporary.output().to_owned();
+    let destination = state.assets_dir.join(background_music::FILE_NAME);
+    match background_music::install_atomically(&source, &destination) {
+        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => {
+            tracing::error!(error = ?error, "BGMを保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BGMを保存できませんでした",
+            )
+        }
+    }
+}
+
+fn checked_background_music_size(current: usize, chunk: usize) -> Option<usize> {
+    current
+        .checked_add(chunk)
+        .filter(|size| *size <= background_music::MAX_SOURCE_BYTES)
+}
+
+async fn delete_background_music(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let _guard = state.background_music_lock.lock().await;
+    let path = state.assets_dir.join(background_music::FILE_NAME);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), error = ?error, "BGMを削除できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BGMを削除できませんでした",
+            )
+        }
+    }
+}
+
+async fn update_background_music_volume(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<BackgroundMusicVolumeRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if !request.volume.is_finite() || !(0.0..=1.0).contains(&request.volume) {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "BGM音量は0.0から1.0で指定してください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.character.background_music_volume = request.volume;
+    }) {
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => {
+            tracing::warn!(error = ?error, "BGM音量を保存できませんでした");
+            admin_error(StatusCode::BAD_REQUEST, "BGM音量を保存できませんでした")
         }
     }
 }
@@ -695,6 +908,12 @@ struct DisplayConfigDto {
     #[serde(flatten)]
     character: crate::config::CharacterConfig,
     background_image_url: Option<String>,
+    background_music_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BackgroundMusicVolumeRequest {
+    volume: f32,
 }
 
 #[derive(Serialize)]
@@ -849,6 +1068,7 @@ mod tests {
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
                 assets_dir: Arc::new(PathBuf::from("target/test-assets")),
                 background_image_lock: Arc::new(Mutex::new(())),
+                background_music_lock: Arc::new(Mutex::new(())),
                 search_filler_rotation: Arc::new(SearchFillerRotation::default()),
             },
             receiver,
@@ -876,6 +1096,119 @@ mod tests {
         body.extend_from_slice(image);
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
         body
+    }
+
+    fn multipart_audio_body(
+        boundary: &str,
+        file_name: &str,
+        content_type: &str,
+        audio: &[u8],
+    ) -> Vec<u8> {
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"{file_name}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(audio);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    fn fake_ffmpeg(directory: &FilePath, succeeds: bool) -> PathBuf {
+        let source_path = directory.join("fake-ffmpeg.rs");
+        let source = if succeeds {
+            r#"fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    std::fs::copy(&args[5], args.last().unwrap()).unwrap();
+}
+"#
+        } else {
+            "fn main() { std::process::exit(1); }\n"
+        };
+        std::fs::write(&source_path, source).unwrap();
+        let path = directory.join(if cfg!(windows) {
+            "fake-ffmpeg.exe"
+        } else {
+            "fake-ffmpeg"
+        });
+        let status = std::process::Command::new("rustc")
+            .arg(&source_path)
+            .arg("-o")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        path
+    }
+
+    fn slow_fake_ffmpeg(directory: &FilePath) -> (PathBuf, PathBuf) {
+        let source_path = directory.join("slow-fake-ffmpeg.rs");
+        let marker_path = directory.join("slow-ffmpeg-started");
+        let source = r#"fn main() {
+    let marker = std::env::current_exe().unwrap().with_file_name("slow-ffmpeg-started");
+    std::fs::write(marker, b"started").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    std::fs::copy(&args[5], args.last().unwrap()).unwrap();
+}
+"#;
+        std::fs::write(&source_path, source).unwrap();
+        let path = directory.join(if cfg!(windows) {
+            "slow-fake-ffmpeg.exe"
+        } else {
+            "slow-fake-ffmpeg"
+        });
+        let status = std::process::Command::new("rustc")
+            .arg(&source_path)
+            .arg("-o")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        (path, marker_path)
+    }
+
+    fn state_with_temporary_music_config(
+        assets_dir: &FilePath,
+        ffmpeg_path: &FilePath,
+    ) -> (AppState, PathBuf) {
+        let mut state = test_state();
+        state.assets_dir = Arc::new(assets_dir.to_owned());
+        let config_path =
+            std::env::temp_dir().join(format!("web-aituber-config-{}.json", Uuid::new_v4()));
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.admin_token = "test-token".to_owned();
+        config.ffmpeg_path = ffmpeg_path.to_string_lossy().into_owned();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        (state, config_path)
+    }
+
+    fn assert_no_background_music_temporary_files(assets_dir: &FilePath) {
+        assert!(!has_background_music_temporary_files(assets_dir));
+    }
+
+    fn has_background_music_temporary_files(assets_dir: &FilePath) -> bool {
+        std::fs::read_dir(assets_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".background-music.webm.")
+        })
+    }
+
+    #[test]
+    fn background_music_size_limit_accepts_100_mib_only() {
+        assert_eq!(
+            checked_background_music_size(0, background_music::MAX_SOURCE_BYTES),
+            Some(background_music::MAX_SOURCE_BYTES)
+        );
+        assert_eq!(
+            checked_background_music_size(background_music::MAX_SOURCE_BYTES, 1),
+            None
+        );
+        assert_eq!(checked_background_music_size(usize::MAX, 1), None);
     }
 
     fn webp_container(payload: &[u8]) -> Vec<u8> {
@@ -1529,6 +1862,326 @@ mod tests {
         }
         assert_ne!(urls[0], urls[1]);
 
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_music_upload_requires_token_and_creates_then_replaces_file() {
+        let (_base_state, assets_dir) = state_with_temporary_assets();
+        let ffmpeg_path = fake_ffmpeg(&assets_dir, true);
+        let (state, config_path) = state_with_temporary_music_config(&assets_dir, &ffmpeg_path);
+        let destination = assets_dir.join(background_music::FILE_NAME);
+        let boundary = "background-music-upload";
+        let first = multipart_audio_body(boundary, "music.WAV", "audio/wav", b"first-audio");
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/background-music")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(first.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert!(!destination.exists());
+
+        let created = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/background-music?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(first))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::NO_CONTENT);
+        assert_eq!(created.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"first-audio");
+
+        let second = multipart_audio_body(
+            boundary,
+            "music.oGg",
+            "application/octet-stream",
+            b"second-audio",
+        );
+        let replaced = app
+            .oneshot(
+                Request::post("/api/admin/background-music?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(second))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replaced.status(), StatusCode::NO_CONTENT);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"second-audio");
+        assert_no_background_music_temporary_files(&assets_dir);
+
+        std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_music_request_cancellation_waits_for_conversion_and_cleans_up() {
+        let (_base_state, assets_dir) = state_with_temporary_assets();
+        let (ffmpeg_path, marker_path) = slow_fake_ffmpeg(&assets_dir);
+        let (state, config_path) = state_with_temporary_music_config(&assets_dir, &ffmpeg_path);
+        let lock = state.background_music_lock.clone();
+        let destination = assets_dir.join(background_music::FILE_NAME);
+        let boundary = "background-music-cancel";
+        let request = Request::post("/api/admin/background-music?token=test-token")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(multipart_audio_body(
+                boundary,
+                "music.wav",
+                "audio/wav",
+                b"audio",
+            )))
+            .unwrap();
+        let upload = tokio::spawn(router(state).oneshot(request));
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !marker_path.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        upload.abort();
+        let _ = upload.await;
+        assert!(lock.try_lock().is_err());
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while has_background_music_temporary_files(&assets_dir) || lock.try_lock().is_err() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!destination.exists());
+        assert_no_background_music_temporary_files(&assets_dir);
+
+        std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_music_rejects_unsupported_extension_and_failed_conversion_keeps_current_file()
+     {
+        let (_base_state, assets_dir) = state_with_temporary_assets();
+        let ffmpeg_path = fake_ffmpeg(&assets_dir, false);
+        let (state, config_path) = state_with_temporary_music_config(&assets_dir, &ffmpeg_path);
+        let destination = assets_dir.join(background_music::FILE_NAME);
+        std::fs::write(&destination, b"current-music").unwrap();
+        let boundary = "background-music-invalid";
+        let app = router(state);
+
+        let unsupported = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/background-music?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_audio_body(
+                        boundary,
+                        "music.webm",
+                        "audio/webm",
+                        b"unsupported",
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unsupported.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"current-music");
+
+        let failed = app
+            .oneshot(
+                Request::post("/api/admin/background-music?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_audio_body(
+                        boundary,
+                        "music.mp3",
+                        "text/plain",
+                        b"invalid-audio",
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(failed.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"current-music");
+        assert_no_background_music_temporary_files(&assets_dir);
+
+        std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_music_delete_is_authenticated_and_idempotent() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let destination = assets_dir.join(background_music::FILE_NAME);
+        std::fs::write(&destination, b"music").unwrap();
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/admin/background-music")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert!(destination.exists());
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::delete("/api/admin/background-music?token=test-token")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+        assert!(!destination.exists());
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn display_config_returns_music_volume_and_fresh_url() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let app = router(state);
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::get("/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(missing.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["background_music_volume"], 0.3);
+        assert_eq!(json["background_music_url"], serde_json::Value::Null);
+
+        std::fs::write(assets_dir.join(background_music::FILE_NAME), b"music").unwrap();
+        let mut urls = Vec::new();
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/api/display-config")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let url = json["background_music_url"].as_str().unwrap().to_owned();
+            assert!(url.starts_with("/assets/background-music.webm?v="));
+            urls.push(url);
+        }
+        assert_ne!(urls[0], urls[1]);
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn background_music_volume_update_validates_range_and_preserves_other_settings() {
+        let assets_dir =
+            std::env::temp_dir().join(format!("web-aituber-assets-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let ffmpeg_path = fake_ffmpeg(&assets_dir, true);
+        let (state, config_path) = state_with_temporary_music_config(&assets_dir, &ffmpeg_path);
+        let app = router(state.clone());
+
+        let mut externally_updated = AppConfig::load_from_path(&config_path).unwrap();
+        externally_updated.llm.model = "externally-updated-model".to_owned();
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&externally_updated).unwrap(),
+        )
+        .unwrap();
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/background-music-volume")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"volume":0.7}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        for invalid in [r#"{"volume":-0.1}"#, r#"{"volume":1.1}"#] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/background-music-volume?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(invalid))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        for valid in [0.0, 1.0, 0.7] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/background-music-volume?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(format!(r#"{{"volume":{valid}}}"#)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.character.background_music_volume, 0.7);
+        assert_eq!(saved.llm.model, "externally-updated-model");
+        assert_eq!(state.config.current().llm.model, "externally-updated-model");
+        assert_eq!(
+            state.config.current().character.background_music_volume,
+            0.7
+        );
+        std::fs::remove_file(config_path).unwrap();
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 

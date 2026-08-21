@@ -1,4 +1,5 @@
 import { AudioQueue } from "./audio-queue.js";
+import { BackgroundMusic } from "./background-music.js?v=1";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
@@ -32,6 +33,7 @@ const historyView = new ConversationHistory(
 
 let viewer;
 let queue;
+let backgroundMusic;
 let socket;
 let started = false;
 let currentTurn;
@@ -96,10 +98,16 @@ function setEmotion(value) {
 function cleanTurn(turnId) {
   receivedTurns.delete(turnId);
   if (currentTurn?.turn_id !== turnId) return;
+  backgroundMusic?.setDucked(false);
   setEmotion("neutral");
   viewer?.clearFoodProp();
   viewer?.resumeIdle();
   setTurn(undefined);
+}
+
+function cancelTurnAudio(turnId) {
+  queue.cancelTurn(turnId);
+  backgroundMusic?.setDucked(false);
 }
 
 function connect() {
@@ -127,7 +135,7 @@ function handleServerEvent(event) {
     case "snapshot":
       historyView.render(event.history || []);
       if (currentTurn && currentTurn.turn_id !== event.current?.turn_id) {
-        queue.cancelTurn(currentTurn.turn_id);
+        cancelTurnAudio(currentTurn.turn_id);
         receivedTurns.delete(currentTurn.turn_id);
         viewer.stopLipSync();
         viewer.clearFoodProp();
@@ -145,7 +153,7 @@ function handleServerEvent(event) {
     case "state":
       if (currentTurn?.turn_id !== event.turn.turn_id) {
         if (currentTurn) {
-          queue.cancelTurn(currentTurn.turn_id);
+          cancelTurnAudio(currentTurn.turn_id);
           receivedTurns.delete(currentTurn.turn_id);
           viewer.stopLipSync();
           viewer.clearFoodProp();
@@ -153,6 +161,7 @@ function handleServerEvent(event) {
         }
         clearAnswer();
         motionPlayedForTurn = undefined;
+        backgroundMusic?.setDucked(false);
       }
       setTurn(event.turn);
       break;
@@ -169,12 +178,12 @@ function handleServerEvent(event) {
       }
       break;
     case "cancelled":
-      queue.cancelTurn(event.turn_id);
+      cancelTurnAudio(event.turn_id);
       receivedTurns.delete(event.turn_id);
       cleanTurn(event.turn_id);
       break;
     case "error":
-      queue.cancelTurn(event.turn_id);
+      cancelTurnAudio(event.turn_id);
       receivedTurns.delete(event.turn_id);
       if (currentTurn?.turn_id === event.turn_id) {
         showError(event.message || "回答の生成に失敗しました。");
@@ -192,10 +201,11 @@ function receiveSegment(segment) {
   receivedTurns.add(segment.turn_id);
   if (currentTurn?.turn_id !== segment.turn_id) {
     if (currentTurn) {
-      queue.cancelTurn(currentTurn.turn_id);
+      cancelTurnAudio(currentTurn.turn_id);
       receivedTurns.delete(currentTurn.turn_id);
     }
     viewer.stopLipSync();
+    backgroundMusic?.setDucked(false);
     setEmotion("neutral");
     setTurn({ turn_id: segment.turn_id, question: "" });
     clearAnswer();
@@ -219,6 +229,7 @@ function receiveSegment(segment) {
 
 function onAudioStart(item, analyser) {
   const segment = item.meta;
+  backgroundMusic?.setDucked(true);
   setEmotion(segment.kind === "filler" ? "neutral" : segment.emotion);
   viewer.startLipSync(analyser);
   if (segment.kind !== "filler" && motionPlayedForTurn !== segment.turn_id && segment.motion && isEmotion(segment.emotion)) {
@@ -228,6 +239,7 @@ function onAudioStart(item, analyser) {
 }
 
 function onAudioEnd(item) {
+  backgroundMusic?.setDucked(false);
   viewer.stopLipSync();
   if (item.meta.is_last) cleanTurn(item.turnId);
 }
@@ -235,18 +247,36 @@ function onAudioEnd(item) {
 async function startMain() {
   elements.start.disabled = true;
   elements.startError.textContent = "";
+  let backgroundMusicResume;
   try {
+    try {
+      backgroundMusic = new BackgroundMusic({
+        onError: () => showError("BGMを再生できませんでした。"),
+      });
+      backgroundMusicResume = backgroundMusic.resume().catch((error) => {
+        console.error("BGMの音声機能を開始できませんでした", error);
+        showError("BGMを再生できませんでした。");
+      });
+    } catch (error) {
+      console.error("BGMの音声機能を準備できませんでした", error);
+      showError("BGMを再生できませんでした。");
+    }
     queue = new AudioQueue({
       onStart: onAudioStart,
       onEnd: onAudioEnd,
-      onError: () => showError("音声を再生できませんでした。"),
+      onError: () => {
+        showError("音声を再生できませんでした。");
+      },
     });
-    await queue.unlock();
+    const queueUnlock = queue.unlock();
+    await queueUnlock;
+    await backgroundMusicResume;
 
     const response = await fetch("/api/display-config", { cache: "no-store" });
     if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
     const config = await response.json();
     applyBackground(config);
+    void backgroundMusic?.play(config.background_music_url, config.background_music_volume);
 
     viewer = new VrmViewer(elements.canvas, showViewerMessage);
     await viewer.load(config);
@@ -259,6 +289,8 @@ async function startMain() {
     elements.start.disabled = false;
     queue?.dispose();
     queue = undefined;
+    backgroundMusic?.dispose();
+    backgroundMusic = undefined;
     viewer?.dispose();
     viewer = undefined;
   }
@@ -268,6 +300,7 @@ elements.start.addEventListener("click", startMain);
 window.addEventListener("beforeunload", () => {
   window.clearTimeout(reconnectTimer);
   queue?.dispose();
+  backgroundMusic?.dispose();
   viewer?.dispose();
   socket?.close();
 });

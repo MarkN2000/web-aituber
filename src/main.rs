@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         audio_dir: Arc::new(audio_dir.clone()),
         assets_dir: Arc::new(PathBuf::from("assets")),
         background_image_lock: Arc::new(Mutex::new(())),
+        background_music_lock: Arc::new(Mutex::new(())),
         search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };
 
