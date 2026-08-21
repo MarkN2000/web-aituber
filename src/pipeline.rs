@@ -262,7 +262,7 @@ async fn process_active_submission(
         }
     }
 
-    if let Some(image) = submission.food_image() {
+    if let Some(image) = submission.food_vrm_image() {
         state
             .food_images
             .write()

@@ -79,7 +79,7 @@ fn build_request(
     }
 
     let mut content = vec![json!({ "type": "input_text", "text": submission.text })];
-    if let Some(image) = submission.food_image() {
+    if let Some(image) = submission.food_ai_image() {
         let data_url = format!(
             "data:{};base64,{}",
             image.mime_type,
@@ -418,7 +418,11 @@ mod tests {
         let submission = Submission {
             id: "turn-2".to_owned(),
             kind: SubmissionKind::Food {
-                image: InputImage {
+                vrm_image: InputImage {
+                    mime_type: "image/webp".to_owned(),
+                    data: vec![4, 5, 6],
+                },
+                ai_image: InputImage {
                     mime_type: "image/webp".to_owned(),
                     data: vec![1, 2, 3],
                 },
@@ -435,6 +439,10 @@ mod tests {
 
         assert_eq!(request["input"].as_array().unwrap().len(), 1);
         assert_eq!(request["input"][0]["content"][1]["type"], "input_image");
+        assert_eq!(
+            request["input"][0]["content"][1]["image_url"],
+            "data:image/webp;base64,AQID"
+        );
         assert!(request.get("tools").is_none());
         assert!(request.get("tool_choice").is_none());
         assert!(request.get("max_tool_calls").is_none());

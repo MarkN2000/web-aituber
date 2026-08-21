@@ -10,7 +10,10 @@ pub struct Submission {
 #[derive(Clone, Debug)]
 pub enum SubmissionKind {
     Question,
-    Food { image: InputImage },
+    Food {
+        vrm_image: InputImage,
+        ai_image: InputImage,
+    },
 }
 
 impl Submission {
@@ -18,9 +21,16 @@ impl Submission {
         matches!(&self.kind, SubmissionKind::Food { .. })
     }
 
-    pub fn food_image(&self) -> Option<&InputImage> {
+    pub fn food_vrm_image(&self) -> Option<&InputImage> {
         match &self.kind {
-            SubmissionKind::Food { image } => Some(image),
+            SubmissionKind::Food { vrm_image, .. } => Some(vrm_image),
+            SubmissionKind::Question => None,
+        }
+    }
+
+    pub fn food_ai_image(&self) -> Option<&InputImage> {
+        match &self.kind {
+            SubmissionKind::Food { ai_image, .. } => Some(ai_image),
             SubmissionKind::Question => None,
         }
     }

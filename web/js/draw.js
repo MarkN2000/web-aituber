@@ -1,5 +1,6 @@
 const CANVAS_SIZE = 512;
-const SUBMISSION_SIZE = 128;
+const VRM_IMAGE_SIZE = 256;
+const AI_IMAGE_SIZE = 128;
 const WEBP_QUALITY = 0.75;
 const ALPHA_THRESHOLD = 128;
 const GAP_CLOSE_RADIUS = 2;
@@ -177,7 +178,7 @@ function fillEnclosedAreas(image, width, height) {
   }
 }
 
-function createSubmissionCanvas() {
+function createFilledCanvas() {
   const filled = document.createElement("canvas");
   filled.width = CANVAS_SIZE;
   filled.height = CANVAS_SIZE;
@@ -187,17 +188,31 @@ function createSubmissionCanvas() {
   const image = filledContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   fillEnclosedAreas(image, CANVAS_SIZE, CANVAS_SIZE);
   filledContext.putImageData(image, 0, 0);
-
-  const output = document.createElement("canvas");
-  output.width = SUBMISSION_SIZE;
-  output.height = SUBMISSION_SIZE;
-  output.getContext("2d").drawImage(filled, 0, 0, SUBMISSION_SIZE, SUBMISSION_SIZE);
-  return output;
+  return filled;
 }
 
-function canvasBlob() {
+function createSubmissionCanvases() {
+  const filled = createFilledCanvas();
+
+  const vrm = document.createElement("canvas");
+  vrm.width = VRM_IMAGE_SIZE;
+  vrm.height = VRM_IMAGE_SIZE;
+  vrm.getContext("2d").drawImage(filled, 0, 0, VRM_IMAGE_SIZE, VRM_IMAGE_SIZE);
+
+  const ai = document.createElement("canvas");
+  ai.width = AI_IMAGE_SIZE;
+  ai.height = AI_IMAGE_SIZE;
+  const aiContext = ai.getContext("2d");
+  aiContext.fillStyle = "#fff";
+  aiContext.fillRect(0, 0, AI_IMAGE_SIZE, AI_IMAGE_SIZE);
+  aiContext.drawImage(filled, 0, 0, AI_IMAGE_SIZE, AI_IMAGE_SIZE);
+
+  return { vrm, ai };
+}
+
+function canvasBlob(canvas) {
   return new Promise((resolve, reject) => {
-    createSubmissionCanvas().toBlob((blob) => {
+    canvas.toBlob((blob) => {
       if (blob) resolve(blob);
       else reject(new Error("描いた画像を作成できませんでした。"));
     }, "image/webp", WEBP_QUALITY);
@@ -211,9 +226,14 @@ async function submitFood() {
   setStatus("");
 
   try {
-    const image = await canvasBlob();
+    const canvases = createSubmissionCanvases();
+    const [vrmImage, aiImage] = await Promise.all([
+      canvasBlob(canvases.vrm),
+      canvasBlob(canvases.ai),
+    ]);
     const formData = new FormData();
-    formData.set("image", image, "food.webp");
+    formData.set("vrm_image", vrmImage, "food-vrm.webp");
+    formData.set("ai_image", aiImage, "food-ai.webp");
     const response = await fetch("/api/food-submissions", {
       method: "POST",
       body: formData,

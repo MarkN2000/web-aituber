@@ -130,25 +130,38 @@ async fn submit_food(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
-    let mut image = None;
+    let mut vrm_image = None;
+    let mut ai_image = None;
 
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|_| ApiError::bad_request("投稿を読み取れませんでした"))?
     {
-        if field.name() == Some("image") && image.is_none() {
-            image = Some(read_food_image(field).await?);
+        match field.name() {
+            Some("vrm_image") if vrm_image.is_none() => {
+                vrm_image = Some(read_food_image(field).await?);
+            }
+            Some("ai_image") if ai_image.is_none() => {
+                ai_image = Some(read_food_image(field).await?);
+            }
+            _ => {}
         }
     }
 
-    let image = image.ok_or_else(|| ApiError::bad_request("食べ物の絵を描いてください"))?;
+    let vrm_image =
+        vrm_image.ok_or_else(|| ApiError::bad_request("VRM表示用の食事画像がありません"))?;
+    let ai_image =
+        ai_image.ok_or_else(|| ApiError::bad_request("AI入力用の食事画像がありません"))?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
         .try_send(Submission {
             id: id.clone(),
-            kind: SubmissionKind::Food { image },
+            kind: SubmissionKind::Food {
+                vrm_image,
+                ai_image,
+            },
             text: "食べ物の絵を送りました".to_owned(),
         })
         .map_err(queue_error)?;
@@ -586,7 +599,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn food_submission_requires_an_image_and_uses_food_kind() {
+    async fn food_submission_requires_both_images_and_uses_food_kind() {
         let missing_boundary = "missing-food-boundary";
         let missing = router(test_state())
             .oneshot(
@@ -602,12 +615,60 @@ mod tests {
             .unwrap();
         assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
 
+        let vrm_only_boundary = "vrm-only-boundary";
+        let vrm_only_body = format!(
+            "--{vrm_only_boundary}\r\n\
+             Content-Disposition: form-data; name=\"vrm_image\"; filename=\"food-vrm.webp\"\r\n\
+             Content-Type: image/webp\r\n\r\n\
+             vrm-image\r\n\
+             --{vrm_only_boundary}--\r\n"
+        );
+        let vrm_only = router(test_state())
+            .oneshot(
+                Request::post("/api/food-submissions")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={vrm_only_boundary}"),
+                    )
+                    .body(Body::from(vrm_only_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(vrm_only.status(), StatusCode::BAD_REQUEST);
+
+        let ai_only_boundary = "ai-only-boundary";
+        let ai_only_body = format!(
+            "--{ai_only_boundary}\r\n\
+             Content-Disposition: form-data; name=\"ai_image\"; filename=\"food-ai.webp\"\r\n\
+             Content-Type: image/webp\r\n\r\n\
+             ai-image\r\n\
+             --{ai_only_boundary}--\r\n"
+        );
+        let ai_only = router(test_state())
+            .oneshot(
+                Request::post("/api/food-submissions")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={ai_only_boundary}"),
+                    )
+                    .body(Body::from(ai_only_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ai_only.status(), StatusCode::BAD_REQUEST);
+
         let boundary = "food-boundary";
         let body = format!(
             "--{boundary}\r\n\
-             Content-Disposition: form-data; name=\"image\"; filename=\"food.webp\"\r\n\
+             Content-Disposition: form-data; name=\"vrm_image\"; filename=\"food-vrm.webp\"\r\n\
              Content-Type: image/webp\r\n\r\n\
-             food-image\r\n\
+             vrm-image\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"ai_image\"; filename=\"food-ai.webp\"\r\n\
+             Content-Type: image/webp\r\n\r\n\
+             ai-image\r\n\
              --{boundary}--\r\n"
         );
         let (state, mut submissions) = test_state_with_receiver();
@@ -628,10 +689,17 @@ mod tests {
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         let submission = submissions.recv().await.unwrap();
         assert_eq!(submission.text, "食べ物の絵を送りました");
-        let SubmissionKind::Food { image } = submission.kind else {
+        let SubmissionKind::Food {
+            vrm_image,
+            ai_image,
+        } = submission.kind
+        else {
             panic!("食事投稿として受け付けられていません");
         };
-        assert_eq!(image.mime_type, "image/webp");
+        assert_eq!(vrm_image.mime_type, "image/webp");
+        assert_eq!(vrm_image.data, b"vrm-image");
+        assert_eq!(ai_image.mime_type, "image/webp");
+        assert_eq!(ai_image.data, b"ai-image");
     }
 
     #[tokio::test]
