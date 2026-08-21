@@ -1,4 +1,5 @@
 const CANVAS_SIZE = 512;
+const SUBMISSION_SIZE = 256;
 const WEBP_QUALITY = 0.75;
 const ALPHA_THRESHOLD = 128;
 const GAP_CLOSE_RADIUS = 2;
@@ -177,15 +178,20 @@ function fillEnclosedAreas(image, width, height) {
 }
 
 function createSubmissionCanvas() {
-  const output = document.createElement("canvas");
-  output.width = CANVAS_SIZE;
-  output.height = CANVAS_SIZE;
-  const outputContext = output.getContext("2d");
-  outputContext.drawImage(canvas, 0, 0);
+  const filled = document.createElement("canvas");
+  filled.width = CANVAS_SIZE;
+  filled.height = CANVAS_SIZE;
+  const filledContext = filled.getContext("2d");
+  filledContext.drawImage(canvas, 0, 0);
 
-  const image = outputContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  const image = filledContext.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   fillEnclosedAreas(image, CANVAS_SIZE, CANVAS_SIZE);
-  outputContext.putImageData(image, 0, 0);
+  filledContext.putImageData(image, 0, 0);
+
+  const output = document.createElement("canvas");
+  output.width = SUBMISSION_SIZE;
+  output.height = SUBMISSION_SIZE;
+  output.getContext("2d").drawImage(filled, 0, 0, SUBMISSION_SIZE, SUBMISSION_SIZE);
   return output;
 }
 

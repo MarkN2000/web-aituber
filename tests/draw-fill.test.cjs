@@ -9,6 +9,10 @@ const algorithmSource = drawSource.slice(
   drawSource.indexOf("function closeGaps"),
   drawSource.indexOf("function createSubmissionCanvas"),
 );
+const submissionSource = drawSource.slice(
+  drawSource.indexOf("function createSubmissionCanvas"),
+  drawSource.indexOf("function canvasBlob"),
+);
 const context = vm.createContext({});
 vm.runInContext(
   `const ALPHA_THRESHOLD = 128; const GAP_CLOSE_RADIUS = 2; ${algorithmSource}; this.fill = fillEnclosedAreas;`,
@@ -88,4 +92,43 @@ test("複数の閉じた図形を個別に白くする", () => {
   assert.deepEqual(getPixel(image, width, 7, 7), [255, 255, 255, 255]);
   assert.deepEqual(getPixel(image, width, 24, 7), [255, 255, 255, 255]);
   assert.deepEqual(getPixel(image, width, 15, 7), [0, 0, 0, 0]);
+});
+
+test("512pxで白塗りしてから送信用の256pxへ縮小する", () => {
+  const createdCanvases = [];
+  const fillCalls = [];
+  const submissionContext = vm.createContext({
+    canvas: {},
+    document: {
+      createElement: () => {
+        const drawCalls = [];
+        const fakeCanvas = {
+          width: 0,
+          height: 0,
+          drawCalls,
+          getContext: () => ({
+            drawImage: (...args) => drawCalls.push(args),
+            getImageData: () => ({}),
+            putImageData: () => {},
+          }),
+        };
+        createdCanvases.push(fakeCanvas);
+        return fakeCanvas;
+      },
+    },
+    fillEnclosedAreas: (_image, width, height) => fillCalls.push([width, height]),
+  });
+  vm.runInContext(
+    `const CANVAS_SIZE = 512; const SUBMISSION_SIZE = 256; ${submissionSource}; this.create = createSubmissionCanvas;`,
+    submissionContext,
+  );
+
+  const output = submissionContext.create();
+
+  assert.equal(createdCanvases[0].width, 512);
+  assert.equal(createdCanvases[0].height, 512);
+  assert.deepEqual(fillCalls, [[512, 512]]);
+  assert.equal(output.width, 256);
+  assert.equal(output.height, 256);
+  assert.deepEqual(createdCanvases[1].drawCalls[0].slice(1), [0, 0, 256, 256]);
 });
