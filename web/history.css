@@ -107,9 +107,7 @@
   padding: 0;
   background: transparent;
   box-shadow: none;
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
-  font-size: .75em;
-  line-height: 1;
+  color: #2a9ed3;
   vertical-align: -.2em;
   place-items: center;
 }
@@ -121,6 +119,16 @@
 .source-button:focus-visible {
   outline: 3px solid #1677c8;
   outline-offset: 2px;
+}
+
+.source-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .source-dialog {

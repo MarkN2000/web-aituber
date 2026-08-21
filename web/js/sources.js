@@ -39,7 +39,7 @@ export function createSourceButton(sources, onOpen) {
   button.setAttribute("aria-label", `検索に使用した出典を表示（${validSources.length}件）`);
   button.setAttribute("aria-haspopup", "dialog");
   button.title = "出典を表示";
-  button.textContent = "🌐";
+  button.append(createGlobeIcon());
   button.addEventListener("click", () => onOpen(validSources));
   return button;
 }
@@ -63,4 +63,21 @@ function normalizeSources(sources) {
     }
   }
   return [...unique.values()];
+}
+
+function createGlobeIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  circle.setAttribute("cx", "12");
+  circle.setAttribute("cy", "12");
+  circle.setAttribute("r", "9");
+  const meridian = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  meridian.setAttribute("d", "M12 3c2.4 2.5 3.6 5.5 3.6 9S14.4 18.5 12 21c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3Z");
+  const latitude = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  latitude.setAttribute("d", "M3.5 9h17M3.5 15h17");
+  svg.append(circle, meridian, latitude);
+  return svg;
 }
