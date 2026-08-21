@@ -26,6 +26,7 @@ web/
 ├─ history.css
 └─ js/
    ├─ input.js
+   ├─ image-compression.js
    ├─ main.js
    ├─ admin.js
    ├─ history.js

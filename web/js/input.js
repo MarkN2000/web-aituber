@@ -1,3 +1,5 @@
+import { compressImage } from "./image-compression.js";
+
 const form = document.querySelector("#submission-form");
 const text = document.querySelector("#text");
 const image = document.querySelector("#image");
@@ -89,7 +91,11 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const formData = new FormData(form);
-    if (!image.files[0]) {
+    const selectedImage = image.files[0];
+    if (selectedImage) {
+      const compressedImage = await compressImage(selectedImage);
+      formData.set("image", compressedImage, "image.jpg");
+    } else {
       formData.delete("image");
     }
 
