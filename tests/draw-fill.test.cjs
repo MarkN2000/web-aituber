@@ -94,7 +94,7 @@ test("複数の閉じた図形を個別に白くする", () => {
   assert.deepEqual(getPixel(image, width, 15, 7), [0, 0, 0, 0]);
 });
 
-test("512pxで白塗りしてから送信用の256pxへ縮小する", () => {
+test("512pxで白塗りしてから送信用の128pxへ縮小する", () => {
   const createdCanvases = [];
   const fillCalls = [];
   const submissionContext = vm.createContext({
@@ -119,7 +119,7 @@ test("512pxで白塗りしてから送信用の256pxへ縮小する", () => {
     fillEnclosedAreas: (_image, width, height) => fillCalls.push([width, height]),
   });
   vm.runInContext(
-    `const CANVAS_SIZE = 512; const SUBMISSION_SIZE = 256; ${submissionSource}; this.create = createSubmissionCanvas;`,
+    `const CANVAS_SIZE = 512; const SUBMISSION_SIZE = 128; ${submissionSource}; this.create = createSubmissionCanvas;`,
     submissionContext,
   );
 
@@ -128,7 +128,7 @@ test("512pxで白塗りしてから送信用の256pxへ縮小する", () => {
   assert.equal(createdCanvases[0].width, 512);
   assert.equal(createdCanvases[0].height, 512);
   assert.deepEqual(fillCalls, [[512, 512]]);
-  assert.equal(output.width, 256);
-  assert.equal(output.height, 256);
-  assert.deepEqual(createdCanvases[1].drawCalls[0].slice(1), [0, 0, 256, 256]);
+  assert.equal(output.width, 128);
+  assert.equal(output.height, 128);
+  assert.deepEqual(createdCanvases[1].drawCalls[0].slice(1), [0, 0, 128, 128]);
 });
