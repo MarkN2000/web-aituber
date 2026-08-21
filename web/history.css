@@ -1,6 +1,6 @@
 :root {
-  --history-width: 560px;
-  --history-max-height: 58dvh;
+  --history-width: 380px;
+  --history-max-height: 100dvh;
   --history-left: 24px;
   --history-bottom: 112px;
   --history-user-size: .55rem;
@@ -195,7 +195,7 @@
 @media (max-width: 700px) {
   :root {
     --history-width: calc(100vw - 24px);
-    --history-max-height: 54dvh;
+    --history-max-height: 27dvh;
     --history-left: 12px;
     --history-bottom: 92px;
     --history-user-size: .52rem;
