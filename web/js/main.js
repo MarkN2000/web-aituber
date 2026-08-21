@@ -1,5 +1,5 @@
 import { AudioQueue } from "./audio-queue.js";
-import { BackgroundMusic } from "./background-music.js?v=1";
+import { BackgroundMusic } from "./background-music.js?v=2";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
