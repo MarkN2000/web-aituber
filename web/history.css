@@ -4,7 +4,7 @@
   --history-left: 24px;
   --history-bottom: 112px;
   --history-user-size: .55rem;
-  --history-ai-size: 1.28rem;
+  --history-ai-size: 1.16rem;
   --history-user-outline: #087bb7;
   --history-ai-outline: #d63f76;
 }
@@ -199,7 +199,7 @@
     --history-left: 12px;
     --history-bottom: 92px;
     --history-user-size: .52rem;
-    --history-ai-size: 1.12rem;
+    --history-ai-size: 1.02rem;
   }
 
   .history-list {
