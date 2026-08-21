@@ -19,7 +19,7 @@ const FREQUENCY_BANDS = [
 
 const SILENCE_RMS = 0.012;
 const FULL_OPEN_RMS = 0.16;
-const MAX_OPEN = 0.82;
+const MAX_OPEN = 1;
 const VOWEL_CONFIRM_FRAMES = 3;
 
 /** 再生音声から口の開きと母音を近似する。 */

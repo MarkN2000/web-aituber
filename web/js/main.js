@@ -2,7 +2,7 @@ import { AudioQueue } from "./audio-queue.js";
 import { ConversationHistory } from "./history.js";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=3";
+import { VrmViewer } from "./vrm-viewer.js?v=4";
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),

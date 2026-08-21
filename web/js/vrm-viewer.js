@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
 import { isEmotion } from './motion.js';
-import { LipSyncAnalyzer } from './lip-sync.js?v=2';
+import { LipSyncAnalyzer } from './lip-sync.js?v=3';
 
 export class VrmViewer {
   constructor(canvas, report) {
