@@ -1,0 +1,123 @@
+.draw-page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: #f6f6f4;
+}
+
+.draw-card {
+  width: min(100%, 680px);
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid #dededb;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 7%);
+}
+
+.draw-card .lead {
+  margin-bottom: 20px;
+}
+
+.drawing-surface {
+  overflow: hidden;
+  width: min(100%, 512px);
+  margin-inline: auto;
+  border: 1px solid #c9c9c5;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 3%);
+}
+
+#food-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.draw-tools {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  width: min(100%, 512px);
+  margin: 16px auto 0;
+}
+
+.draw-tools label {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: #555;
+  font-size: .85rem;
+}
+
+.draw-tools input[type="color"] {
+  width: 52px;
+  height: 42px;
+  border: 1px solid #c9c9c5;
+  border-radius: 8px;
+  padding: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.draw-tools input[type="range"] {
+  min-height: 42px;
+  accent-color: #202020;
+}
+
+.secondary-button {
+  min-height: 42px;
+  border-color: #c9c9c5;
+  padding: 8px 14px;
+  background: #fff;
+  color: #202020;
+}
+
+.secondary-button:hover,
+.secondary-button[aria-pressed="true"] {
+  border-color: #888;
+  background: #eeeeeb;
+}
+
+.food-submit {
+  display: block;
+  width: min(100%, 512px);
+  min-height: 52px;
+  margin: 18px auto 0;
+  padding: 12px 24px;
+  font-size: 1.05rem;
+}
+
+.draw-card .status {
+  width: min(100%, 512px);
+  margin: 14px auto 0;
+}
+
+.draw-card .status[data-kind="success"] {
+  color: #287a46;
+}
+
+@media (max-width: 600px) {
+  .draw-page {
+    display: block;
+    padding: 12px;
+  }
+
+  .draw-card {
+    padding: 22px 16px;
+    border-radius: 12px;
+  }
+
+  .draw-tools {
+    grid-template-columns: auto minmax(110px, 1fr);
+  }
+
+  .secondary-button {
+    width: 100%;
+  }
+}

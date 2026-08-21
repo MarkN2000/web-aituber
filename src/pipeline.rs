@@ -16,6 +16,9 @@ use crate::{
 };
 
 const AUDIO_RETENTION: Duration = Duration::from_secs(300);
+const FOOD_IMAGE_RETENTION: Duration = Duration::from_secs(300);
+const FOOD_CONSUME_AT_MS: u64 = 1_200;
+const FOOD_ACTION_DURATION_MS: u64 = 1_600;
 
 pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
     while let Some(submission) = submissions.recv().await {
@@ -67,7 +70,6 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
                     turn_id: submission.id.clone(),
                     question: submission.text.clone(),
                     answer: completed.answer,
-                    has_image: submission.image.is_some(),
                     sources: completed.sources,
                 });
                 history.snapshot()
@@ -113,9 +115,11 @@ async fn process_active_submission(
     submission: &Submission,
     cancel: &CancellationToken,
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
+    let is_food = submission.is_food();
     let mut audio_files = Vec::new();
     let mut playback_deadline: Option<Instant> = None;
     let mut sequence_offset = 0_u32;
+    let mut food_segments = Vec::new();
 
     let history = state.history.lock().await.snapshot();
     let (search_sender, mut search_started) = tokio::sync::oneshot::channel();
@@ -210,7 +214,7 @@ async fn process_active_submission(
         .map_err(|error| error.with_files(audio_files.clone()))?;
         audio_files.push(output_path);
 
-        if index == 0 {
+        if index == 0 && !is_food {
             publish_state(
                 state,
                 TurnState {
@@ -222,7 +226,7 @@ async fn process_active_submission(
             .await;
         }
 
-        let motion = if motion_sent {
+        let motion = if is_food || motion_sent {
             None
         } else {
             config
@@ -233,29 +237,77 @@ async fn process_active_submission(
                 .inspect(|_| motion_sent = true)
         };
 
+        let event = ServerEvent::Segment {
+            turn_id: submission.id.clone(),
+            sequence: sequence_offset + index as u32,
+            text: segment.text.clone(),
+            emotion: segment.emotion,
+            motion,
+            audio_url: format!("/audio/{file_name}"),
+            duration_ms,
+            is_last: index + 1 == segments.len(),
+            kind: SegmentKind::Answer,
+            sources: if index + 1 == segments.len() {
+                generated.sources.clone()
+            } else {
+                Vec::new()
+            },
+        };
+
+        if is_food {
+            food_segments.push((event, duration_ms));
+        } else {
+            send_event(state, event);
+            playback_deadline = append_playback_duration(playback_deadline, duration_ms);
+        }
+    }
+
+    if let Some(image) = submission.food_image() {
+        state
+            .food_images
+            .write()
+            .await
+            .insert(submission.id.clone(), image.clone());
+        schedule_food_image_cleanup(state, submission.id.clone());
+
+        publish_state(
+            state,
+            TurnState {
+                turn_id: submission.id.clone(),
+                question: submission.text.clone(),
+                status: TurnStatus::Eating,
+            },
+        )
+        .await;
         send_event(
             state,
-            ServerEvent::Segment {
+            ServerEvent::FoodAction {
                 turn_id: submission.id.clone(),
-                sequence: sequence_offset + index as u32,
-                text: segment.text.clone(),
-                emotion: segment.emotion,
-                motion,
-                audio_url: format!("/audio/{file_name}"),
-                duration_ms,
-                is_last: index + 1 == segments.len(),
-                kind: SegmentKind::Answer,
-                sources: if index + 1 == segments.len() {
-                    generated.sources.clone()
-                } else {
-                    Vec::new()
-                },
+                image_url: format!("/food-images/{}", submission.id),
+                consume_at_ms: FOOD_CONSUME_AT_MS,
+                duration_ms: FOOD_ACTION_DURATION_MS,
             },
         );
+        cancellable(cancel, async {
+            tokio::time::sleep(Duration::from_millis(FOOD_ACTION_DURATION_MS)).await;
+            Ok(())
+        })
+        .await
+        .map_err(|error| error.with_files(audio_files.clone()))?;
 
-        let now = Instant::now();
-        let playback_start = playback_deadline.map_or(now, |deadline| deadline.max(now));
-        playback_deadline = Some(playback_start + Duration::from_millis(duration_ms));
+        publish_state(
+            state,
+            TurnState {
+                turn_id: submission.id.clone(),
+                question: submission.text.clone(),
+                status: TurnStatus::Speaking,
+            },
+        )
+        .await;
+        for (event, duration_ms) in food_segments {
+            send_event(state, event);
+            playback_deadline = append_playback_duration(playback_deadline, duration_ms);
+        }
     }
 
     if let Some(due) = playback_deadline {
@@ -307,6 +359,20 @@ fn schedule_audio_cleanup(paths: Vec<PathBuf>) {
             }
         }
     });
+}
+
+fn schedule_food_image_cleanup(state: &AppState, turn_id: String) {
+    let food_images = state.food_images.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(FOOD_IMAGE_RETENTION).await;
+        food_images.write().await.remove(&turn_id);
+    });
+}
+
+fn append_playback_duration(deadline: Option<Instant>, duration_ms: u64) -> Option<Instant> {
+    let now = Instant::now();
+    let playback_start = deadline.map_or(now, |deadline| deadline.max(now));
+    Some(playback_start + Duration::from_millis(duration_ms))
 }
 
 async fn cancellable<T, F>(

@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{
         Arc,
@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::ConfigStore,
-    protocol::{ConversationTurn, ServerEvent, Submission, TurnState},
+    protocol::{ConversationTurn, InputImage, ServerEvent, Submission, TurnState},
 };
 
 #[derive(Clone)]
@@ -24,6 +24,7 @@ pub struct AppState {
     pub current: Arc<RwLock<Option<TurnState>>>,
     pub active: Arc<Mutex<Option<ActiveTurn>>>,
     pub history: Arc<Mutex<ConversationHistory>>,
+    pub food_images: Arc<RwLock<HashMap<String, InputImage>>>,
     pub audio_dir: Arc<PathBuf>,
     pub search_filler_rotation: Arc<SearchFillerRotation>,
 }
@@ -83,7 +84,6 @@ mod tests {
                 turn_id: format!("turn-{index}"),
                 question: format!("質問{index}"),
                 answer: format!("回答{index}"),
-                has_image: index == 10,
                 sources: Vec::new(),
             });
         }
@@ -92,7 +92,6 @@ mod tests {
         assert_eq!(turns.len(), 10);
         assert_eq!(turns.first().unwrap().question, "質問1");
         assert_eq!(turns.last().unwrap().answer, "回答10");
-        assert!(turns.last().unwrap().has_image);
     }
 
     #[test]

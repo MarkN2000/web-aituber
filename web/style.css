@@ -94,8 +94,7 @@ label {
   font-weight: 700;
 }
 
-textarea,
-input[type="file"] {
+textarea {
   width: 100%;
   border: 1px solid #c9c9c5;
   border-radius: 8px;
@@ -112,22 +111,6 @@ textarea {
 
 textarea::placeholder {
   color: #909090;
-}
-
-input[type="file"] {
-  padding: 8px;
-  color: #555;
-}
-
-input[type="file"]::file-selector-button {
-  margin-right: 12px;
-  border: 1px solid #c9c9c5;
-  border-radius: 6px;
-  padding: 7px 12px;
-  background: #f2f2f0;
-  color: #202020;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 #submit-button {
@@ -226,7 +209,7 @@ input[type="file"]::file-selector-button {
 
 .composer {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
   gap: 8px;
   padding: 8px;
@@ -251,7 +234,6 @@ input[type="file"]::file-selector-button {
   outline: 0;
 }
 
-.composer-icon-button,
 .composer-send-button {
   display: grid;
   width: 44px;
@@ -260,18 +242,6 @@ input[type="file"]::file-selector-button {
   place-items: center;
   border-radius: 10px;
   padding: 0;
-}
-
-.composer-icon-button {
-  border-color: transparent;
-  background: transparent;
-  color: #505050;
-}
-
-.composer-icon-button:hover,
-.composer-icon-button[data-selected="true"] {
-  border-color: #dededb;
-  background: #f0f0ed;
 }
 
 .composer-send-button {
@@ -286,7 +256,6 @@ input[type="file"]::file-selector-button {
   padding: 0;
 }
 
-.composer-icon-button svg,
 .composer-send-button svg {
   width: 22px;
   height: 22px;
@@ -331,50 +300,6 @@ input[type="file"]::file-selector-button {
 
 .composer-status[data-kind="error"] {
   color: #b3261e;
-}
-
-.composer-attachment {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid #dededb;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 96%);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 8%);
-}
-
-.composer-attachment img {
-  width: 40px;
-  height: 40px;
-  border-radius: 6px;
-  object-fit: cover;
-}
-
-.composer-attachment span {
-  max-width: min(50vw, 320px);
-  overflow: hidden;
-  color: #505050;
-  font-size: .85rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-attachment button {
-  width: 32px;
-  min-height: 32px;
-  margin: 0;
-  border-color: transparent;
-  background: transparent;
-  color: #505050;
-  font-size: 1.25rem;
-}
-
-.composer-attachment button:hover {
-  border-color: #dededb;
-  background: #f0f0ed;
 }
 
 .visually-hidden {
@@ -550,13 +475,12 @@ input[type="file"]::file-selector-button {
   }
 
   .composer {
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    grid-template-columns: minmax(0, 1fr) 42px;
     gap: 4px;
     padding: 6px;
     border-radius: 14px;
   }
 
-  .composer-icon-button,
   .composer-send-button {
     width: 42px;
     min-height: 42px;

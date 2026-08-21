@@ -56,19 +56,30 @@ fn build_request(
     history: &[ConversationTurn],
     current_time: &str,
 ) -> Value {
-    let instructions = format!(
-        "{}\n\n現在日時（日本時間）: {current_time}\n検索した場合も、回答本文にはURLや出典一覧を含めないでください。出典は画面側で別に表示します。",
-        config.system_prompt.trim_end()
-    );
+    let is_food = submission.is_food();
+    let instructions = if is_food {
+        format!(
+            "{}\n\n現在日時（日本時間）: {current_time}\n\n食事投稿への追加指示:\n{}",
+            config.system_prompt.trim_end(),
+            config.food_reaction_prompt.trim()
+        )
+    } else {
+        format!(
+            "{}\n\n現在日時（日本時間）: {current_time}\n検索した場合も、回答本文にはURLや出典一覧を含めないでください。出典は画面側で別に表示します。",
+            config.system_prompt.trim_end()
+        )
+    };
     let mut input = Vec::with_capacity(history.len() * 2 + 1);
 
-    for turn in history {
-        input.push(input_message("user", &turn.question));
-        input.push(input_message("assistant", &turn.answer));
+    if !is_food {
+        for turn in history {
+            input.push(input_message("user", &turn.question));
+            input.push(input_message("assistant", &turn.answer));
+        }
     }
 
     let mut content = vec![json!({ "type": "input_text", "text": submission.text })];
-    if let Some(image) = &submission.image {
+    if let Some(image) = submission.food_image() {
         let data_url = format!(
             "data:{};base64,{}",
             image.mime_type,
@@ -82,16 +93,22 @@ fn build_request(
     }
     input.push(json!({ "role": "user", "content": content }));
 
-    json!({
+    let mut request = json!({
         "model": config.model,
         "instructions": instructions,
         "input": input,
-        "tools": [{ "type": "web_search", "search_context_size": "low" }],
-        "tool_choice": "auto",
-        "include": ["web_search_call.action.sources"],
+        "reasoning": { "effort": "low" },
+        "text": { "verbosity": "low" },
         "store": false,
         "stream": true
-    })
+    });
+    if !is_food {
+        request["tools"] = json!([{ "type": "web_search", "search_context_size": "low" }]);
+        request["tool_choice"] = json!("auto");
+        request["max_tool_calls"] = json!(1);
+        request["include"] = json!(["web_search_call.action.sources"]);
+    }
+    request
 }
 
 fn input_message(role: &str, text: &str) -> Value {
@@ -330,26 +347,25 @@ struct ApiErrorDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::AppConfig, protocol::InputImage};
+    use crate::{
+        config::AppConfig,
+        protocol::{InputImage, SubmissionKind},
+    };
 
     #[test]
-    fn responses_input_contains_history_image_time_and_search_tool() {
+    fn question_request_contains_history_time_and_search_without_image() {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         let history = vec![ConversationTurn {
             turn_id: "turn-1".to_owned(),
             question: "前の質問".to_owned(),
             answer: "前の回答".to_owned(),
-            has_image: false,
             sources: Vec::new(),
         }];
         let submission = Submission {
             id: "turn-2".to_owned(),
+            kind: SubmissionKind::Question,
             text: "今回の質問".to_owned(),
-            image: Some(InputImage {
-                mime_type: "image/png".to_owned(),
-                data: vec![1, 2, 3],
-            }),
         };
 
         let request = build_request(
@@ -362,6 +378,9 @@ mod tests {
         assert_eq!(request["model"], "gpt-5.6-luna");
         assert_eq!(request["tools"][0]["type"], "web_search");
         assert_eq!(request["tool_choice"], "auto");
+        assert_eq!(request["max_tool_calls"], 1);
+        assert_eq!(request["reasoning"]["effort"], "low");
+        assert_eq!(request["text"]["verbosity"], "low");
         assert_eq!(request["include"][0], "web_search_call.action.sources");
         assert_eq!(request["stream"], true);
         assert_eq!(request["store"], false);
@@ -376,8 +395,56 @@ mod tests {
         assert_eq!(request["input"][1]["role"], "assistant");
         assert_eq!(request["input"][1]["content"], "前の回答");
         assert_eq!(request["input"][2]["content"][0]["text"], "今回の質問");
-        assert_eq!(request["input"][2]["content"][1]["type"], "input_image");
-        assert_eq!(request["input"][2]["content"][1]["detail"], "low");
+        assert_eq!(request["input"][2]["content"].as_array().unwrap().len(), 1);
+        assert!(
+            !request["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("食事投稿への追加指示")
+        );
+    }
+
+    #[test]
+    fn food_request_uses_one_image_call_without_history_or_search() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.llm.food_reaction_prompt = "設定から変更した食事の感想指示".to_owned();
+        let history = vec![ConversationTurn {
+            turn_id: "turn-1".to_owned(),
+            question: "前の質問".to_owned(),
+            answer: "前の回答".to_owned(),
+            sources: Vec::new(),
+        }];
+        let submission = Submission {
+            id: "turn-2".to_owned(),
+            kind: SubmissionKind::Food {
+                image: InputImage {
+                    mime_type: "image/webp".to_owned(),
+                    data: vec![1, 2, 3],
+                },
+            },
+            text: "食べ物の絵を送りました".to_owned(),
+        };
+
+        let request = build_request(
+            &config.llm,
+            &submission,
+            &history,
+            "2026-08-22T12:00:00+09:00",
+        );
+
+        assert_eq!(request["input"].as_array().unwrap().len(), 1);
+        assert_eq!(request["input"][0]["content"][1]["type"], "input_image");
+        assert!(request.get("tools").is_none());
+        assert!(request.get("tool_choice").is_none());
+        assert!(request.get("max_tool_calls").is_none());
+        assert!(request.get("include").is_none());
+        assert!(
+            request["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("設定から変更した食事の感想指示")
+        );
     }
 
     #[test]

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web AITuber | 食べ物を描く</title>
+    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/draw.css?v=1">
+  </head>
+  <body class="draw-page">
+    <main class="draw-card">
+      <p class="eyebrow">Web AITuber</p>
+      <h1>食べ物を描こう</h1>
+      <p class="lead">AIキャラクターに食べてもらいたいものを自由に描いてください。</p>
+
+      <div class="drawing-surface">
+        <canvas id="food-canvas" width="512" height="512" aria-label="食べ物を描くキャンバス"></canvas>
+      </div>
+
+      <div class="draw-tools" aria-label="描画ツール">
+        <label class="color-tool" for="draw-color">
+          <span>色</span>
+          <input id="draw-color" type="color" value="#e85d3f">
+        </label>
+        <label class="size-tool" for="brush-size">
+          <span>太さ</span>
+          <input id="brush-size" type="range" min="4" max="48" value="16">
+        </label>
+        <button id="eraser" class="secondary-button" type="button" aria-pressed="false">消しゴム</button>
+        <button id="clear-canvas" class="secondary-button" type="button">全消去</button>
+      </div>
+
+      <button id="submit-food" class="food-submit" type="button" disabled>食べてもらう</button>
+      <p id="draw-status" class="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="/static/js/draw.js?v=3"></script>
+  </body>
+</html>

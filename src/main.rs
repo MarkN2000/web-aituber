@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::ErrorKind,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
         current: Arc::new(RwLock::new(None)),
         active: Arc::new(Mutex::new(None)),
         history: Arc::new(Mutex::new(ConversationHistory::default())),
+        food_images: Arc::new(RwLock::new(HashMap::new())),
         audio_dir: Arc::new(audio_dir.clone()),
         search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };

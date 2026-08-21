@@ -18,7 +18,9 @@
 2. LLM、TTS、管理用トークン、キャラクター設定を編集する。
 3. VRMとVRMAを設定したパスへ配置する。
 
-`llm.api_url`にはResponses APIエンドポイントの完全なURLを指定します。OpenAIでは`https://api.openai.com/v1/responses`です。`llm.search_fillers`にはWeb検索を開始した場合だけ順番に読み上げる短い文の一覧を指定します。`ffmpeg_path`は通常`ffmpeg`のままで構いません。PATHにない場合はFFmpeg実行ファイルの絶対パスを指定してください。
+`character.food_prop`には、食事投稿の画像を表示するQuadの位置、回転、大きさをVRMの右手ローカル座標で指定します。使用するモデルに合わせてイベント前に調整してください。
+
+`llm.api_url`にはResponses APIエンドポイントの完全なURLを指定します。OpenAIでは`https://api.openai.com/v1/responses`です。`llm.food_reaction_prompt`には食事投稿だけに追加する感想の書き方を指定します。`llm.search_fillers`にはWeb検索を開始した場合だけ順番に読み上げる短い文の一覧を指定します。`ffmpeg_path`は通常`ffmpeg`のままで構いません。PATHにない場合はFFmpeg実行ファイルの絶対パスを指定してください。
 
 Web検索の使用はLLMが質問内容から判断します。検索時も最終回答は1回だけ表示・読み上げし、回答末尾の地球儀アイコンから出典URLを確認できます。
 
@@ -50,6 +52,7 @@ cargo run --release
 
 - メイン画面: `http://127.0.0.1:3000/`
 - 簡易入力画面: `http://127.0.0.1:3000/input`
+- 食べ物の描画画面: `http://127.0.0.1:3000/draw`
 - 管理画面: `http://127.0.0.1:3000/admin?token=設定した管理用トークン`
 
 メイン画面では最初に「表示・音声を開始」を押します。メイン画面と簡易入力画面は認証なしで複数端末から利用できます。管理画面のURLは管理端末だけで使用します。
@@ -60,6 +63,7 @@ cargo run --release
 
 - メイン画面: `http://192.168.1.20:3000/`
 - 簡易入力画面: `http://192.168.1.20:3000/input`
+- 食べ物の描画画面: `http://192.168.1.20:3000/draw`
 
 サーバーは`0.0.0.0:3000`で待ち受けます。OSのファイアウォールでは、会場で使用するネットワークに限りTCP 3000番への受信を許可してください。`0.0.0.0`は待受設定用のため、ブラウザのURLには使用しません。
 
@@ -70,6 +74,7 @@ cargo run --release
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
+node --test tests/draw-fill.test.cjs
 ```
 
 音声まで確認する場合は、TTS EngineとFFmpegを起動・配置した状態で質問を投稿してください。

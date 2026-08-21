@@ -24,6 +24,12 @@ function setStatus(message) {
   elements.status.textContent = message;
 }
 
+function turnStatusLabel(status) {
+  if (status === "generating") return "回答生成中";
+  if (status === "eating") return "食事演出中";
+  return "発話中";
+}
+
 function connect() {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(`${scheme}//${window.location.host}/ws`);
@@ -55,7 +61,7 @@ function handleServerEvent(event) {
       elements.answer.textContent = "—";
       if (event.current) {
         setCurrentTurn(event.current);
-        setStatus(event.current.status === "generating" ? "回答生成中" : "発話準備中");
+        setStatus(turnStatusLabel(event.current.status));
       } else {
         setCurrentTurn(undefined);
         setStatus("待機中");
@@ -66,9 +72,10 @@ function handleServerEvent(event) {
         elements.answer.textContent = "—";
       }
       setCurrentTurn(event.turn);
-      setStatus(event.turn.status === "generating" ? "回答生成中" : "発話中");
+      setStatus(turnStatusLabel(event.turn.status));
       break;
     case "history":
+    case "food_action":
       break;
     case "segment":
       if (event.kind === "filler") break;

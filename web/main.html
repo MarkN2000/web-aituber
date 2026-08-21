@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
-  <link rel="stylesheet" href="/static/style.css?v=4">
-  <link rel="stylesheet" href="/static/history.css?v=8">
+  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/history.css?v=9">
   <script type="importmap">
     {
       "imports": {
@@ -38,22 +38,7 @@
 
     <p id="submission-status" class="composer-status" role="status" aria-live="polite"></p>
 
-    <div id="image-preview" class="composer-attachment" hidden>
-      <img id="image-thumbnail" alt="選択した画像のプレビュー">
-      <span id="image-name"></span>
-      <button id="image-remove" type="button" aria-label="選択した画像を解除">×</button>
-    </div>
-
     <form id="submission-form" class="composer" novalidate>
-      <button id="image-button" class="composer-icon-button" type="button" aria-label="画像を選択" title="画像を選択">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"></path>
-          <circle cx="9" cy="9" r="2"></circle>
-          <path d="m5 17 4-4 3 3 2-2 5 5"></path>
-        </svg>
-      </button>
-      <input id="image" name="image" type="file" accept="image/*" hidden>
-
       <label class="visually-hidden" for="text">質問</label>
       <input id="text" class="composer-input" name="text" type="text" maxlength="2000" required autocomplete="off" placeholder="質問を入力してください">
       <span id="text-count" class="visually-hidden">0</span>
@@ -87,7 +72,7 @@
     </div>
   </section>
 
-  <script type="module" src="/static/js/main.js?v=11"></script>
-  <script type="module" src="/static/js/input.js?v=5"></script>
+  <script type="module" src="/static/js/main.js?v=14"></script>
+  <script type="module" src="/static/js/input.js?v=7"></script>
 </body>
 </html>

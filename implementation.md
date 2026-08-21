@@ -23,13 +23,15 @@ src/
 
 web/
 ├─ input.html
+├─ draw.html
 ├─ main.html
 ├─ admin.html
 ├─ style.css
+├─ draw.css
 ├─ history.css
 └─ js/
    ├─ input.js
-   ├─ image-compression.js
+   ├─ draw.js
    ├─ sources.js
    ├─ main.js
    ├─ admin.js
@@ -67,3 +69,5 @@ assets/
 - VRMAは `assets/motions/` に配置する。
 - メイン画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。
 - LLMはResponses APIのWeb検索開始イベントだけをフィラー生成の合図にし、最終回答は1回だけ処理する。
+- 食事投稿はWeb検索と会話履歴を使用せず、画像の感想生成だけをLLMへ依頼する。
+- 食事投稿の画像はメモリ内の一時URLで配信し、VRMの右手へ追加したQuadへ貼り付ける。

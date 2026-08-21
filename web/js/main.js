@@ -1,8 +1,8 @@
 import { AudioQueue } from "./audio-queue.js";
-import { ConversationHistory } from "./history.js";
+import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=4";
+import { VrmViewer } from "./vrm-viewer.js?v=6";
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),
@@ -89,6 +89,7 @@ function cleanTurn(turnId) {
   receivedTurns.delete(turnId);
   if (currentTurn?.turn_id !== turnId) return;
   setEmotion("neutral");
+  viewer?.clearFoodProp();
   viewer?.resumeIdle();
   setTurn(undefined);
 }
@@ -121,6 +122,7 @@ function handleServerEvent(event) {
         queue.cancelTurn(currentTurn.turn_id);
         receivedTurns.delete(currentTurn.turn_id);
         viewer.stopLipSync();
+        viewer.clearFoodProp();
         setEmotion("neutral");
       }
       if (event.current) {
@@ -138,12 +140,17 @@ function handleServerEvent(event) {
           queue.cancelTurn(currentTurn.turn_id);
           receivedTurns.delete(currentTurn.turn_id);
           viewer.stopLipSync();
+          viewer.clearFoodProp();
           setEmotion("neutral");
         }
         clearAnswer();
         motionPlayedForTurn = undefined;
       }
       setTurn(event.turn);
+      break;
+    case "food_action":
+      elements.panel.hidden = true;
+      viewer.playFoodAction(event.image_url, event.consume_at_ms, event.duration_ms);
       break;
     case "segment":
       receiveSegment(event);

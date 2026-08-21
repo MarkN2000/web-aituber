@@ -17,6 +17,7 @@ export class VrmViewer {
     this.loader = new GLTFLoader();
     this.loader.register((parser) => new VRMLoaderPlugin(parser));
     this.loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    this.textureLoader = new THREE.TextureLoader();
     this.idleClips = [];
     this.emotionClips = new Map();
     this.currentAction = undefined;
@@ -24,6 +25,7 @@ export class VrmViewer {
     this.lipSync = new LipSyncAnalyzer();
     this.blinkTimer = 2 + Math.random() * 3;
     this.blinkTime = 0;
+    this.foodActionId = 0;
     this.frame = this.frame.bind(this);
     this.onResize = this.onResize.bind(this);
   }
@@ -53,6 +55,7 @@ export class VrmViewer {
       this.vrm.scene.add(proxy);
     }
     this.scene.add(this.vrm.scene);
+    this.configureFoodProp(config.food_prop);
     this.mixer = new THREE.AnimationMixer(this.vrm.scene);
     this.mixer.addEventListener('finished', (event) => this.onAnimationFinished(event));
     await this.loadMotions(config);
@@ -92,6 +95,23 @@ export class VrmViewer {
       }
     }
     if (warnings.length) this.report(warnings.join('\n'));
+  }
+
+  configureFoodProp(config = {}) {
+    const hand = this.vrm.humanoid?.getRawBoneNode('rightHand');
+    if (!hand) {
+      this.report('食事用Quadを配置できませんでした: VRMの右手が見つかりません。');
+      return;
+    }
+
+    const position = config.position || [0, 0, 0];
+    const rotation = config.rotation_degrees || [0, 0, 0];
+    this.foodPropSize = Number(config.size) > 0 ? Number(config.size) : 0.2;
+    this.foodAnchor = new THREE.Object3D();
+    this.foodAnchor.name = 'FoodPropAnchor';
+    this.foodAnchor.position.fromArray(position);
+    this.foodAnchor.rotation.set(...rotation.map(THREE.MathUtils.degToRad));
+    hand.add(this.foodAnchor);
   }
 
   async loadMotion(url) {
@@ -168,6 +188,74 @@ export class VrmViewer {
     this.applyMouthWeights(this.lipSync.stop());
   }
 
+  playFoodAction(imageUrl, consumeAtMs, durationMs) {
+    this.clearFoodProp();
+    if (!this.foodAnchor) {
+      this.report('食事用Quadを表示できませんでした: 右手の配置設定を確認してください。');
+      return;
+    }
+
+    const duration = Math.max(Number(durationMs) || 0, 1);
+    const consumeAt = Math.min(Math.max(Number(consumeAtMs) || 0, 0), duration);
+    const actionId = this.foodActionId;
+    this.foodAction = {
+      id: actionId,
+      startedAt: performance.now(),
+      consumeAt,
+      duration,
+    };
+
+    this.textureLoader.loadAsync(imageUrl)
+      .then((texture) => {
+        if (this.foodAction?.id !== actionId) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const geometry = new THREE.PlaneGeometry(this.foodPropSize, this.foodPropSize);
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          side: THREE.DoubleSide,
+          alphaTest: 0.5,
+          toneMapped: false,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = 'FoodPropQuad';
+        this.foodAnchor.add(mesh);
+        this.foodMesh = mesh;
+      })
+      .catch((error) => {
+        console.error('食事用画像を読み込めませんでした', error);
+        if (this.foodAction?.id === actionId) {
+          this.report('食事用の絵を表示できませんでした。');
+        }
+      });
+  }
+
+  updateFoodAction() {
+    const action = this.foodAction;
+    if (!action) return;
+    const elapsed = performance.now() - action.startedAt;
+    if (this.foodMesh && elapsed >= action.consumeAt) {
+      const consumeDuration = Math.max(action.duration - action.consumeAt, 1);
+      const progress = THREE.MathUtils.clamp((elapsed - action.consumeAt) / consumeDuration, 0, 1);
+      const remaining = 1 - progress;
+      this.foodMesh.scale.setScalar(remaining);
+    }
+    if (elapsed >= action.duration) this.clearFoodProp();
+  }
+
+  clearFoodProp() {
+    this.foodActionId += 1;
+    this.foodAction = undefined;
+    if (!this.foodMesh) return;
+    this.foodAnchor?.remove(this.foodMesh);
+    this.foodMesh.geometry.dispose();
+    this.foodMesh.material.map?.dispose();
+    this.foodMesh.material.dispose();
+    this.foodMesh = undefined;
+  }
+
   updateLipSync(delta) {
     this.applyMouthWeights(this.lipSync.update(delta));
   }
@@ -197,6 +285,7 @@ export class VrmViewer {
     this.mixer?.update(delta);
     this.updateBlink(delta);
     this.updateLipSync(delta);
+    this.updateFoodAction();
     this.vrm?.update(delta);
     this.renderer.render(this.scene, this.camera);
   }
@@ -212,6 +301,7 @@ export class VrmViewer {
   dispose() {
     window.removeEventListener('resize', this.onResize);
     this.renderer.setAnimationLoop(null);
+    this.clearFoodProp();
     this.mixer?.stopAllAction();
     this.vrm?.scene.traverse((object) => {
       object.geometry?.dispose?.();
