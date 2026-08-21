@@ -24,7 +24,7 @@ vm.runInContext(
 );
 const bucketContext = vm.createContext({});
 vm.runInContext(
-  `const BUCKET_EXPANSION_RADIUS = 2; ${bucketSource}; this.fill = floodFill; this.color = rgbaFromHex;`,
+  `${bucketSource}; this.fill = floodFill; this.color = rgbaFromHex;`,
   bucketContext,
 );
 
@@ -57,19 +57,21 @@ function drawRectangle(image, width, left, top, right, bottom, alpha = 255) {
 }
 
 test("バケツで線に囲まれた透明領域だけを選択色で塗る", () => {
-  const width = 7;
-  const image = createImage(width, 7);
-  drawRectangle(image, width, 1, 1, 5, 5);
+  const width = 9;
+  const image = createImage(width, 9);
+  drawRectangle(image, width, 1, 1, 7, 7);
+  drawRectangle(image, width, 2, 2, 6, 6);
 
-  const changed = bucketContext.fill(image, width, 7, 3, 3, bucketContext.color("#e85d3f"));
+  const changed = bucketContext.fill(image, width, 9, 4, 4, bucketContext.color("#e85d3f"));
 
   assert.equal(changed, true);
-  assert.deepEqual(getPixel(image, width, 3, 3), [232, 93, 63, 255]);
-  assert.deepEqual(getPixel(image, width, 1, 3), [20, 40, 60, 255]);
+  assert.deepEqual(getPixel(image, width, 4, 4), [232, 93, 63, 255]);
+  assert.deepEqual(getPixel(image, width, 2, 4), [232, 93, 63, 255]);
+  assert.deepEqual(getPixel(image, width, 1, 4), [20, 40, 60, 255]);
   assert.deepEqual(getPixel(image, width, 0, 0), [0, 0, 0, 0]);
 });
 
-test("バケツは2pxの拡張でも不透明な境界線を越えない", () => {
+test("バケツは1pxの拡張範囲を越えた別領域へ広がらない", () => {
   const width = 5;
   const image = createImage(width, 5);
   for (let y = 0; y < 5; y += 1) {
@@ -84,18 +86,31 @@ test("バケツは2pxの拡張でも不透明な境界線を越えない", () =>
   assert.deepEqual(getPixel(image, width, 1, 1), [0, 0, 0, 0]);
 });
 
-test("バケツの色を2px拡張して重ね描きした半透明境界の背面へ合成する", () => {
+test("バケツを1px拡張して重ね描きで生じた不透明な境界色を上書きする", () => {
   const width = 6;
   const image = createImage(width, 1);
+  setPixel(image, width, 1, 0, 255, 47, 0, 255);
+  setPixel(image, width, 2, 0, 255, 190, 176, 255);
+  for (let x = 3; x < 6; x += 1) setPixel(image, width, x, 0, 255, 193, 179, 255);
+
+  bucketContext.fill(image, width, 1, 5, 0, [255, 47, 0, 255]);
+
+  assert.deepEqual(getPixel(image, width, 3, 0), [255, 47, 0, 255]);
+  assert.deepEqual(getPixel(image, width, 2, 0), [255, 47, 0, 255]);
+  assert.deepEqual(getPixel(image, width, 1, 0), [255, 47, 0, 255]);
+  assert.deepEqual(getPixel(image, width, 0, 0), [0, 0, 0, 0]);
+});
+
+test("バケツを1px拡張して半透明な境界色を上書きする", () => {
+  const width = 5;
+  const image = createImage(width, 1);
   setPixel(image, width, 1, 0, 20, 40, 60, 255);
-  setPixel(image, width, 2, 0, 20, 40, 60, 200);
-  setPixel(image, width, 3, 0, 20, 40, 60, 80);
+  setPixel(image, width, 2, 0, 20, 40, 60, 128);
 
-  bucketContext.fill(image, width, 1, 5, 0, [232, 93, 63, 255]);
+  bucketContext.fill(image, width, 1, 4, 0, [232, 93, 63, 255]);
 
-  assert.deepEqual(getPixel(image, width, 4, 0), [232, 93, 63, 255]);
-  assert.deepEqual(getPixel(image, width, 3, 0), [165, 76, 62, 255]);
-  assert.deepEqual(getPixel(image, width, 2, 0), [66, 51, 61, 255]);
+  assert.deepEqual(getPixel(image, width, 3, 0), [232, 93, 63, 255]);
+  assert.deepEqual(getPixel(image, width, 2, 0), [232, 93, 63, 255]);
   assert.deepEqual(getPixel(image, width, 1, 0), [20, 40, 60, 255]);
   assert.deepEqual(getPixel(image, width, 0, 0), [0, 0, 0, 0]);
 });

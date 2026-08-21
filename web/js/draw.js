@@ -4,7 +4,6 @@ const AI_IMAGE_SIZE = 128;
 const WEBP_QUALITY = 0.75;
 const ALPHA_THRESHOLD = 128;
 const GAP_CLOSE_RADIUS = 2;
-const BUCKET_EXPANSION_RADIUS = 2;
 
 const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
@@ -99,47 +98,30 @@ function rgbaFromHex(hex) {
   ];
 }
 
-function expandFillBehind(image, width, height, filled, fillColor) {
-  const expanded = filled.slice();
+function expandFill(image, width, height, filled, fillColor) {
   const border = new Uint8Array(filled.length);
-  let frontier = [];
   for (let index = 0; index < filled.length; index += 1) {
-    if (filled[index]) frontier.push(index);
-  }
-
-  for (let distance = 0; distance < BUCKET_EXPANSION_RADIUS; distance += 1) {
-    const next = [];
-    for (const index of frontier) {
-      const x = index % width;
-      const y = Math.floor(index / width);
-      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-        const targetY = y + offsetY;
-        if (targetY < 0 || targetY >= height) continue;
-        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-          const targetX = x + offsetX;
-          if (targetX < 0 || targetX >= width) continue;
-          const targetIndex = targetY * width + targetX;
-          if (expanded[targetIndex]) continue;
-          expanded[targetIndex] = 1;
-          border[targetIndex] = 1;
-          if (image.data[targetIndex * 4 + 3] < 255) next.push(targetIndex);
-        }
+    if (!filled[index]) continue;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+      const targetY = y + offsetY;
+      if (targetY < 0 || targetY >= height) continue;
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        const targetX = x + offsetX;
+        if (targetX < 0 || targetX >= width) continue;
+        const targetIndex = targetY * width + targetX;
+        if (!filled[targetIndex]) border[targetIndex] = 1;
       }
     }
-    frontier = next;
   }
 
   for (let index = 0; index < border.length; index += 1) {
     if (!border[index]) continue;
     const offset = index * 4;
-    const foregroundAlpha = image.data[offset + 3] / 255;
-    const backgroundAlpha = 1 - foregroundAlpha;
-    for (let channel = 0; channel < 3; channel += 1) {
-      image.data[offset + channel] = Math.round(
-        image.data[offset + channel] * foregroundAlpha + fillColor[channel] * backgroundAlpha,
-      );
+    for (let channel = 0; channel < 4; channel += 1) {
+      image.data[offset + channel] = fillColor[channel];
     }
-    image.data[offset + 3] = 255;
   }
 }
 
@@ -179,7 +161,7 @@ function floodFill(image, width, height, startX, startY, fillColor) {
     if (index >= width) visit(index - width);
     if (index + width < width * height) visit(index + width);
   }
-  expandFillBehind(image, width, height, filled, fillColor);
+  expandFill(image, width, height, filled, fillColor);
   return true;
 }
 
