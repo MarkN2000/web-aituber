@@ -5,6 +5,10 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const drawSource = fs.readFileSync(path.join(__dirname, "../web/js/draw.js"), "utf8");
+const undoHistorySource = drawSource.slice(
+  drawSource.indexOf("function addUndoState"),
+  drawSource.indexOf("function updateUndoState"),
+);
 const bucketSource = drawSource.slice(
   drawSource.indexOf("function rgbaFromHex"),
   drawSource.indexOf("function fillAt"),
@@ -27,6 +31,8 @@ vm.runInContext(
   `${bucketSource}; this.fill = floodFill; this.color = rgbaFromHex;`,
   bucketContext,
 );
+const undoHistoryContext = vm.createContext({});
+vm.runInContext(`${undoHistorySource}; this.add = addUndoState;`, undoHistoryContext);
 
 function createImage(width, height) {
   return { data: new Uint8ClampedArray(width * height * 4) };
@@ -55,6 +61,17 @@ function drawRectangle(image, width, left, top, right, bottom, alpha = 255) {
     setPixel(image, width, right, y, 20, 40, 60, alpha);
   }
 }
+
+test("取り消し履歴は最新10件だけを保持する", () => {
+  const history = [];
+  for (let index = 0; index < 12; index += 1) {
+    undoHistoryContext.add(history, { index }, 10);
+  }
+
+  assert.deepEqual(history.map((state) => state.index), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.equal(history.pop().index, 11);
+  assert.equal(history.pop().index, 10);
+});
 
 test("バケツで線に囲まれた透明領域だけを選択色で塗る", () => {
   const width = 9;

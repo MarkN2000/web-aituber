@@ -4,12 +4,14 @@ const AI_IMAGE_SIZE = 128;
 const WEBP_QUALITY = 0.75;
 const ALPHA_THRESHOLD = 128;
 const GAP_CLOSE_RADIUS = 2;
+const UNDO_HISTORY_LIMIT = 10;
 
 const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
 const color = document.querySelector("#draw-color");
 const brushSize = document.querySelector("#brush-size");
 const toolButtons = [...document.querySelectorAll("[data-draw-tool]")];
+const undoButton = document.querySelector("#undo-canvas");
 const clearButton = document.querySelector("#clear-canvas");
 const submitButton = document.querySelector("#submit-food");
 const status = document.querySelector("#draw-status");
@@ -19,6 +21,29 @@ let previousPoint;
 let activeTool = "pen";
 let hasDrawing = false;
 let isSubmitting = false;
+const undoHistory = [];
+
+function addUndoState(history, state, limit) {
+  history.push(state);
+  if (history.length > limit) history.shift();
+}
+
+function updateUndoState() {
+  undoButton.disabled = isSubmitting || undoHistory.length === 0;
+}
+
+function rememberCanvas() {
+  addUndoState(undoHistory, {
+    image: context.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE),
+    hasDrawing,
+  }, UNDO_HISTORY_LIMIT);
+  updateUndoState();
+}
+
+function discardUndoHistory() {
+  undoHistory.length = 0;
+  updateUndoState();
+}
 
 function clearCanvas() {
   context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -59,6 +84,7 @@ function startDrawing(event) {
     return;
   }
 
+  rememberCanvas();
   activePointer = event.pointerId;
   previousPoint = point;
   canvas.setPointerCapture(event.pointerId);
@@ -167,6 +193,8 @@ function floodFill(image, width, height, startX, startY, fillColor) {
 
 function fillAt(point) {
   const image = context.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  const previousImage = context.createImageData(CANVAS_SIZE, CANVAS_SIZE);
+  previousImage.data.set(image.data);
   const changed = floodFill(
     image,
     CANVAS_SIZE,
@@ -176,8 +204,18 @@ function fillAt(point) {
     rgbaFromHex(color.value),
   );
   if (!changed) return;
+  addUndoState(undoHistory, { image: previousImage, hasDrawing }, UNDO_HISTORY_LIMIT);
   context.putImageData(image, 0, 0);
   hasDrawing = true;
+  updateSubmitState();
+}
+
+function undoCanvas() {
+  const previous = undoHistory.pop();
+  if (!previous) return;
+  context.putImageData(previous.image, 0, 0);
+  hasDrawing = previous.hasDrawing;
+  setStatus("");
   updateSubmitState();
 }
 
@@ -189,6 +227,7 @@ function setStatus(message, kind = "") {
 function updateSubmitState() {
   submitButton.disabled = isSubmitting || !hasDrawing;
   submitButton.textContent = isSubmitting ? "送信中…" : "食べてもらう";
+  updateUndoState();
 }
 
 function closeGaps(mask, width, height) {
@@ -345,6 +384,7 @@ async function submitFood() {
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 
+    discardUndoHistory();
     clearCanvas();
     setStatus("送信しました。順番になるとAIキャラクターが食べます。", "success");
   } catch (error) {
@@ -363,8 +403,12 @@ canvas.addEventListener("pointercancel", stopDrawing);
 for (const button of toolButtons) {
   button.addEventListener("click", () => setTool(button.dataset.drawTool));
 }
+undoButton.addEventListener("click", undoCanvas);
 clearButton.addEventListener("click", () => {
-  clearCanvas();
+  if (hasDrawing) {
+    rememberCanvas();
+    clearCanvas();
+  }
   setStatus("");
 });
 submitButton.addEventListener("click", submitFood);

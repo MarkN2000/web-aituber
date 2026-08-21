@@ -91,6 +91,12 @@
   gap: 10px;
 }
 
+.canvas-actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 10px;
+}
+
 .tool-switcher .secondary-button {
   padding-inline: 6px;
   white-space: nowrap;
@@ -145,6 +151,10 @@
 
   .tool-mode-row {
     grid-template-columns: 1fr;
+  }
+
+  .canvas-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .secondary-button {
