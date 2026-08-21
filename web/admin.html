@@ -4,36 +4,77 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body class="admin-page">
   <main class="admin-card">
     <p class="eyebrow">Web AITuber</p>
     <h1>管理画面</h1>
-    <p class="lead">現在の回答状態の確認、中断、設定の再読み込みができます。</p>
-
-    <dl class="admin-details">
-      <div>
-        <dt>状態</dt>
-        <dd id="admin-status">サーバーへ接続中です</dd>
-      </div>
-      <div>
-        <dt>質問</dt>
-        <dd id="admin-question">—</dd>
-      </div>
-      <div>
-        <dt>回答</dt>
-        <dd id="admin-answer">—</dd>
-      </div>
-    </dl>
-
-    <div class="admin-actions">
-      <button id="skip" type="button" disabled>現在の回答を中断</button>
-      <button id="reload-config" type="button">設定を再読み込み</button>
+    <p class="lead">運用状況の確認と、AI・音声の設定を変更できます。</p>
+    <div class="admin-tabs" role="tablist" aria-label="管理項目">
+      <button id="tab-operation" type="button" role="tab" aria-selected="true" aria-controls="panel-operation">運用</button>
+      <button id="tab-ai" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" tabindex="-1">AI設定</button>
+      <button id="tab-tts" type="button" role="tab" aria-selected="false" aria-controls="panel-tts" tabindex="-1">音声設定</button>
     </div>
-    <p id="admin-config-status" class="status" role="status"></p>
-    <p id="admin-error" class="status" role="alert"></p>
+
+    <section id="panel-operation" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-operation">
+      <h2>運用</h2>
+      <dl class="admin-details">
+        <div><dt>状態</dt><dd id="admin-status" aria-live="polite">サーバーへ接続中です</dd></div>
+      </dl>
+      <div class="admin-actions">
+        <button id="skip" type="button" disabled>現在の処理を中断</button>
+        <button id="reload-config" class="secondary-button" type="button">ファイルから再読み込み</button>
+      </div>
+      <p class="admin-help">外部で編集した設定ファイルを読み込み、次の投稿から反映します。</p>
+      <p id="operation-status" class="status" role="status" aria-live="polite"></p>
+      <p id="operation-error" class="status" role="alert"></p>
+    </section>
+
+    <section id="panel-ai" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-ai" hidden>
+      <h2>AI設定</h2>
+      <p class="admin-help">保存した設定は、次に処理を開始する投稿から反映します。</p>
+      <form id="ai-config-form" novalidate>
+        <label for="llm-api-url">API URL</label>
+        <input id="llm-api-url" type="url" required inputmode="url" placeholder="https://api.example.com/v1/responses">
+        <label for="llm-model">モデル</label>
+        <input id="llm-model" type="text" required autocomplete="off">
+        <label for="system-prompt">通常質問のプロンプト</label>
+        <textarea id="system-prompt" required rows="8"></textarea>
+        <label for="food-reaction-prompt">食事反応のプロンプト</label>
+        <textarea id="food-reaction-prompt" required rows="8"></textarea>
+        <label for="search-fillers">検索中フィラー</label>
+        <textarea id="search-fillers" required rows="5" aria-describedby="search-fillers-note"></textarea>
+        <p id="search-fillers-note" class="field-note admin-field-note">1行に1文ずつ入力してください。</p>
+        <div class="admin-form-actions"><button id="save-ai-config" type="submit">AI設定を保存</button></div>
+      </form>
+      <p id="ai-config-status" class="status" role="status" aria-live="polite"></p>
+      <p id="ai-config-error" class="status" role="alert"></p>
+    </section>
+
+    <section id="panel-tts" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-tts" hidden>
+      <h2>音声設定</h2>
+      <p class="admin-help">試聴は入力中の設定を使い、設定ファイルは変更しません。</p>
+      <form id="tts-config-form" novalidate>
+        <label for="tts-engine-url">TTS Engine URL</label>
+        <input id="tts-engine-url" type="url" required inputmode="url" placeholder="http://127.0.0.1:10101">
+        <label for="tts-speaker-list">話者</label>
+        <div class="tts-speaker-actions">
+          <button id="load-tts-speakers" class="secondary-button" type="button">話者一覧を取得</button>
+          <select id="tts-speaker-list" disabled aria-describedby="tts-speakers-status">
+            <option>エンジンURLを入力して話者一覧を取得してください</option>
+          </select>
+        </div>
+        <p id="tts-speakers-status" class="field-note admin-field-note" role="status" aria-live="polite">話者一覧を取得すると、使用する話者を選択できます。</p>
+        <div class="admin-form-actions">
+          <button id="preview-tts" class="secondary-button" type="button">接続して試聴</button>
+          <button id="save-tts-config" type="submit">音声設定を保存</button>
+        </div>
+      </form>
+      <p id="tts-config-status" class="status" role="status" aria-live="polite"></p>
+      <p id="tts-config-error" class="status" role="alert"></p>
+    </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=4"></script>
+  <script type="module" src="/static/js/admin.js?v=9"></script>
 </body>
 </html>

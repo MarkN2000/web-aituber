@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{Context, Result, bail};
@@ -13,13 +13,14 @@ use tokio::sync::watch;
 pub struct ConfigStore {
     current: watch::Sender<Arc<AppConfig>>,
     path: Arc<PathBuf>,
+    write_lock: Arc<Mutex<()>>,
 }
 
 pub struct ConfigReloadResult {
     pub restart_required: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppConfig {
     pub bind: String,
     pub admin_token: String,
@@ -29,7 +30,7 @@ pub struct AppConfig {
     pub character: CharacterConfig,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LlmConfig {
     /// OpenAI Responses API 互換エンドポイントの完全な URL。
     pub api_url: String,
@@ -41,7 +42,7 @@ pub struct LlmConfig {
     pub search_fillers: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TtsConfig {
     /// VOICEVOX または AivisSpeech Engine のベース URL。
     pub engine_url: String,
@@ -157,6 +158,7 @@ impl AppConfig {
         required("bind", &self.bind)?;
         required("admin_token", &self.admin_token)?;
         required("llm.api_url", &self.llm.api_url)?;
+        validate_http_url("llm.api_url", &self.llm.api_url)?;
         required("llm.api_key", &self.llm.api_key)?;
         required("llm.model", &self.llm.model)?;
         required("llm.system_prompt", &self.llm.system_prompt)?;
@@ -168,6 +170,7 @@ impl AppConfig {
             required(&format!("llm.search_fillers[{index}]"), filler)?;
         }
         required("tts.engine_url", &self.tts.engine_url)?;
+        validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         required("character.vrm_url", &self.character.vrm_url)?;
         if !self.character.food_prop.size.is_finite() || self.character.food_prop.size <= 0.0 {
@@ -199,6 +202,7 @@ impl ConfigStore {
         Self {
             current,
             path: Arc::new(path.into()),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -207,6 +211,10 @@ impl ConfigStore {
     }
 
     pub fn reload(&self) -> Result<ConfigReloadResult> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
         let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
         let current = self.current();
         let restart_required = replacement.bind != current.bind;
@@ -216,6 +224,116 @@ impl ConfigStore {
         self.current.send_replace(Arc::new(replacement));
         Ok(ConfigReloadResult { restart_required })
     }
+
+    /// 変更を永続化できた場合だけ、実行中の設定を更新する。
+    pub fn update_and_save<F>(&self, update: F) -> Result<ConfigReloadResult>
+    where
+        F: FnOnce(&mut AppConfig),
+    {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
+        let current = self.current();
+        // 画面に出さない項目を外部編集で変更していても、古い実行中設定で上書きしない。
+        let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        update(&mut replacement);
+        replacement.validate()?;
+        write_config_atomically(self.path.as_ref(), &replacement)?;
+
+        let restart_required = replacement.bind != current.bind;
+        if restart_required {
+            replacement.bind.clone_from(&current.bind);
+        }
+        self.current.send_replace(Arc::new(replacement));
+        Ok(ConfigReloadResult { restart_required })
+    }
+}
+
+fn write_config_atomically(path: &Path, config: &AppConfig) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let permissions = fs::metadata(path)
+        .with_context(|| format!("設定ファイルの情報を取得できません: {}", path.display()))?
+        .permissions();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config.json");
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<()> {
+        let serialized = serde_json::to_vec_pretty(config).context("設定をJSONへ変換できません")?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| {
+                format!("一時設定ファイルを作成できません: {}", temporary.display())
+            })?;
+        file.set_permissions(permissions)
+            .context("一時設定ファイルへ現在のアクセス権を引き継げません")?;
+        use std::io::Write;
+        file.write_all(&serialized)
+            .context("一時設定ファイルへ書き込めません")?;
+        file.write_all(b"\n")
+            .context("一時設定ファイルへ書き込めません")?;
+        file.sync_all()
+            .context("一時設定ファイルを同期できません")?;
+        drop(file);
+        replace_file(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_file(temporary: &Path, path: &Path) -> Result<()> {
+    fs::rename(temporary, path)
+        .with_context(|| format!("設定ファイルを置き換えられません: {}", path.display()))
+}
+
+#[cfg(windows)]
+fn replace_file(temporary: &Path, path: &Path) -> Result<()> {
+    use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+    fn wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(Some(0)).collect()
+    }
+
+    let destination = wide(path.as_os_str());
+    let replacement = wide(temporary.as_os_str());
+    // 設定ファイルは起動時に必ず存在するため、既存ファイルを原子的に置換する。
+    let result = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if result == 0 {
+        bail!(
+            "設定ファイルを原子的に置き換えられません: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_http_url(name: &str, value: &str) -> Result<()> {
+    let url = reqwest::Url::parse(value)
+        .with_context(|| format!("設定項目 {name} はHTTP(S) URLにしてください"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        bail!("設定項目 {name} はHTTP(S) URLにしてください");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("設定項目 {name} のURLにユーザー名やパスワードを含めないでください");
+    }
+    Ok(())
 }
 
 fn default_search_fillers() -> Vec<String> {
@@ -309,5 +427,63 @@ mod tests {
         assert_eq!(store.current().llm.model, "new-model");
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn update_and_save_persists_only_after_validation() {
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let source = include_str!("../config.example.json");
+        fs::write(&path, source).unwrap();
+        let initial: AppConfig = serde_json::from_str(source).unwrap();
+        let store = ConfigStore::new(&path, initial);
+
+        store
+            .update_and_save(|config| config.llm.model = "updated-model".to_owned())
+            .unwrap();
+        assert_eq!(store.current().llm.model, "updated-model");
+        let saved = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(saved.llm.model, "updated-model");
+
+        assert!(
+            store
+                .update_and_save(|config| config.llm.system_prompt.clear())
+                .is_err()
+        );
+        assert_eq!(store.current().llm.model, "updated-model");
+        let saved = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(saved.llm.model, "updated-model");
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_and_save_keeps_config_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let source = include_str!("../config.example.json");
+        fs::write(&path, source).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let initial: AppConfig = serde_json::from_str(source).unwrap();
+        let store = ConfigStore::new(&path, initial);
+
+        store
+            .update_and_save(|config| config.llm.model = "updated-model".to_owned())
+            .unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn http_url_validation_rejects_non_http_schemes() {
+        assert!(validate_http_url("test", "https://example.com/api").is_ok());
+        assert!(validate_http_url("test", "ftp://example.com").is_err());
+        assert!(validate_http_url("test", "https://user:password@example.com").is_err());
+        assert!(validate_http_url("test", "not a url").is_err());
     }
 }

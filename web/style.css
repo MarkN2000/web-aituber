@@ -379,6 +379,47 @@ textarea::placeholder {
   box-shadow: 0 12px 32px rgb(0 0 0 / 7%);
 }
 
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 24px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #ececea;
+}
+
+.admin-tabs [role="tab"] {
+  min-height: 42px;
+  flex: 1;
+  border-color: transparent;
+  background: transparent;
+  color: #505050;
+}
+
+.admin-tabs [role="tab"][aria-selected="true"] {
+  border-color: #fff;
+  background: #fff;
+  color: #202020;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.admin-tabs [role="tab"]:hover {
+  background: rgb(255 255 255 / 65%);
+  color: #202020;
+}
+
+.admin-tab-panel > h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+}
+
+.admin-help {
+  margin: 0 0 20px;
+  color: #606060;
+  font-size: .9rem;
+  line-height: 1.6;
+}
+
 .admin-details {
   display: grid;
   gap: 0;
@@ -418,28 +459,81 @@ textarea::placeholder {
   gap: 10px;
 }
 
-.admin-card .admin-actions button {
+.admin-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.tts-speaker-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-card .admin-actions button,
+.admin-card .admin-form-actions button {
   min-height: 46px;
   padding: 10px 20px;
 }
 
-.admin-card #reload-config {
+.secondary-button {
   border-color: #c9c9c5;
   background: #fff;
   color: #202020;
 }
 
-.admin-card #reload-config:hover {
+.secondary-button:hover {
   border-color: #aaa;
   background: #f2f2f0;
 }
 
-.admin-card #admin-config-status {
+.admin-card input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #c9c9c5;
+  border-radius: 8px;
+  background: #fff;
+  color: #202020;
+}
+
+.admin-card select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #c9c9c5;
+  border-radius: 8px;
+  background: #fff;
+  color: #202020;
+  font: inherit;
+}
+
+.admin-card textarea {
+  min-height: 120px;
+}
+
+.admin-card input[aria-invalid="true"],
+.admin-card textarea[aria-invalid="true"] {
+  border-color: #b3261e;
+}
+
+.admin-field-note {
+  text-align: left;
+}
+
+.admin-card #operation-status,
+.admin-card #ai-config-status,
+.admin-card #tts-config-status {
   margin-top: 16px;
   color: #287a46;
 }
 
-.admin-card #admin-error {
+.admin-card #operation-error,
+.admin-card #ai-config-error,
+.admin-card #tts-config-error {
   margin-top: 8px;
   color: #b3261e;
 }
@@ -499,5 +593,20 @@ textarea::placeholder {
   .admin-details div {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .admin-tabs {
+    gap: 2px;
+    margin-bottom: 20px;
+  }
+
+  .admin-tabs [role="tab"] {
+    min-height: 40px;
+    padding: 8px 6px;
+    font-size: .9rem;
+  }
+
+  .tts-speaker-actions {
+    grid-template-columns: 1fr;
   }
 }

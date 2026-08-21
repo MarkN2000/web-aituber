@@ -6,17 +6,21 @@ use axum::{
         ws::Message,
     },
     http::{StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
+    config::{TtsConfig, validate_http_url},
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
+    tts,
 };
 
 const MAX_TEXT_CHARS: usize = 2_000;
@@ -25,6 +29,17 @@ const MAX_TEXT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_FOOD_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 
 pub fn router(state: AppState) -> Router {
+    let admin_api = Router::new()
+        .route("/api/admin/skip", post(skip))
+        .route("/api/admin/reload-config", post(reload_config))
+        .route(
+            "/api/admin/config",
+            get(admin_config).put(update_admin_config),
+        )
+        .route("/api/admin/tts-preview", post(tts_preview))
+        .route("/api/admin/tts-speakers", post(tts_speakers))
+        .layer(middleware::map_response(add_admin_response_headers));
+
     Router::new()
         .route("/", get(main_page))
         .route("/input", get(input_page))
@@ -39,8 +54,7 @@ pub fn router(state: AppState) -> Router {
             post(submit_food).layer(DefaultBodyLimit::max(MAX_FOOD_REQUEST_BYTES)),
         )
         .route("/api/display-config", get(display_config))
-        .route("/api/admin/skip", post(skip))
-        .route("/api/admin/reload-config", post(reload_config))
+        .merge(admin_api)
         .route("/ws", get(websocket))
         .route("/food-images/{id}", get(food_image))
         .nest_service("/static", ServeDir::new("web"))
@@ -64,9 +78,9 @@ async fn draw_page() -> Response {
 
 async fn admin_page(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
     if !has_valid_admin_token(&state, &auth) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
-    html_file("web/admin.html").await
+    admin_no_store(html_file("web/admin.html").await)
 }
 
 async fn html_file(path: &str) -> Response {
@@ -236,7 +250,7 @@ async fn skip(
     Json(request): Json<AdminSkipRequest>,
 ) -> Response {
     if !has_valid_admin_token(&state, &auth) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
     let active = state.active.lock().await;
@@ -246,29 +260,172 @@ async fn skip(
     {
         active.cancel.cancel();
     }
-    StatusCode::NO_CONTENT.into_response()
+    admin_no_store(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
     if !has_valid_admin_token(&state, &auth) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
     match state.config.reload() {
-        Ok(result) => Json(AdminReloadResponse {
-            restart_required: result.restart_required,
-        })
-        .into_response(),
+        Ok(result) => admin_no_store(
+            Json(AdminReloadResponse {
+                restart_required: result.restart_required,
+            })
+            .into_response(),
+        ),
         Err(error) => {
             tracing::warn!(error = ?error, "設定の再読み込みに失敗しました");
+            admin_no_store(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("設定を再読み込みできません: {error}"),
+                    })),
+                )
+                    .into_response(),
+            )
+        }
+    }
+}
+
+async fn admin_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let config = state.config.current();
+    admin_no_store(Json(AdminConfigDto::from_config(&config)).into_response())
+}
+
+async fn update_admin_config(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminConfigDto>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    match state.config.update_and_save(move |config| {
+        config.llm.api_url = request.llm.api_url;
+        config.llm.model = request.llm.model;
+        config.llm.system_prompt = request.llm.system_prompt;
+        config.llm.food_reaction_prompt = request.llm.food_reaction_prompt;
+        config.llm.search_fillers = request.llm.search_fillers;
+        config.tts.engine_url = request.tts.engine_url;
+        config.tts.speaker_id = request.tts.speaker_id;
+    }) {
+        Ok(result) => admin_no_store(
+            Json(AdminReloadResponse {
+                restart_required: result.restart_required,
+            })
+            .into_response(),
+        ),
+        Err(error) => admin_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("設定を保存できません: {error}") })),
+            )
+                .into_response(),
+        ),
+    }
+}
+
+async fn tts_preview(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsPreviewRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if validate_http_url("tts.engine_url", &request.tts.engine_url).is_err() {
+        return admin_no_store(
             (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
-                    "error": format!("設定を再読み込みできません: {error}"),
+                    "error": "TTSの接続先はHTTP(S) URLにしてください"
                 })),
             )
-                .into_response()
+                .into_response(),
+        );
+    }
+    let config = TtsConfig {
+        engine_url: request.tts.engine_url,
+        speaker_id: request.tts.speaker_id,
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::synthesize(&state.http, &config, "こんにちは。音声の試聴です。"),
+    )
+    .await
+    {
+        Ok(Ok(wav)) => admin_no_store(([(header::CONTENT_TYPE, "audio/wav")], wav).into_response()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSの試聴に失敗しました");
+            admin_no_store(
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "error": "TTSの試聴に失敗しました" })),
+                )
+                    .into_response(),
+            )
         }
+        Err(_) => admin_no_store(
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(serde_json::json!({ "error": "TTSの試聴が時間切れになりました" })),
+            )
+                .into_response(),
+        ),
+    }
+}
+
+async fn tts_speakers(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsSpeakersRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
+        return admin_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "TTSの接続先はHTTP(S) URLにしてください"
+                })),
+            )
+                .into_response(),
+        );
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::fetch_speakers(&state.http, &request.engine_url),
+    )
+    .await
+    {
+        Ok(Ok(speakers)) => {
+            admin_no_store(Json(AdminTtsSpeakersResponse { speakers }).into_response())
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSの話者一覧取得に失敗しました");
+            admin_no_store(
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({ "error": "TTSの話者一覧を取得できません" })),
+                )
+                    .into_response(),
+            )
+        }
+        Err(_) => admin_no_store(
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(serde_json::json!({ "error": "TTSの話者一覧取得が時間切れになりました" })),
+            )
+                .into_response(),
+        ),
     }
 }
 
@@ -340,6 +497,76 @@ struct SubmitResponse {
 #[derive(Serialize)]
 struct AdminReloadResponse {
     restart_required: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AdminConfigDto {
+    llm: AdminLlmConfigDto,
+    tts: AdminTtsConfigDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AdminLlmConfigDto {
+    api_url: String,
+    model: String,
+    system_prompt: String,
+    food_reaction_prompt: String,
+    search_fillers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AdminTtsConfigDto {
+    engine_url: String,
+    speaker_id: u32,
+}
+
+impl AdminConfigDto {
+    fn from_config(config: &crate::config::AppConfig) -> Self {
+        Self {
+            llm: AdminLlmConfigDto {
+                api_url: config.llm.api_url.clone(),
+                model: config.llm.model.clone(),
+                system_prompt: config.llm.system_prompt.clone(),
+                food_reaction_prompt: config.llm.food_reaction_prompt.clone(),
+                search_fillers: config.llm.search_fillers.clone(),
+            },
+            tts: AdminTtsConfigDto {
+                engine_url: config.tts.engine_url.clone(),
+                speaker_id: config.tts.speaker_id,
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminTtsPreviewRequest {
+    tts: AdminTtsConfigDto,
+}
+
+#[derive(Deserialize)]
+struct AdminTtsSpeakersRequest {
+    engine_url: String,
+}
+
+#[derive(Serialize)]
+struct AdminTtsSpeakersResponse {
+    speakers: Vec<tts::Speaker>,
+}
+
+fn admin_no_store(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        header::HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
+async fn add_admin_response_headers(response: Response) -> Response {
+    admin_no_store(response)
 }
 
 struct ApiError {
@@ -481,6 +708,320 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn admin_config_requires_token_and_never_returns_secrets() {
+        let unauthorized = router(test_state())
+            .oneshot(
+                Request::get("/api/admin/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(unauthorized.headers()[header::CACHE_CONTROL], "no-store");
+
+        let response = router(test_state())
+            .oneshot(
+                Request::get("/api/admin/config?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("food_reaction_prompt"));
+        assert!(body.contains("engine_url"));
+        assert!(!body.contains("api_key"));
+        assert!(!body.contains("test-token"));
+    }
+
+    #[tokio::test]
+    async fn malformed_admin_json_is_not_cached() {
+        let response = router(test_state())
+            .oneshot(
+                Request::put("/api/admin/config?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(response.status().is_client_error());
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+    }
+
+    #[tokio::test]
+    async fn admin_config_update_persists_editable_fields_and_keeps_secrets() {
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.admin_token = "test-token".to_owned();
+        let bind = config.bind.clone();
+        let character = config.character.clone();
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+
+        let mut state = test_state();
+        state.config = ConfigStore::new(&path, config);
+        let mut externally_edited = AppConfig::load_from_path(&path).unwrap();
+        externally_edited.llm.api_key = "externally-updated-key".to_owned();
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&externally_edited).unwrap(),
+        )
+        .unwrap();
+        let body = serde_json::json!({
+            "llm": {
+                "api_url": "https://example.com/v1/responses",
+                "model": "updated-model",
+                "system_prompt": "更新後の通常プロンプト",
+                "food_reaction_prompt": "更新後の食事プロンプト",
+                "search_fillers": ["確認します。", "調べます。"]
+            },
+            "tts": {
+                "engine_url": "http://127.0.0.1:50021",
+                "speaker_id": 42
+            }
+        });
+        let response = router(state.clone())
+            .oneshot(
+                Request::put("/api/admin/config?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(saved.llm.model, "updated-model");
+        assert_eq!(saved.tts.speaker_id, 42);
+        assert_eq!(saved.llm.api_key, "externally-updated-key");
+        assert_eq!(saved.admin_token, "test-token");
+        assert_eq!(saved.bind, bind);
+        assert_eq!(saved.character.vrm_url, character.vrm_url);
+        assert_eq!(state.config.current().llm.model, "updated-model");
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_admin_config_update_keeps_file_and_running_config() {
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.admin_token = "test-token".to_owned();
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        let original = std::fs::read(&path).unwrap();
+
+        let mut state = test_state();
+        state.config = ConfigStore::new(&path, config);
+        let body = serde_json::json!({
+            "llm": {
+                "api_url": "ftp://example.com/responses",
+                "model": "updated-model",
+                "system_prompt": "通常プロンプト",
+                "food_reaction_prompt": "食事プロンプト",
+                "search_fillers": ["確認します。"]
+            },
+            "tts": {
+                "engine_url": "http://127.0.0.1:50021",
+                "speaker_id": 42
+            }
+        });
+        let response = router(state.clone())
+            .oneshot(
+                Request::put("/api/admin/config?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.config.current().llm.model, "gpt-5.6-luna");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn tts_preview_requires_token_and_returns_uncached_wav() {
+        async fn audio_query() -> Json<serde_json::Value> {
+            Json(serde_json::json!({ "query": "ok" }))
+        }
+        async fn synthesis() -> Response {
+            (
+                [(header::CONTENT_TYPE, "audio/wav")],
+                b"preview-wav".to_vec(),
+            )
+                .into_response()
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/audio_query", post(audio_query))
+                    .route("/synthesis", post(synthesis)),
+            )
+            .await
+            .unwrap();
+        });
+        let body = serde_json::json!({
+            "tts": { "engine_url": format!("http://{address}"), "speaker_id": 7 }
+        })
+        .to_string();
+
+        let app = router(test_state());
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-preview")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app
+            .oneshot(
+                Request::post("/api/admin/tts-preview?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/wav");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(&wav[..], b"preview-wav");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_speakers_requires_token_and_flattens_engine_response() {
+        async fn speakers() -> Json<serde_json::Value> {
+            Json(serde_json::json!([
+                {
+                    "name": "話者A",
+                    "styles": [
+                        { "id": 1, "name": "通常" },
+                        { "id": 2, "name": "喜び" }
+                    ]
+                },
+                { "name": "話者B", "styles": [{ "id": 3, "name": "落ち着き" }] }
+            ]))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/speakers", get(speakers)))
+                .await
+                .unwrap();
+        });
+        let body = serde_json::json!({ "engine_url": format!("http://{address}") }).to_string();
+        let app = router(test_state());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-speakers")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(unauthorized.headers()[header::CACHE_CONTROL], "no-store");
+
+        let response = app
+            .oneshot(
+                Request::post("/api/admin/tts-speakers?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "speakers": [
+                { "id": 1, "speaker_name": "話者A", "style_name": "通常" },
+                { "id": 2, "speaker_name": "話者A", "style_name": "喜び" },
+                { "id": 3, "speaker_name": "話者B", "style_name": "落ち着き" }
+            ]})
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_speakers_rejects_invalid_url_and_hides_engine_failure_detail() {
+        let invalid = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-speakers?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"engine_url":"ftp://example.com"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(invalid.headers()[header::CACHE_CONTROL], "no-store");
+
+        async fn unavailable() -> StatusCode {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/speakers", get(unavailable)))
+                .await
+                .unwrap();
+        });
+        let engine_url = format!("http://{address}");
+        let response = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-speakers?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "engine_url": engine_url }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!body.contains("127.0.0.1"));
+        assert!(!body.contains("500"));
+
+        server.abort();
     }
 
     #[tokio::test]
