@@ -27,11 +27,14 @@ export class AudioQueue {
     this.nextSequence = null;
     this.current = null;
     this.playbackId = 0;
+    this.suspended = false;
+    this.operationId = 0;
     this.disposed = false;
   }
 
   async unlock() {
     if (this.disposed) throw new Error("AudioQueue は破棄されています。");
+    const operationId = this.operationId;
 
     if (!this.context) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -49,6 +52,8 @@ export class AudioQueue {
     this.audio.src = SILENT_WAV;
     try {
       await this.audio.play();
+    } catch (error) {
+      if (this.operationId === operationId && !this.suspended) throw error;
     } finally {
       this.audio.pause();
       this.audio.removeAttribute("src");
@@ -56,7 +61,48 @@ export class AudioQueue {
       this.audio.muted = false;
     }
     this.unlocked = true;
-    this.playNext();
+    if (this.suspended) {
+      await this.context.suspend();
+    } else {
+      this.playNext();
+    }
+  }
+
+  async suspend() {
+    if (this.disposed) return;
+    const operationId = ++this.operationId;
+    this.suspended = true;
+    this.audio.pause();
+    if (this.context) await this.context.suspend();
+    if (this.context && this.operationId !== operationId && !this.suspended) await this.context.resume();
+  }
+
+  async resume() {
+    if (this.disposed) return;
+    const operationId = ++this.operationId;
+    this.suspended = false;
+    if (!this.unlocked || !this.context) return;
+    await this.context.resume();
+    if (this.operationId !== operationId || this.suspended) return;
+    const item = this.current;
+    if (!item) {
+      this.playNext();
+      return;
+    }
+    const playbackId = this.playbackId;
+    try {
+      await this.audio.play();
+      if (this.operationId !== operationId || this.suspended) {
+        if (this.suspended) this.audio.pause();
+        return;
+      }
+      this.notifyStart(item, playbackId);
+    } catch (error) {
+      if (this.current !== item || this.playbackId !== playbackId) return;
+      if (this.operationId !== operationId || this.suspended) return;
+      this.reportError(item, error);
+      this.finishCurrent();
+    }
   }
 
   enqueue({ url, turnId, sequence, durationMs, meta = {} }) {
@@ -65,7 +111,7 @@ export class AudioQueue {
     const key = this.itemKey(turnId, sequence);
     if (this.pending.has(key) || this.current?.key === key) return;
 
-    const item = { key, url, turnId, sequence, durationMs, meta, objectUrl: null, ready: false, failed: false };
+    const item = { key, url, turnId, sequence, durationMs, meta, objectUrl: null, ready: false, failed: false, started: false };
     this.pending.set(key, item);
     if (this.nextSequence === null) this.nextSequence = sequence;
     this.fetchAudio(item);
@@ -109,15 +155,18 @@ export class AudioQueue {
   }
 
   dispose() {
-    this.clear();
+    if (this.disposed) return;
     this.disposed = true;
+    this.suspended = true;
+    this.operationId += 1;
+    this.clear();
     this.source?.disconnect();
     this.analyser?.disconnect();
     this.context?.close();
   }
 
   playNext() {
-    if (!this.unlocked || this.current || this.nextSequence === null) return;
+    if (!this.unlocked || this.suspended || this.current || this.nextSequence === null) return;
     const item = this.pending.get(this.itemKey(this.activeTurnId, this.nextSequence));
     if (!item) return;
     if (item.failed) {
@@ -132,17 +181,29 @@ export class AudioQueue {
     this.pending.delete(item.key);
     this.current = item;
     const playbackId = ++this.playbackId;
+    const operationId = this.operationId;
     this.audio.src = item.objectUrl;
     this.audio.currentTime = 0;
     this.audio.play()
       .then(() => {
-        if (this.current === item && this.playbackId === playbackId) this.onStart(item, this.analyser);
+        if (this.operationId !== operationId || this.suspended) {
+          if (this.suspended) this.audio.pause();
+          return;
+        }
+        this.notifyStart(item, playbackId);
       })
       .catch((error) => {
         if (this.current !== item || this.playbackId !== playbackId) return;
+        if (this.operationId !== operationId || this.suspended) return;
         this.reportError(item, error);
         this.finishCurrent();
       });
+  }
+
+  notifyStart(item, playbackId) {
+    if (this.current !== item || this.playbackId !== playbackId || item.started) return;
+    item.started = true;
+    this.onStart(item, this.analyser);
   }
 
   finishCurrent() {

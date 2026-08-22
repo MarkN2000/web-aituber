@@ -1,5 +1,5 @@
-import { AudioQueue } from "./audio-queue.js";
-import { BackgroundMusic } from "./background-music.js?v=3";
+import { AudioQueue } from "./audio-queue.js?v=4";
+import { BackgroundMusic } from "./background-music.js?v=6";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
@@ -39,6 +39,7 @@ let started = false;
 let currentTurn;
 let motionPlayedForTurn;
 let reconnectTimer;
+let pageVisible = document.visibilityState === "visible";
 
 function applyBackground(config) {
   elements.stage.style.backgroundColor = config.background_color || "#202632";
@@ -69,6 +70,30 @@ function showError(message) {
 function showViewerMessage(message = "") {
   elements.viewerMessage.textContent = message;
   elements.viewerMessage.hidden = !message;
+}
+
+function pausePlayback() {
+  void queue?.suspend().catch((error) => console.error("TTS音声を一時停止できませんでした", error));
+  void backgroundMusic?.pause().catch((error) => console.error("BGMを一時停止できませんでした", error));
+}
+
+function resumePlayback() {
+  void queue?.resume().catch((error) => {
+    console.error("TTS音声を再開できませんでした", error);
+    showError("音声を再生できませんでした。");
+  });
+  void backgroundMusic?.resumePlayback();
+}
+
+function handleVisibilityChange() {
+  const visible = document.visibilityState === "visible";
+  if (pageVisible === visible) return;
+  pageVisible = visible;
+  if (visible) {
+    resumePlayback();
+  } else {
+    pausePlayback();
+  }
 }
 
 function setTurn(turn) {
@@ -253,6 +278,9 @@ async function startMain() {
       backgroundMusic = new BackgroundMusic({
         onError: () => showError("BGMを再生できませんでした。"),
       });
+      if (!pageVisible) {
+        void backgroundMusic.pause().catch((error) => console.error("BGMを一時停止できませんでした", error));
+      }
       backgroundMusicResume = backgroundMusic.resume().catch((error) => {
         console.error("BGMの音声機能を開始できませんでした", error);
         showError("BGMを再生できませんでした。");
@@ -268,6 +296,9 @@ async function startMain() {
         showError("音声を再生できませんでした。");
       },
     });
+    if (!pageVisible) {
+      void queue.suspend().catch((error) => console.error("TTS音声を一時停止できませんでした", error));
+    }
     const queueUnlock = queue.unlock();
     await queueUnlock;
     await backgroundMusicResume;
@@ -301,6 +332,7 @@ async function startMain() {
 }
 
 elements.start.addEventListener("click", startMain);
+document.addEventListener("visibilitychange", handleVisibilityChange);
 window.addEventListener("beforeunload", () => {
   window.clearTimeout(reconnectTimer);
   queue?.dispose();

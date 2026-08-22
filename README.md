@@ -76,7 +76,7 @@ cargo run --release
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
-node --test tests/draw-fill.test.cjs
+node --test tests/*.test.cjs
 ```
 
 音声まで確認する場合は、TTS EngineとFFmpegを起動・配置した状態で質問を投稿してください。

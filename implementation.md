@@ -70,6 +70,7 @@ assets/
 - VRMモデルは `assets/model.vrm` に配置する。
 - VRMAは `assets/motions/` に配置する。
 - メイン画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。
+- メイン画面はPage Visibility APIで非表示を検知し、BGMとTTS音声を再生位置と待機列を保持したまま一時停止する。再表示時はAudioContextと各音声を再開する。
 - LLMはResponses APIのWeb検索開始イベントだけをフィラー生成の合図にし、最終回答は1回だけ処理する。
 - 食事投稿はWeb検索と会話履歴を使用せず、画像の感想生成だけをLLMへ依頼する。
 - 食事投稿はVRM表示用の256×256px透過WebPとAI入力用の128×128px白背景WebPを受け付け、前者だけをメモリ内の一時URLで配信してVRMの右手へ追加したQuadへ貼り付け、後者だけをLLMへ送信する。

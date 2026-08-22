@@ -20,6 +20,9 @@ export class BackgroundMusic {
     this.duckRatio = 0.4;
     this.ducked = false;
     this.transition = undefined;
+    this.suspended = false;
+    this.hasTrack = false;
+    this.operationId = 0;
     this.disposed = false;
     this.gain.gain.value = this.volume;
     this.audio.addEventListener("error", () => this.reportError(new Error("BGMを再生できませんでした。")));
@@ -27,18 +30,22 @@ export class BackgroundMusic {
 
   async resume() {
     if (this.disposed) return Promise.resolve();
+    const operationId = this.operationId;
     const contextResume = this.context.resume();
     this.audio.muted = true;
     this.audio.src = SILENT_WAV;
     const mediaResume = this.audio.play();
     try {
       await Promise.all([contextResume, mediaResume]);
+    } catch (error) {
+      if (this.operationId === operationId && !this.suspended) throw error;
     } finally {
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
       this.audio.muted = false;
     }
+    if (this.suspended) await this.context.suspend();
   }
 
   async play(url, volume, duckRatio) {
@@ -46,10 +53,40 @@ export class BackgroundMusic {
     this.setLevels(volume, duckRatio, false);
     if (!url) return;
     this.audio.src = url;
+    this.hasTrack = true;
+    if (this.suspended) return;
+    const operationId = ++this.operationId;
     try {
+      await this.context.resume();
+      if (this.operationId !== operationId || this.suspended) return;
       await this.audio.play();
+      if (this.suspended) this.audio.pause();
     } catch (error) {
-      this.reportError(error);
+      if (this.operationId === operationId && !this.suspended) this.reportError(error);
+    }
+  }
+
+  async pause() {
+    if (this.disposed) return Promise.resolve();
+    const operationId = ++this.operationId;
+    this.suspended = true;
+    this.audio.pause();
+    await this.context.suspend();
+    if (this.operationId !== operationId && !this.suspended) await this.context.resume();
+  }
+
+  async resumePlayback() {
+    if (this.disposed) return;
+    const operationId = ++this.operationId;
+    this.suspended = false;
+    if (!this.hasTrack) return;
+    try {
+      await this.context.resume();
+      if (this.operationId !== operationId || this.suspended) return;
+      await this.audio.play();
+      if (this.suspended) this.audio.pause();
+    } catch (error) {
+      if (this.operationId === operationId && !this.suspended) this.reportError(error);
     }
   }
 
@@ -95,9 +132,12 @@ export class BackgroundMusic {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.suspended = true;
+    this.operationId += 1;
     this.audio.pause();
     this.audio.removeAttribute("src");
     this.audio.load();
+    this.hasTrack = false;
     this.source.disconnect();
     this.gain.disconnect();
     this.context.close();
