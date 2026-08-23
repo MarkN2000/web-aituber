@@ -104,6 +104,7 @@
 .draw-cursor[data-tool="bucket"] {
   width: 36px;
   height: 36px;
+  transform: translate(-9px, -9px);
 }
 
 .draw-cursor[data-tool="bucket"] .draw-cursor-ring {
@@ -112,8 +113,8 @@
 
 .draw-cursor[data-tool="bucket"] .draw-cursor-bucket {
   display: block;
-  left: -8px;
-  top: -31px;
+  left: 0;
+  top: 0;
   width: 36px;
   height: 36px;
 }
