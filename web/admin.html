@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=14">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -118,9 +118,19 @@
           <label for="tts-user-dictionary-pronunciation">読み（カタカナ）</label>
           <input id="tts-user-dictionary-pronunciation" type="text" required pattern="[ァ-ヴー]+" autocomplete="off" aria-describedby="tts-user-dictionary-pronunciation-note">
           <p id="tts-user-dictionary-pronunciation-note" class="field-note admin-field-note">全角カタカナで入力してください。</p>
-          <label for="tts-user-dictionary-accent-type">アクセント位置</label>
-          <input id="tts-user-dictionary-accent-type" type="number" required min="0" step="1" value="0" aria-describedby="tts-user-dictionary-accent-note">
-          <p id="tts-user-dictionary-accent-note" class="field-note admin-field-note">0は平板、1以降は音が下がる位置です。</p>
+          <fieldset class="tts-user-dictionary-accent" aria-describedby="tts-user-dictionary-accent-note">
+            <legend>アクセント</legend>
+            <input id="tts-user-dictionary-accent-type" type="hidden" value="0">
+            <p id="tts-user-dictionary-accent-empty" class="tts-user-dictionary-accent-empty">読みを入力すると選択できます。</p>
+            <div id="tts-user-dictionary-accent-picker" hidden>
+              <button id="tts-user-dictionary-accent-flat" class="secondary-button tts-user-dictionary-accent-flat" type="button" aria-pressed="true">平板</button>
+              <div class="tts-user-dictionary-accent-viewport">
+                <div id="tts-user-dictionary-accent-track" class="tts-user-dictionary-accent-track"></div>
+              </div>
+              <output id="tts-user-dictionary-accent-summary" for="tts-user-dictionary-accent-type"></output>
+            </div>
+            <p id="tts-user-dictionary-accent-note" class="field-note admin-field-note">平板、または音が下がる直前のモーラを選んでください。線は高低パターンの簡易表示です。</p>
+          </fieldset>
           <label for="tts-user-dictionary-word-type">品詞</label>
           <select id="tts-user-dictionary-word-type">
             <option value="PROPER_NOUN">固有名詞</option>
@@ -222,6 +232,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=19"></script>
+  <script type="module" src="/static/js/admin.js?v=20"></script>
 </body>
 </html>

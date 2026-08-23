@@ -6,6 +6,34 @@ const WORD_TYPE_LABELS = {
   SUFFIX: "接尾辞",
 };
 
+const COMBINING_SMALL_KATAKANA = new Set(["ァ", "ィ", "ゥ", "ェ", "ォ", "ャ", "ュ", "ョ", "ヮ"]);
+const KATAKANA_PRONUNCIATION_PATTERN = /^[ァ-ヴー]+$/u;
+const ACCENT_MORA_WIDTH = 52;
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+export function splitPronunciationMoras(pronunciation) {
+  const moras = [];
+  for (const character of pronunciation) {
+    if (COMBINING_SMALL_KATAKANA.has(character) && moras.length > 0) {
+      moras[moras.length - 1] += character;
+    } else {
+      moras.push(character);
+    }
+  }
+  return moras;
+}
+
+export function accentPitchLevels(moraCount, accentType) {
+  if (!Number.isInteger(moraCount) || moraCount < 1
+    || !Number.isInteger(accentType) || accentType < 0 || accentType > moraCount) return [];
+  return Array.from({ length: moraCount + 1 }, (_, index) => {
+    if (accentType === 1) return index === 0 ? 1 : 0;
+    if (index === 0) return 0;
+    if (accentType === 0) return 1;
+    return index < accentType ? 1 : 0;
+  });
+}
+
 export class UserDictionaryEditor {
   constructor({ token, engineUrl, adminUrl, readError, stopOtherPreview }) {
     this.token = token;
@@ -31,6 +59,11 @@ export class UserDictionaryEditor {
       surface: document.querySelector("#tts-user-dictionary-surface"),
       pronunciation: document.querySelector("#tts-user-dictionary-pronunciation"),
       accentType: document.querySelector("#tts-user-dictionary-accent-type"),
+      accentEmpty: document.querySelector("#tts-user-dictionary-accent-empty"),
+      accentPicker: document.querySelector("#tts-user-dictionary-accent-picker"),
+      accentFlat: document.querySelector("#tts-user-dictionary-accent-flat"),
+      accentTrack: document.querySelector("#tts-user-dictionary-accent-track"),
+      accentSummary: document.querySelector("#tts-user-dictionary-accent-summary"),
       wordType: document.querySelector("#tts-user-dictionary-word-type"),
       priority: document.querySelector("#tts-user-dictionary-priority"),
       priorityValue: document.querySelector("#tts-user-dictionary-priority-value"),
@@ -46,6 +79,8 @@ export class UserDictionaryEditor {
     this.elements.cancel.addEventListener("click", () => this.closeEditor());
     this.elements.preview.addEventListener("click", () => this.preview());
     this.elements.form.addEventListener("submit", (event) => this.save(event));
+    this.elements.pronunciation.addEventListener("input", () => this.renderAccentPicker());
+    this.elements.accentFlat.addEventListener("click", () => this.selectAccent(0));
     this.elements.priority.addEventListener("input", () => this.updatePriorityLabel());
     for (const field of this.elements.form.elements) {
       field.addEventListener("invalid", () => field.setAttribute("aria-invalid", "true"));
@@ -65,6 +100,82 @@ export class UserDictionaryEditor {
   updatePriorityLabel() {
     this.elements.priorityValue.value = this.elements.priority.value;
     this.elements.priorityValue.textContent = this.elements.priority.value;
+  }
+
+  selectAccent(accentType) {
+    this.elements.accentType.value = String(accentType);
+    this.renderAccentPicker();
+  }
+
+  renderAccentPicker() {
+    const pronunciation = this.elements.pronunciation.value;
+    const isValid = KATAKANA_PRONUNCIATION_PATTERN.test(pronunciation);
+    this.elements.accentTrack.replaceChildren();
+    this.elements.accentEmpty.hidden = isValid;
+    this.elements.accentPicker.hidden = !isValid;
+    if (!isValid) {
+      this.elements.accentEmpty.textContent = pronunciation
+        ? "全角カタカナで入力すると選択できます。"
+        : "読みを入力すると選択できます。";
+      return;
+    }
+
+    const moras = splitPronunciationMoras(pronunciation);
+    let accentType = Number(this.elements.accentType.value);
+    if (!Number.isInteger(accentType) || accentType < 0 || accentType > moras.length) {
+      accentType = 0;
+      this.elements.accentType.value = "0";
+    }
+    this.elements.accentFlat.setAttribute("aria-pressed", String(accentType === 0));
+
+    const levels = accentPitchLevels(moras.length, accentType);
+    const trackWidth = levels.length * ACCENT_MORA_WIDTH;
+    const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+    svg.classList.add("tts-user-dictionary-accent-line");
+    svg.setAttribute("viewBox", `0 0 ${trackWidth} 44`);
+    svg.setAttribute("width", String(trackWidth));
+    svg.setAttribute("height", "44");
+    svg.setAttribute("aria-hidden", "true");
+    const pointCoordinates = levels.map((level, index) => ({
+      x: (index * ACCENT_MORA_WIDTH) + (ACCENT_MORA_WIDTH / 2),
+      y: level === 1 ? 10 : 34,
+    }));
+    const line = document.createElementNS(SVG_NAMESPACE, "polyline");
+    line.setAttribute("points", pointCoordinates.map(({ x, y }) => `${x},${y}`).join(" "));
+    svg.append(line);
+    for (const [index, { x, y }] of pointCoordinates.entries()) {
+      const point = document.createElementNS(SVG_NAMESPACE, "circle");
+      point.setAttribute("cx", String(x));
+      point.setAttribute("cy", String(y));
+      point.setAttribute("r", index === pointCoordinates.length - 1 ? "4" : "5");
+      if (index === pointCoordinates.length - 1) point.classList.add("is-particle");
+      svg.append(point);
+    }
+
+    const choices = document.createElement("div");
+    choices.className = "tts-user-dictionary-accent-moras";
+    choices.style.gridTemplateColumns = `repeat(${levels.length}, ${ACCENT_MORA_WIDTH}px)`;
+    for (const [index, mora] of moras.entries()) {
+      const position = index + 1;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tts-user-dictionary-accent-mora";
+      button.textContent = mora;
+      button.setAttribute("aria-label", `${position}、${mora}の後で下がる`);
+      button.setAttribute("aria-pressed", String(accentType === position));
+      button.addEventListener("click", () => this.selectAccent(position));
+      choices.append(button);
+    }
+    const particle = document.createElement("span");
+    particle.className = "tts-user-dictionary-accent-particle";
+    particle.textContent = "助詞";
+    choices.append(particle);
+    this.elements.accentTrack.style.width = `${trackWidth}px`;
+    this.elements.accentTrack.append(svg, choices);
+    this.elements.accentSummary.value = accentType === 0
+      ? "選択中: 平板（後ろの助詞も高い）"
+      : `選択中: ${accentType}（「${moras[accentType - 1]}」の後で下がる）`;
+    this.elements.accentSummary.textContent = this.elements.accentSummary.value;
   }
 
   updateControls() {
@@ -174,6 +285,7 @@ export class UserDictionaryEditor {
     this.elements.save.textContent = word ? "変更を保存" : "辞書に追加";
     for (const field of this.elements.form.elements) field.removeAttribute("aria-invalid");
     this.updatePriorityLabel();
+    this.renderAccentPicker();
     this.elements.form.hidden = false;
     this.updateControls();
     this.elements.surface.focus();

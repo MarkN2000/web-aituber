@@ -387,6 +387,7 @@ textarea::placeholder {
 
 .admin-page {
   display: grid;
+  min-width: 0;
   place-items: center;
   padding: 32px 20px;
   background: #f6f6f4;
@@ -624,6 +625,123 @@ textarea::placeholder {
 .tts-user-dictionary-form > h4 {
   margin: 0 0 4px;
   font-size: 1rem;
+}
+
+.tts-user-dictionary-accent {
+  min-width: 0;
+  margin: 10px 0 0;
+  padding: 14px;
+  border: 1px solid #dededb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tts-user-dictionary-accent legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.tts-user-dictionary-accent-empty {
+  margin: 0;
+  color: #686868;
+  font-size: .9rem;
+}
+
+#tts-user-dictionary-accent-picker {
+  min-width: 0;
+}
+
+.tts-user-dictionary-accent-flat {
+  min-height: 40px;
+  padding: 8px 16px;
+}
+
+.tts-user-dictionary-accent-flat[aria-pressed="true"],
+.tts-user-dictionary-accent-mora[aria-pressed="true"] {
+  border-color: #202020;
+  background: #202020;
+  color: #fff;
+}
+
+.tts-user-dictionary-accent-viewport {
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid #dededb;
+  border-radius: 8px;
+  background: #f8f8f6;
+  overscroll-behavior-x: contain;
+}
+
+.tts-user-dictionary-accent-track {
+  min-width: max-content;
+}
+
+.tts-user-dictionary-accent-line {
+  display: block;
+}
+
+.tts-user-dictionary-accent-line polyline {
+  fill: none;
+  stroke: #505050;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tts-user-dictionary-accent-line circle {
+  fill: #202020;
+}
+
+.tts-user-dictionary-accent-line circle.is-particle {
+  fill: #8a8a86;
+}
+
+.tts-user-dictionary-accent-moras {
+  display: grid;
+  align-items: start;
+}
+
+.tts-user-dictionary-accent-mora {
+  width: 44px;
+  min-height: 40px;
+  margin: 0 4px;
+  padding: 6px 2px;
+  border-color: #c9c9c5;
+  background: #fff;
+  color: #202020;
+}
+
+.tts-user-dictionary-accent-flat:hover,
+.tts-user-dictionary-accent-mora:hover {
+  border-color: #aaa;
+  background: #f2f2f0;
+}
+
+.tts-user-dictionary-accent-flat[aria-pressed="true"]:hover,
+.tts-user-dictionary-accent-mora[aria-pressed="true"]:hover {
+  border-color: #3d3d3d;
+  background: #3d3d3d;
+}
+
+.tts-user-dictionary-accent-particle {
+  display: grid;
+  min-height: 40px;
+  place-items: center;
+  color: #686868;
+  font-size: .78rem;
+}
+
+#tts-user-dictionary-accent-summary {
+  display: block;
+  margin-top: 10px;
+  color: #505050;
+  font-size: .9rem;
+}
+
+.tts-user-dictionary-accent .admin-field-note {
+  margin-bottom: 0;
 }
 
 .tts-user-dictionary-list {
