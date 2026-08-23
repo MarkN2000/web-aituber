@@ -34,6 +34,14 @@ export function accentPitchLevels(moraCount, accentType) {
   });
 }
 
+export function accentTypeToSliderValue(moraCount, accentType) {
+  return accentType === 0 ? moraCount + 1 : accentType;
+}
+
+export function sliderValueToAccentType(moraCount, sliderValue) {
+  return sliderValue === moraCount + 1 ? 0 : sliderValue;
+}
+
 export class UserDictionaryEditor {
   constructor({ token, engineUrl, adminUrl, readError, stopOtherPreview }) {
     this.token = token;
@@ -61,8 +69,10 @@ export class UserDictionaryEditor {
       accentType: document.querySelector("#tts-user-dictionary-accent-type"),
       accentEmpty: document.querySelector("#tts-user-dictionary-accent-empty"),
       accentPicker: document.querySelector("#tts-user-dictionary-accent-picker"),
-      accentFlat: document.querySelector("#tts-user-dictionary-accent-flat"),
+      accentSlider: document.querySelector("#tts-user-dictionary-accent-slider"),
       accentTrack: document.querySelector("#tts-user-dictionary-accent-track"),
+      accentDiagram: document.querySelector("#tts-user-dictionary-accent-diagram"),
+      accentLabels: document.querySelector("#tts-user-dictionary-accent-labels"),
       accentSummary: document.querySelector("#tts-user-dictionary-accent-summary"),
       wordType: document.querySelector("#tts-user-dictionary-word-type"),
       priority: document.querySelector("#tts-user-dictionary-priority"),
@@ -80,7 +90,7 @@ export class UserDictionaryEditor {
     this.elements.preview.addEventListener("click", () => this.preview());
     this.elements.form.addEventListener("submit", (event) => this.save(event));
     this.elements.pronunciation.addEventListener("input", () => this.renderAccentPicker());
-    this.elements.accentFlat.addEventListener("click", () => this.selectAccent(0));
+    this.elements.accentSlider.addEventListener("input", () => this.updateAccentFromSlider());
     this.elements.priority.addEventListener("input", () => this.updatePriorityLabel());
     for (const field of this.elements.form.elements) {
       field.addEventListener("invalid", () => field.setAttribute("aria-invalid", "true"));
@@ -102,15 +112,18 @@ export class UserDictionaryEditor {
     this.elements.priorityValue.textContent = this.elements.priority.value;
   }
 
-  selectAccent(accentType) {
-    this.elements.accentType.value = String(accentType);
+  updateAccentFromSlider() {
+    const moraCount = Number(this.elements.accentSlider.max) - 1;
+    const sliderValue = Number(this.elements.accentSlider.value);
+    this.elements.accentType.value = String(sliderValueToAccentType(moraCount, sliderValue));
     this.renderAccentPicker();
   }
 
   renderAccentPicker() {
     const pronunciation = this.elements.pronunciation.value;
     const isValid = KATAKANA_PRONUNCIATION_PATTERN.test(pronunciation);
-    this.elements.accentTrack.replaceChildren();
+    this.elements.accentDiagram.replaceChildren();
+    this.elements.accentLabels.replaceChildren();
     this.elements.accentEmpty.hidden = isValid;
     this.elements.accentPicker.hidden = !isValid;
     if (!isValid) {
@@ -126,7 +139,9 @@ export class UserDictionaryEditor {
       accentType = 0;
       this.elements.accentType.value = "0";
     }
-    this.elements.accentFlat.setAttribute("aria-pressed", String(accentType === 0));
+    const sliderMax = moras.length + 1;
+    this.elements.accentSlider.max = String(sliderMax);
+    this.elements.accentSlider.value = String(accentTypeToSliderValue(moras.length, accentType));
 
     const levels = accentPitchLevels(moras.length, accentType);
     const trackWidth = levels.length * ACCENT_MORA_WIDTH;
@@ -148,33 +163,27 @@ export class UserDictionaryEditor {
       point.setAttribute("cx", String(x));
       point.setAttribute("cy", String(y));
       point.setAttribute("r", index === pointCoordinates.length - 1 ? "4" : "5");
-      if (index === pointCoordinates.length - 1) point.classList.add("is-particle");
+      if (index === pointCoordinates.length - 1) point.classList.add("is-after-word");
       svg.append(point);
     }
 
-    const choices = document.createElement("div");
-    choices.className = "tts-user-dictionary-accent-moras";
-    choices.style.gridTemplateColumns = `repeat(${levels.length}, ${ACCENT_MORA_WIDTH}px)`;
-    for (const [index, mora] of moras.entries()) {
-      const position = index + 1;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "tts-user-dictionary-accent-mora";
-      button.textContent = mora;
-      button.setAttribute("aria-label", `${position}、${mora}の後で下がる`);
-      button.setAttribute("aria-pressed", String(accentType === position));
-      button.addEventListener("click", () => this.selectAccent(position));
-      choices.append(button);
+    this.elements.accentLabels.style.gridTemplateColumns = `repeat(${levels.length}, ${ACCENT_MORA_WIDTH}px)`;
+    for (const mora of moras) {
+      const label = document.createElement("span");
+      label.textContent = mora;
+      this.elements.accentLabels.append(label);
     }
-    const particle = document.createElement("span");
-    particle.className = "tts-user-dictionary-accent-particle";
-    particle.textContent = "助詞";
-    choices.append(particle);
+    const flatLabel = document.createElement("span");
+    flatLabel.className = "is-flat";
+    flatLabel.textContent = "平板";
+    this.elements.accentLabels.append(flatLabel);
     this.elements.accentTrack.style.width = `${trackWidth}px`;
-    this.elements.accentTrack.append(svg, choices);
-    this.elements.accentSummary.value = accentType === 0
-      ? "選択中: 平板（後ろの助詞も高い）"
+    this.elements.accentDiagram.append(svg);
+    const selectionText = accentType === 0
+      ? "選択中: 平板"
       : `選択中: ${accentType}（「${moras[accentType - 1]}」の後で下がる）`;
+    this.elements.accentSlider.setAttribute("aria-valuetext", selectionText.replace("選択中: ", ""));
+    this.elements.accentSummary.value = selectionText;
     this.elements.accentSummary.textContent = this.elements.accentSummary.value;
   }
 

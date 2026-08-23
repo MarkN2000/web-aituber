@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -123,9 +123,12 @@
             <input id="tts-user-dictionary-accent-type" type="hidden" value="0">
             <p id="tts-user-dictionary-accent-empty" class="tts-user-dictionary-accent-empty">読みを入力すると選択できます。</p>
             <div id="tts-user-dictionary-accent-picker" hidden>
-              <button id="tts-user-dictionary-accent-flat" class="secondary-button tts-user-dictionary-accent-flat" type="button" aria-pressed="true">平板</button>
               <div class="tts-user-dictionary-accent-viewport">
-                <div id="tts-user-dictionary-accent-track" class="tts-user-dictionary-accent-track"></div>
+                <div id="tts-user-dictionary-accent-track" class="tts-user-dictionary-accent-track">
+                  <input id="tts-user-dictionary-accent-slider" class="tts-user-dictionary-accent-slider" type="range" min="1" max="2" step="1" value="2" aria-label="アクセント位置">
+                  <div id="tts-user-dictionary-accent-diagram"></div>
+                  <div id="tts-user-dictionary-accent-labels" class="tts-user-dictionary-accent-labels"></div>
+                </div>
               </div>
               <output id="tts-user-dictionary-accent-summary" for="tts-user-dictionary-accent-type"></output>
             </div>
@@ -232,6 +235,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=20"></script>
+  <script type="module" src="/static/js/admin.js?v=21"></script>
 </body>
 </html>
