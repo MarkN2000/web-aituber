@@ -1,3 +1,5 @@
+import { UserDictionaryEditor } from "./user-dictionary.js?v=1";
+
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
 const MAX_BACKGROUND_MUSIC_BYTES = 100 * 1024 * 1024;
@@ -49,6 +51,7 @@ function setMessage(status, error, message = "", isError = false) { status.textC
 function setCurrentTurn(turn) { currentTurn = turn; elements.skip.disabled = !turn; }
 function turnStatusLabel(status) { return status === "generating" ? "回答生成中" : status === "eating" ? "食事演出中" : "発話中"; }
 function readError(response, fallback) { return response.json().catch(() => ({})).then((body) => body.error || fallback); }
+const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError });
 
 function activateTab(tab, focus = false) {
   elements.tabs.forEach((candidate) => {
@@ -534,6 +537,7 @@ elements.musicVolumeForm.addEventListener("submit", saveMusicVolume);
 elements.engineUrl.addEventListener("input", () => {
   selectedSpeakerId = undefined;
   resetSpeakerList("エンジンURLを変更しました。話者一覧を再取得してください。");
+  userDictionary.invalidate();
 });
 elements.speakerList.addEventListener("change", () => {
   if (!elements.speakerList.value) {

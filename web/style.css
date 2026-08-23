@@ -476,6 +476,100 @@ textarea::placeholder {
   align-items: center;
 }
 
+.tts-user-dictionary-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #dededb;
+}
+
+.tts-user-dictionary-section > h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.tts-user-dictionary-form {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: #f8f8f6;
+}
+
+.tts-user-dictionary-form > h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.tts-user-dictionary-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tts-user-dictionary-word {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+}
+
+.tts-user-dictionary-word-content {
+  min-width: 0;
+}
+
+.tts-user-dictionary-word h4,
+.tts-user-dictionary-word p {
+  overflow-wrap: anywhere;
+}
+
+.tts-user-dictionary-word h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.tts-user-dictionary-word p {
+  margin: 4px 0 0;
+}
+
+.tts-user-dictionary-word-details {
+  color: #686868;
+  font-size: .85rem;
+}
+
+.tts-user-dictionary-word-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tts-user-dictionary-word-actions button {
+  min-height: 40px;
+  padding: 8px 14px;
+}
+
+.danger-button {
+  border-color: #d6aaa6;
+  color: #9d241c;
+}
+
+.danger-button:hover {
+  border-color: #c98c87;
+  background: #fff3f2;
+}
+
+.tts-user-dictionary-empty {
+  margin: 18px 0 0;
+  color: #686868;
+  font-size: .9rem;
+}
+
+.tts-user-dictionary-excluded {
+  margin-top: 12px;
+  color: #7a5b16;
+}
+
 .admin-card .admin-actions button,
 .admin-card .admin-form-actions button {
   min-height: 46px;
@@ -530,6 +624,7 @@ textarea::placeholder {
 .admin-card #operation-status,
 .admin-card #ai-config-status,
 .admin-card #tts-config-status,
+.admin-card #tts-user-dictionary-status,
 .admin-card #background-music-status,
 .admin-card #display-config-status {
   margin-top: 16px;
@@ -539,6 +634,7 @@ textarea::placeholder {
 .admin-card #operation-error,
 .admin-card #ai-config-error,
 .admin-card #tts-config-error,
+.admin-card #tts-user-dictionary-error,
 .admin-card #background-music-error,
 .admin-card #display-config-error {
   margin-top: 8px;
@@ -698,6 +794,14 @@ textarea::placeholder {
 
   .tts-speaker-actions {
     grid-template-columns: 1fr;
+  }
+
+  .tts-user-dictionary-word {
+    grid-template-columns: 1fr;
+  }
+
+  .tts-user-dictionary-word-actions button {
+    flex: 1;
   }
 
   .background-previews {

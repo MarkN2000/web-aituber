@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -74,6 +74,50 @@
       </form>
       <p id="tts-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="tts-config-error" class="status" role="alert"></p>
+
+      <section class="tts-user-dictionary-section" aria-labelledby="tts-user-dictionary-heading">
+        <h3 id="tts-user-dictionary-heading">ユーザー辞書</h3>
+        <p class="admin-help">入力中のTTS Engine URLに保存されている辞書を編集します。同じエンジンを使用する他のアプリにも変更が反映されます。</p>
+        <div class="admin-actions">
+          <button id="load-tts-user-dictionary" class="secondary-button" type="button">辞書を読み込む</button>
+          <button id="add-tts-user-dictionary-word" type="button" disabled>単語を追加</button>
+        </div>
+        <p id="tts-user-dictionary-status" class="status" role="status" aria-live="polite"></p>
+        <p id="tts-user-dictionary-error" class="status" role="alert"></p>
+        <p id="tts-user-dictionary-excluded" class="admin-help tts-user-dictionary-excluded" hidden>AivisSpeech固有の複合語・品詞は、この画面の編集対象に含まれません。</p>
+
+        <form id="tts-user-dictionary-form" class="tts-user-dictionary-form" novalidate hidden>
+          <h4 id="tts-user-dictionary-form-heading">単語を追加</h4>
+          <label for="tts-user-dictionary-surface">単語</label>
+          <input id="tts-user-dictionary-surface" type="text" required autocomplete="off">
+          <label for="tts-user-dictionary-pronunciation">読み（カタカナ）</label>
+          <input id="tts-user-dictionary-pronunciation" type="text" required pattern="[ァ-ヴー]+" autocomplete="off" aria-describedby="tts-user-dictionary-pronunciation-note">
+          <p id="tts-user-dictionary-pronunciation-note" class="field-note admin-field-note">全角カタカナで入力してください。</p>
+          <label for="tts-user-dictionary-accent-type">アクセント位置</label>
+          <input id="tts-user-dictionary-accent-type" type="number" required min="0" step="1" value="0" aria-describedby="tts-user-dictionary-accent-note">
+          <p id="tts-user-dictionary-accent-note" class="field-note admin-field-note">0は平板、1以降は音が下がる位置です。</p>
+          <label for="tts-user-dictionary-word-type">品詞</label>
+          <select id="tts-user-dictionary-word-type">
+            <option value="PROPER_NOUN">固有名詞</option>
+            <option value="COMMON_NOUN">普通名詞</option>
+            <option value="VERB">動詞</option>
+            <option value="ADJECTIVE">形容詞</option>
+            <option value="SUFFIX">接尾辞</option>
+          </select>
+          <label for="tts-user-dictionary-priority">優先度</label>
+          <div class="volume-control">
+            <input id="tts-user-dictionary-priority" type="range" min="0" max="10" step="1" value="5">
+            <output id="tts-user-dictionary-priority-value" for="tts-user-dictionary-priority">5</output>
+          </div>
+          <div class="admin-form-actions">
+            <button id="cancel-tts-user-dictionary-word" class="secondary-button" type="button">キャンセル</button>
+            <button id="save-tts-user-dictionary-word" type="submit">辞書に追加</button>
+          </div>
+        </form>
+
+        <p id="tts-user-dictionary-empty" class="tts-user-dictionary-empty">辞書を読み込むと、編集できる単語が表示されます。</p>
+        <div id="tts-user-dictionary-list" class="tts-user-dictionary-list" aria-live="polite"></div>
+      </section>
     </section>
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
@@ -144,6 +188,6 @@
       </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=12"></script>
+  <script type="module" src="/static/js/admin.js?v=13"></script>
 </body>
 </html>

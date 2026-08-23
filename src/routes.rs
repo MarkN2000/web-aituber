@@ -43,6 +43,15 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/tts-preview", post(tts_preview))
         .route("/api/admin/tts-speakers", post(tts_speakers))
+        .route("/api/admin/tts-user-dict", post(tts_user_dict))
+        .route(
+            "/api/admin/tts-user-dict-word",
+            post(add_tts_user_dict_word),
+        )
+        .route(
+            "/api/admin/tts-user-dict-word/{word_uuid}",
+            axum::routing::put(update_tts_user_dict_word).delete(delete_tts_user_dict_word),
+        )
         .route(
             "/api/admin/background-image",
             post(upload_background_image)
@@ -843,6 +852,190 @@ async fn tts_speakers(
     }
 }
 
+async fn tts_user_dict(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsEngineRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "TTSの接続先はHTTP(S) URLにしてください",
+        );
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::fetch_user_dict(&state.http, &request.engine_url),
+    )
+    .await
+    {
+        Ok(Ok(dictionary)) => admin_no_store(Json(dictionary).into_response()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSのユーザー辞書取得に失敗しました");
+            admin_error(
+                StatusCode::BAD_GATEWAY,
+                "TTSのユーザー辞書を取得できませんでした",
+            )
+        }
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSのユーザー辞書取得が時間切れになりました",
+        ),
+    }
+}
+
+async fn add_tts_user_dict_word(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsUserDictWordRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if let Err(message) = validate_tts_user_dict_request(&request) {
+        return admin_error(StatusCode::BAD_REQUEST, message);
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::add_user_dict_word(&state.http, &request.engine_url, &request.word),
+    )
+    .await
+    {
+        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSのユーザー辞書追加に失敗しました");
+            if tts::is_user_dict_input_error(&error) {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    "単語の読みまたはアクセント位置を確認してください",
+                );
+            }
+            admin_error(
+                StatusCode::BAD_GATEWAY,
+                "TTSのユーザー辞書へ単語を追加できませんでした",
+            )
+        }
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSのユーザー辞書追加が時間切れになりました",
+        ),
+    }
+}
+
+async fn update_tts_user_dict_word(
+    State(state): State<AppState>,
+    Path(word_uuid): Path<String>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsUserDictWordRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if let Err(message) = validate_tts_user_dict_request(&request) {
+        return admin_error(StatusCode::BAD_REQUEST, message);
+    }
+    let Ok(word_uuid) = Uuid::parse_str(&word_uuid) else {
+        return admin_error(StatusCode::BAD_REQUEST, "ユーザー辞書の単語IDが不正です");
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::update_user_dict_word(&state.http, &request.engine_url, word_uuid, &request.word),
+    )
+    .await
+    {
+        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSのユーザー辞書更新に失敗しました");
+            if tts::is_user_dict_input_error(&error) {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    "単語の読みまたはアクセント位置を確認してください",
+                );
+            }
+            admin_error(
+                StatusCode::BAD_GATEWAY,
+                "TTSのユーザー辞書にある単語を更新できませんでした",
+            )
+        }
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSのユーザー辞書更新が時間切れになりました",
+        ),
+    }
+}
+
+async fn delete_tts_user_dict_word(
+    State(state): State<AppState>,
+    Path(word_uuid): Path<String>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsEngineRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "TTSの接続先はHTTP(S) URLにしてください",
+        );
+    }
+    let Ok(word_uuid) = Uuid::parse_str(&word_uuid) else {
+        return admin_error(StatusCode::BAD_REQUEST, "ユーザー辞書の単語IDが不正です");
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::delete_user_dict_word(&state.http, &request.engine_url, word_uuid),
+    )
+    .await
+    {
+        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Err(error)) => {
+            tracing::warn!(error = ?error, "TTSのユーザー辞書削除に失敗しました");
+            if tts::is_user_dict_input_error(&error) {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    "削除する単語がユーザー辞書に見つかりません",
+                );
+            }
+            admin_error(
+                StatusCode::BAD_GATEWAY,
+                "TTSのユーザー辞書から単語を削除できませんでした",
+            )
+        }
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSのユーザー辞書削除が時間切れになりました",
+        ),
+    }
+}
+
+fn validate_tts_user_dict_request(
+    request: &AdminTtsUserDictWordRequest,
+) -> Result<(), &'static str> {
+    if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
+        return Err("TTSの接続先はHTTP(S) URLにしてください");
+    }
+    if request.word.surface.trim().is_empty() {
+        return Err("ユーザー辞書の単語を入力してください");
+    }
+    if request.word.pronunciation.is_empty()
+        || !request
+            .word
+            .pronunciation
+            .chars()
+            .all(|character| ('ァ'..='ヴ').contains(&character) || character == 'ー')
+    {
+        return Err("ユーザー辞書の読みはカタカナで入力してください");
+    }
+    if request.word.priority > 10 {
+        return Err("ユーザー辞書の優先度は0から10にしてください");
+    }
+    Ok(())
+}
+
 async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
@@ -979,6 +1172,18 @@ struct AdminTtsSpeakersRequest {
 #[derive(Serialize)]
 struct AdminTtsSpeakersResponse {
     speakers: Vec<tts::Speaker>,
+}
+
+#[derive(Deserialize)]
+struct AdminTtsEngineRequest {
+    engine_url: String,
+}
+
+#[derive(Deserialize)]
+struct AdminTtsUserDictWordRequest {
+    engine_url: String,
+    #[serde(flatten)]
+    word: tts::UserDictWordInput,
 }
 
 fn admin_no_store(mut response: Response) -> Response {
@@ -1610,6 +1815,252 @@ mod tests {
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(!body.contains("127.0.0.1"));
         assert!(!body.contains("500"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_user_dict_crud_uses_common_engine_contract() {
+        async fn user_dict(
+            Query(query): Query<HashMap<String, String>>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(
+                query.get("enable_compound_accent").map(String::as_str),
+                Some("true")
+            );
+            Json(serde_json::json!({
+                "00000000-0000-0000-0000-000000000001": {
+                    "surface": "AITuber",
+                    "pronunciation": "エーアイチューバー",
+                    "accent_type": 0,
+                    "priority": 5,
+                    "context_id": 1348
+                },
+                "00000000-0000-0000-0000-000000000002": {
+                    "surface": "東京",
+                    "pronunciation": ["トーキョー"],
+                    "accent_type": [0],
+                    "priority": 5,
+                    "context_id": 1348,
+                    "word_type": "LOCATION_NAME"
+                },
+                "00000000-0000-0000-0000-000000000003": {
+                    "surface": "新田真剣佑",
+                    "pronunciation": ["アラタ", "マッケンユウ"],
+                    "accent_type": [1, 3],
+                    "priority": 5,
+                    "context_id": 1348,
+                    "word_type": "PROPER_NOUN"
+                }
+            }))
+        }
+        async fn write_word(Query(query): Query<HashMap<String, String>>) -> StatusCode {
+            assert_eq!(query.len(), 5);
+            assert_eq!(query.get("surface").map(String::as_str), Some("OpenAI"));
+            assert_eq!(
+                query.get("pronunciation").map(String::as_str),
+                Some("オープンエーアイ")
+            );
+            assert_eq!(query.get("accent_type").map(String::as_str), Some("4"));
+            assert_eq!(
+                query.get("word_type").map(String::as_str),
+                Some("PROPER_NOUN")
+            );
+            assert_eq!(query.get("priority").map(String::as_str), Some("7"));
+            StatusCode::NO_CONTENT
+        }
+        async fn delete_word(Path(word_uuid): Path<String>) -> StatusCode {
+            assert_eq!(
+                Uuid::parse_str(&word_uuid).unwrap(),
+                Uuid::parse_str("00000000-0000-0000-0000-000000000004").unwrap()
+            );
+            StatusCode::NO_CONTENT
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/user_dict", get(user_dict))
+                    .route("/user_dict_word", post(write_word))
+                    .route(
+                        "/user_dict_word/{word_uuid}",
+                        axum::routing::put(write_word).delete(delete_word),
+                    ),
+            )
+            .await
+            .unwrap();
+        });
+        let engine_url = format!("http://{address}");
+        let engine_body = serde_json::json!({ "engine_url": engine_url }).to_string();
+        let word_body = serde_json::json!({
+            "engine_url": format!("http://{address}"),
+            "surface": "OpenAI",
+            "pronunciation": "オープンエーアイ",
+            "accent_type": 4,
+            "word_type": "PROPER_NOUN",
+            "priority": 7
+        })
+        .to_string();
+        let app = router(test_state());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(engine_body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let list = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(engine_body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::OK);
+        assert_eq!(list.headers()[header::CACHE_CONTROL], "no-store");
+        let list_body = to_bytes(list.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&list_body).unwrap(),
+            serde_json::json!({
+                "words": [{
+                    "uuid": "00000000-0000-0000-0000-000000000001",
+                    "surface": "AITuber",
+                    "pronunciation": "エーアイチューバー",
+                    "accent_type": 0,
+                    "word_type": "PROPER_NOUN",
+                    "priority": 5
+                }],
+                "has_excluded_words": true
+            })
+        );
+
+        for (method, path, body) in [
+            (
+                "POST",
+                "/api/admin/tts-user-dict-word?token=test-token",
+                word_body.clone(),
+            ),
+            (
+                "PUT",
+                "/api/admin/tts-user-dict-word/00000000-0000-0000-0000-000000000004?token=test-token",
+                word_body,
+            ),
+            (
+                "DELETE",
+                "/api/admin/tts-user-dict-word/00000000-0000-0000-0000-000000000004?token=test-token",
+                engine_body,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_user_dict_rejects_invalid_url_and_word() {
+        let invalid_url = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"engine_url":"ftp://example.com"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid_url.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_word = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict-word?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "engine_url": "http://127.0.0.1:50021",
+                            "surface": "AITuber",
+                            "pronunciation": "えーあいちゅーばー",
+                            "accent_type": 0,
+                            "word_type": "PROPER_NOUN",
+                            "priority": 5
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid_word.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(invalid_word.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn tts_user_dict_maps_engine_input_error_to_bad_request() {
+        async fn invalid_word() -> (StatusCode, &'static str) {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "engine-internal-validation-detail",
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/user_dict_word", post(invalid_word)),
+            )
+            .await
+            .unwrap();
+        });
+        let body = serde_json::json!({
+            "engine_url": format!("http://{address}"),
+            "surface": "AITuber",
+            "pronunciation": "エーアイチューバー",
+            "accent_type": 99,
+            "word_type": "PROPER_NOUN",
+            "priority": 5
+        });
+
+        let response = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict-word?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("アクセント位置"));
+        assert!(!body.contains("engine-internal-validation-detail"));
 
         server.abort();
     }
