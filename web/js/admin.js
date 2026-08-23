@@ -270,7 +270,7 @@ async function uploadBackground(event) {
     elements.backgroundInput.value = "";
     try {
       await loadDisplayConfig({ music: false, volume: false });
-      setMessage(elements.displayStatus, elements.displayError, "背景画像を更新しました。メイン画面を再読み込みすると反映されます。");
+      setMessage(elements.displayStatus, elements.displayError, "背景画像を更新しました。接続中のメイン画面へ反映されます。");
     } catch (error) {
       console.error(error);
       setMessage(elements.displayStatus, elements.displayError, "背景画像は更新されましたが、現在のプレビューを更新できませんでした。", true);
@@ -297,7 +297,7 @@ async function deleteBackground() {
     await showCurrentBackground(null);
     try {
       await loadDisplayConfig({ music: false, volume: false });
-      setMessage(elements.displayStatus, elements.displayError, "背景画像を削除しました。メイン画面を再読み込みすると背景色へ戻ります。");
+      setMessage(elements.displayStatus, elements.displayError, "背景画像を削除しました。接続中のメイン画面は背景色へ戻ります。");
     } catch (error) {
       console.error(error);
       setMessage(elements.displayStatus, elements.displayError, "背景画像は削除されましたが、現在のプレビューを更新できませんでした。", true);
@@ -330,7 +330,7 @@ async function uploadMusic(event) {
     elements.selectedMusic.textContent = "なし";
     try {
       await loadDisplayConfig({ background: false, volume: false });
-      setMessage(elements.musicStatus, elements.musicError, "BGMを更新しました。メイン画面を再読み込みすると反映されます。");
+      setMessage(elements.musicStatus, elements.musicError, "BGMを更新しました。接続中のメイン画面へ反映されます。");
     } catch (error) {
       console.error(error);
       setMessage(elements.musicStatus, elements.musicError, "BGMは更新されましたが、現在の表示を更新できませんでした。", true);
@@ -356,7 +356,7 @@ async function deleteMusic() {
     const response = await fetch(adminUrl("/api/admin/background-music"), { method: "DELETE" });
     if (!response.ok) throw new Error(await readError(response, "BGMを削除できませんでした。"));
     showCurrentMusic(null);
-    setMessage(elements.musicStatus, elements.musicError, "BGMを削除しました。メイン画面を再読み込みすると反映されます。");
+    setMessage(elements.musicStatus, elements.musicError, "BGMを削除しました。接続中のメイン画面へ反映されます。");
   } catch (error) {
     console.error(error);
     setMessage(elements.musicStatus, elements.musicError, error.message || "BGMを削除できませんでした。", true);
@@ -384,7 +384,7 @@ async function saveMusicVolume(event) {
       body: JSON.stringify({ volume, duck_ratio: duckRatio }),
     });
     if (!response.ok) throw new Error(await readError(response, "BGM音量を保存できませんでした。"));
-    setMessage(elements.musicStatus, elements.musicError, "BGM音量を保存しました。メイン画面を再読み込みすると反映されます。");
+    setMessage(elements.musicStatus, elements.musicError, "BGM音量を保存しました。接続中のメイン画面へ反映されます。");
   } catch (error) {
     console.error(error);
     setMessage(elements.musicStatus, elements.musicError, error.message || "BGM音量を保存できませんでした。", true);
@@ -502,7 +502,7 @@ async function skip() {
 async function reload() {
   if (!token) return;
   elements.reload.disabled = true; const original = elements.reload.textContent; elements.reload.textContent = "再読み込み中…"; setMessage(elements.operationStatus, elements.operationError);
-  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await loadConfig(); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。次の投稿から反映されます。"); }
+  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await loadConfig(); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }

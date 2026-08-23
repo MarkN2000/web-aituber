@@ -1,5 +1,5 @@
 import { AudioQueue } from "./audio-queue.js?v=4";
-import { BackgroundMusic } from "./background-music.js?v=6";
+import { BackgroundMusic } from "./background-music.js?v=7";
 import { ConversationHistory } from "./history.js?v=9";
 import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
@@ -64,12 +64,94 @@ let currentTurn;
 let motionPlayedForTurn;
 let reconnectTimer;
 let pageVisible = document.visibilityState === "visible";
+let displayConfig;
+let appliedViewerConfigKey;
+let pendingViewerConfig;
+let viewerReloading = false;
 
 function applyBackground(config) {
   elements.stage.style.backgroundColor = config.background_color || "#202632";
   elements.stage.style.backgroundImage = config.background_image_url
     ? `url(${JSON.stringify(config.background_image_url)})`
     : "none";
+}
+
+function viewerConfigKey(config) {
+  return JSON.stringify({
+    vrm_url: config.vrm_url,
+    idle_motions: config.idle_motions,
+    emotion_motions: Object.fromEntries(
+      Object.entries(config.emotion_motions || {}).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    food_prop: config.food_prop,
+    camera: config.camera,
+    light: config.light,
+  });
+}
+
+async function fetchDisplayConfig() {
+  const response = await fetch("/api/display-config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
+  return response.json();
+}
+
+async function applyPendingViewerConfig() {
+  if (currentTurn || viewerReloading || !pendingViewerConfig) return;
+  const config = pendingViewerConfig;
+  pendingViewerConfig = undefined;
+  viewerReloading = true;
+  showViewerMessage("モデルを更新しています。");
+  viewer?.dispose();
+  const nextViewer = new VrmViewer(elements.canvas, showViewerMessage, {
+    showFoodPropGizmo: debugEnabled,
+    onDebugStateChange: debugEnabled
+      ? updateDebugState
+      : undefined,
+  });
+  viewer = nextViewer;
+  try {
+    await nextViewer.load(config);
+    appliedViewerConfigKey = viewerConfigKey(config);
+    showViewerMessage();
+  } catch (error) {
+    console.error("モデルを更新できませんでした", error);
+    nextViewer.dispose();
+    if (viewer === nextViewer) viewer = undefined;
+    showViewerMessage(error.message || "モデルを更新できませんでした。");
+  } finally {
+    viewerReloading = false;
+    if (!currentTurn && pendingViewerConfig) void applyPendingViewerConfig();
+  }
+}
+
+function applyUpdatedDisplayConfig(config) {
+  const previous = displayConfig;
+  displayConfig = config;
+  applyBackground(config);
+  backgroundMusic?.setLevels(
+    config.background_music_volume,
+    config.background_music_duck_ratio,
+  );
+  if (previous?.background_music_url !== config.background_music_url) {
+    void backgroundMusic?.play(
+      config.background_music_url,
+      config.background_music_volume,
+      config.background_music_duck_ratio,
+    );
+  }
+  if (viewerConfigKey(config) !== appliedViewerConfigKey) {
+    pendingViewerConfig = config;
+    void applyPendingViewerConfig();
+  }
+}
+
+async function refreshDisplayConfig() {
+  try {
+    applyUpdatedDisplayConfig(await fetchDisplayConfig());
+  } catch (error) {
+    console.error("表示設定を更新できませんでした", error);
+    showError("表示設定を更新できませんでした。");
+  }
 }
 const receivedTurns = new Set();
 let currentSourceButton;
@@ -128,6 +210,7 @@ function setTurn(turn) {
     elements.answer.hidden = true;
     elements.loader.hidden = true;
     elements.panel.hidden = true;
+    void applyPendingViewerConfig();
     return;
   }
 
@@ -164,7 +247,10 @@ function connect(connectionState = "connecting") {
   updateDebugState({ connection: connectionState });
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(`${scheme}//${window.location.host}/ws`);
-  socket.addEventListener("open", () => updateDebugState({ connection: "connected" }));
+  socket.addEventListener("open", () => {
+    updateDebugState({ connection: "connected" });
+    void refreshDisplayConfig();
+  });
   socket.addEventListener("message", (event) => {
     try {
       handleServerEvent(JSON.parse(event.data));
@@ -189,8 +275,8 @@ function handleServerEvent(event) {
       if (currentTurn && currentTurn.turn_id !== event.current?.turn_id) {
         cancelTurnAudio(currentTurn.turn_id);
         receivedTurns.delete(currentTurn.turn_id);
-        viewer.stopLipSync();
-        viewer.clearFoodProp();
+        viewer?.stopLipSync();
+        viewer?.clearFoodProp();
         setEmotion("neutral");
       }
       if (event.current) {
@@ -202,13 +288,16 @@ function handleServerEvent(event) {
     case "history":
       historyView.render(event.turns || []);
       break;
+    case "display_config_changed":
+      void refreshDisplayConfig();
+      break;
     case "state":
       if (currentTurn?.turn_id !== event.turn.turn_id) {
         if (currentTurn) {
           cancelTurnAudio(currentTurn.turn_id);
           receivedTurns.delete(currentTurn.turn_id);
-          viewer.stopLipSync();
-          viewer.clearFoodProp();
+          viewer?.stopLipSync();
+          viewer?.clearFoodProp();
           setEmotion("neutral");
         }
         clearAnswer();
@@ -219,7 +308,7 @@ function handleServerEvent(event) {
       break;
     case "food_action":
       elements.panel.hidden = true;
-      viewer.playFoodAction(event.image_url, event.consume_at_ms, event.duration_ms);
+      viewer?.playFoodAction(event.image_url, event.consume_at_ms, event.duration_ms);
       break;
     case "segment":
       receiveSegment(event);
@@ -256,7 +345,7 @@ function receiveSegment(segment) {
       cancelTurnAudio(currentTurn.turn_id);
       receivedTurns.delete(currentTurn.turn_id);
     }
-    viewer.stopLipSync();
+    viewer?.stopLipSync();
     backgroundMusic?.setDucked(false);
     setEmotion("neutral");
     setTurn({ turn_id: segment.turn_id, question: "" });
@@ -283,16 +372,16 @@ function onAudioStart(item, analyser) {
   const segment = item.meta;
   backgroundMusic?.setDucked(true);
   setEmotion(segment.kind === "filler" ? "neutral" : segment.emotion);
-  viewer.startLipSync(analyser);
+  viewer?.startLipSync(analyser);
   if (segment.kind !== "filler" && motionPlayedForTurn !== segment.turn_id && segment.motion && isEmotion(segment.emotion)) {
     motionPlayedForTurn = segment.turn_id;
-    viewer.playEmotionMotion(segment.emotion);
+    viewer?.playEmotionMotion(segment.emotion);
   }
 }
 
 function onAudioEnd(item) {
   backgroundMusic?.setDucked(false);
-  viewer.stopLipSync();
+  viewer?.stopLipSync();
   if (item.meta.is_last) cleanTurn(item.turnId);
 }
 
@@ -331,9 +420,7 @@ async function startMain() {
     await queueUnlock;
     await backgroundMusicResume;
 
-    const response = await fetch("/api/display-config", { cache: "no-store" });
-    if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
-    const config = await response.json();
+    const config = await fetchDisplayConfig();
     applyBackground(config);
     void backgroundMusic?.play(
       config.background_music_url,
@@ -348,6 +435,8 @@ async function startMain() {
         : undefined,
     });
     await viewer.load(config);
+    displayConfig = config;
+    appliedViewerConfigKey = viewerConfigKey(config);
     started = true;
     elements.startScreen.hidden = true;
     connect();

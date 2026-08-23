@@ -58,17 +58,20 @@ function loadDebugContext() {
     let debugStateKey;
     let socket;
     let reconnectTimer;
+    let displayConfigRefreshes = 0;
     let started = true;
     const elements = { debugOverlay: {} };
     const rendered = this.rendered;
     function renderDebugState(_element, state) { rendered.push({ ...state }); }
     function handleServerEvent() {}
     function showError() {}
+    function refreshDisplayConfig() { displayConfigRefreshes += 1; }
     ${updateSource}
     ${connectSource}
     this.connect = connect;
     this.update = updateDebugState;
     this.disableDebug = () => { debugState = undefined; };
+    this.displayConfigRefreshes = () => displayConfigRefreshes;
   `, context);
   return { context, rendered, sockets, timers };
 }
@@ -78,6 +81,7 @@ test("接続状態は接続中・接続済み・再接続中へ遷移する", ()
 
   context.connect();
   sockets[0].emit("open");
+  assert.equal(context.displayConfigRefreshes(), 1);
   sockets[0].emit("close");
 
   assert.deepEqual(rendered.map((state) => state.connection), [

@@ -145,6 +145,22 @@ test("BGMは一時停止位置を保持して再開する", async () => {
   assert.equal(audio.src, "/assets/background-music.webm");
 });
 
+test("BGM設定から音源がなくなった場合は現在の再生を停止する", async () => {
+  const { LoadedClass: BackgroundMusic, instances } = loadClass("background-music.js", "BackgroundMusic");
+  const music = new BackgroundMusic();
+  const audio = instances[0];
+
+  await music.play("/assets/background-music.webm", 0.3, 0.4);
+  const playCalls = audio.playCalls;
+  await music.play(null, 0.5, 0.2);
+
+  assert.equal(audio.paused, true);
+  assert.equal(audio.src, "");
+  assert.equal(music.hasTrack, false);
+  await music.resumePlayback();
+  assert.equal(audio.playCalls, playCalls);
+});
+
 test("TTSは再生位置と待機列を保持して再開する", async () => {
   const starts = [];
   const fetch = async () => ({ ok: true, blob: async () => ({}) });

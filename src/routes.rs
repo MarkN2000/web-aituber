@@ -262,6 +262,10 @@ fn queue_error(error: tokio::sync::mpsc::error::TrySendError<Submission>) -> Api
     }
 }
 
+fn notify_display_config_changed(state: &AppState) {
+    let _ = state.events.send(ServerEvent::DisplayConfigChanged);
+}
+
 async fn display_config(State(state): State<AppState>) -> Response {
     let config = state.config.current();
     let background_image_path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
@@ -436,7 +440,10 @@ async fn upload_background_image(
     let _guard = state.background_image_lock.lock().await;
     let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
     match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
-        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Ok(())) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
         Ok(Err(error)) => {
             tracing::error!(error = ?error, "背景画像を保存できませんでした");
             admin_error(
@@ -465,8 +472,12 @@ async fn delete_background_image(
     let _guard = state.background_image_lock.lock().await;
     let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
     match tokio::fs::remove_file(&path).await {
-        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(()) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            notify_display_config_changed(&state);
             admin_no_store(StatusCode::NO_CONTENT.into_response())
         }
         Err(error) => {
@@ -597,7 +608,10 @@ async fn upload_background_music(
     let source = temporary.output().to_owned();
     let destination = state.assets_dir.join(background_music::FILE_NAME);
     match background_music::install_atomically(&source, &destination) {
-        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(()) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
         Err(error) => {
             tracing::error!(error = ?error, "BGMを保存できませんでした");
             admin_error(
@@ -625,8 +639,12 @@ async fn delete_background_music(
     let _guard = state.background_music_lock.lock().await;
     let path = state.assets_dir.join(background_music::FILE_NAME);
     match tokio::fs::remove_file(&path).await {
-        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(()) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            notify_display_config_changed(&state);
             admin_no_store(StatusCode::NO_CONTENT.into_response())
         }
         Err(error) => {
@@ -662,7 +680,10 @@ async fn update_background_music_volume(
         config.character.background_music_volume = request.volume;
         config.character.background_music_duck_ratio = request.duck_ratio;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
         Err(error) => {
             tracing::warn!(error = ?error, "BGM音量を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "BGM音量を保存できませんでした")
@@ -799,12 +820,15 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
     }
 
     match state.config.reload() {
-        Ok(result) => admin_no_store(
-            Json(AdminReloadResponse {
-                restart_required: result.restart_required,
-            })
-            .into_response(),
-        ),
+        Ok(result) => {
+            notify_display_config_changed(&state);
+            admin_no_store(
+                Json(AdminReloadResponse {
+                    restart_required: result.restart_required,
+                })
+                .into_response(),
+            )
+        }
         Err(error) => {
             tracing::warn!(error = ?error, "設定の再読み込みに失敗しました");
             admin_no_store(
@@ -3109,6 +3133,22 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         }
+
+        let mut events = state.events.subscribe();
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/background-music-volume?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"volume":0.7,"duck_ratio":0.6}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
 
         let saved = AppConfig::load_from_path(&config_path).unwrap();
         assert_eq!(saved.character.background_music_volume, 0.7);

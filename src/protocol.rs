@@ -123,6 +123,7 @@ pub enum ServerEvent {
     History {
         turns: Vec<ConversationTurn>,
     },
+    DisplayConfigChanged,
     State {
         turn: TurnState,
     },
@@ -178,6 +179,12 @@ mod tests {
         let value = serde_json::to_value(event).unwrap();
         assert_eq!(value["type"], "state");
         assert_eq!(value["turn"]["status"], "generating");
+    }
+
+    #[test]
+    fn display_config_change_uses_expected_name() {
+        let value = serde_json::to_value(ServerEvent::DisplayConfigChanged).unwrap();
+        assert_eq!(value["type"], "display_config_changed");
     }
 
     #[test]

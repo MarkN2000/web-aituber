@@ -51,7 +51,10 @@ export class BackgroundMusic {
   async play(url, volume, duckRatio) {
     if (this.disposed) return;
     this.setLevels(volume, duckRatio, false);
-    if (!url) return;
+    if (!url) {
+      this.stop();
+      return;
+    }
     this.audio.src = url;
     this.hasTrack = true;
     if (this.suspended) return;
@@ -64,6 +67,15 @@ export class BackgroundMusic {
     } catch (error) {
       if (this.operationId === operationId && !this.suspended) this.reportError(error);
     }
+  }
+
+  stop() {
+    if (this.disposed) return;
+    this.operationId += 1;
+    this.audio.pause();
+    this.audio.removeAttribute("src");
+    this.audio.load();
+    this.hasTrack = false;
   }
 
   async pause() {
