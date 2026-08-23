@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=13">
+  <link rel="stylesheet" href="/static/style.css?v=14">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -25,8 +25,11 @@
       </dl>
       <section class="event-access-section" aria-labelledby="event-access-title">
         <h3 id="event-access-title">公開イベントリンク</h3>
-        <p class="admin-help">識別子を変更すると、以前の公開リンクは直ちに使えなくなります。英小文字・数字・ハイフンを8〜64文字で指定してください。</p>
+        <p class="admin-help">公開先と識別子から、来場者へ案内するURLを生成します。識別子を変更すると、以前の公開リンクは直ちに使えなくなります。</p>
         <form id="event-access-form" novalidate>
+          <label for="public-base-url">公開先ベースURL</label>
+          <input id="public-base-url" type="url" required inputmode="url" placeholder="https://example.trycloudflare.com" autocomplete="off" spellcheck="false">
+          <p class="field-note admin-field-note">スマホから到達できるLAN内またはCloudflare TunnelのURLを入力してください。パスは含めません。</p>
           <label for="event-identifier">イベント識別子</label>
           <div class="event-identifier-row">
             <input id="event-identifier" type="text" required minlength="8" maxlength="64" pattern="[a-z0-9](?:[a-z0-9-]{6,62}[a-z0-9])" autocomplete="off" spellcheck="false">
@@ -35,13 +38,13 @@
           <p class="field-note admin-field-note">推測されにくいランダムな識別子を推奨します。</p>
           <div class="event-url-list">
             <label for="event-main-url">メイン画面</label>
-            <div class="event-url-row"><input id="event-main-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="main">コピー</button></div>
+            <div class="event-url-row"><input id="event-main-url" type="url" readonly><div class="event-url-actions"><button class="secondary-button" type="button" data-copy-event-url="main">コピー</button><button class="secondary-button" type="button" data-qr-event-url="main">QR表示</button></div></div>
             <label for="event-input-url">質問画面</label>
-            <div class="event-url-row"><input id="event-input-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="input">コピー</button></div>
+            <div class="event-url-row"><input id="event-input-url" type="url" readonly><div class="event-url-actions"><button class="secondary-button" type="button" data-copy-event-url="input">コピー</button><button class="secondary-button" type="button" data-qr-event-url="input">QR表示</button></div></div>
             <label for="event-draw-url">描画画面</label>
-            <div class="event-url-row"><input id="event-draw-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="draw">コピー</button></div>
+            <div class="event-url-row"><input id="event-draw-url" type="url" readonly><div class="event-url-actions"><button class="secondary-button" type="button" data-copy-event-url="draw">コピー</button><button class="secondary-button" type="button" data-qr-event-url="draw">QR表示</button></div></div>
           </div>
-          <div class="admin-form-actions"><button id="save-event-access" type="submit">公開URLを変更</button></div>
+          <div class="admin-form-actions"><button id="save-event-access" type="submit">公開リンク設定を保存</button></div>
         </form>
         <p id="event-access-status" class="status" role="status" aria-live="polite"></p>
         <p id="event-access-error" class="status" role="alert"></p>
@@ -213,6 +216,13 @@
       </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=16"></script>
+  <dialog id="event-qr-dialog" class="event-qr-dialog" aria-labelledby="event-qr-title">
+    <div class="event-qr-card">
+      <header><h2 id="event-qr-title">QRコード</h2><button id="event-qr-close" type="button" aria-label="QRコードを閉じる">×</button></header>
+      <img id="event-qr-image" alt="" width="320" height="320">
+      <p id="event-qr-url"></p>
+    </div>
+  </dialog>
+  <script type="module" src="/static/js/admin.js?v=18"></script>
 </body>
 </html>

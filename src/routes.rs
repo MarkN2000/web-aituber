@@ -24,7 +24,10 @@ use uuid::Uuid;
 
 use crate::{
     background_music,
-    config::{CharacterConfig, TtsConfig, validate_event_identifier, validate_http_url},
+    config::{
+        CharacterConfig, TtsConfig, validate_event_identifier, validate_http_url,
+        validate_public_base_url,
+    },
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
     tts,
@@ -49,6 +52,7 @@ pub fn router(state: AppState) -> Router {
             "/api/admin/event-access",
             get(admin_event_access).put(update_admin_event_access),
         )
+        .route("/api/admin/qr-code", post(admin_qr_code))
         .route("/api/admin/display-config", get(admin_display_config))
         .route(
             "/api/admin/config",
@@ -947,6 +951,7 @@ async fn admin_event_access(
     }
     admin_no_store(
         Json(AdminEventAccessDto {
+            public_base_url: state.config.current().public_base_url.clone(),
             event_identifier: state.config.current().event_identifier.clone(),
         })
         .into_response(),
@@ -970,17 +975,34 @@ async fn update_admin_event_access(
                 .into_response(),
         );
     }
+    if let Err(error) = validate_public_base_url(&request.public_base_url) {
+        return admin_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        );
+    }
     let previous_event_identifier = state.config.current().event_identifier.clone();
     let next_event_identifier = request.event_identifier;
+    let next_public_base_url = request.public_base_url.trim_end_matches('/').to_owned();
     match state.config.update_and_save(move |config| {
         config.event_identifier = next_event_identifier;
+        config.public_base_url = next_public_base_url;
     }) {
         Ok(_) => {
             let event_identifier = state.config.current().event_identifier.clone();
             if event_identifier != previous_event_identifier {
                 notify_event_access_changed(&state);
             }
-            admin_no_store(Json(AdminEventAccessDto { event_identifier }).into_response())
+            admin_no_store(
+                Json(AdminEventAccessDto {
+                    public_base_url: state.config.current().public_base_url.clone(),
+                    event_identifier,
+                })
+                .into_response(),
+            )
         }
         Err(error) => admin_no_store(
             (
@@ -990,6 +1012,43 @@ async fn update_admin_event_access(
                 .into_response(),
         ),
     }
+}
+
+async fn admin_qr_code(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminQrCodeRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if request.url.len() > 2_048 || validate_http_url("QRコードURL", &request.url).is_err() {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "QRコードにするURLは2048文字以下のHTTP(S) URLにしてください",
+        );
+    }
+    let code = match qrcode::QrCode::new(request.url.as_bytes()) {
+        Ok(code) => code,
+        Err(_) => {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "URLが長すぎるためQRコードを生成できません",
+            );
+        }
+    };
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(320, 320)
+        .quiet_zone(true)
+        .build();
+    admin_no_store(
+        (
+            [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+            svg,
+        )
+            .into_response(),
+    )
 }
 
 async fn admin_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
@@ -1484,7 +1543,13 @@ struct SubmitResponse {
 
 #[derive(Deserialize, Serialize)]
 struct AdminEventAccessDto {
+    public_base_url: String,
     event_identifier: String,
+}
+
+#[derive(Deserialize)]
+struct AdminQrCodeRequest {
+    url: String,
 }
 
 #[derive(Serialize)]
@@ -1990,7 +2055,9 @@ mod tests {
             .oneshot(
                 Request::put("/api/admin/event-access?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"event_identifier":"短い"}"#))
+                    .body(Body::from(
+                        r#"{"public_base_url":"https://event.example.com","event_identifier":"短い"}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -2002,7 +2069,9 @@ mod tests {
             .oneshot(
                 Request::put("/api/admin/event-access?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"event_identifier":"next-event-7q9m2k4p"}"#))
+                    .body(Body::from(
+                        r#"{"public_base_url":"https://event.example.com","event_identifier":"next-event-7q9m2k4p"}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -2015,6 +2084,10 @@ mod tests {
         assert_eq!(
             AppConfig::load_from_path(&path).unwrap().event_identifier,
             "next-event-7q9m2k4p"
+        );
+        assert_eq!(
+            AppConfig::load_from_path(&path).unwrap().public_base_url,
+            "https://event.example.com"
         );
 
         let old = app
@@ -2038,6 +2111,55 @@ mod tests {
         assert_eq!(current.status(), StatusCode::OK);
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn qr_code_requires_token_and_returns_uncached_svg() {
+        let app = router(test_state());
+        let body = r#"{"url":"https://event.example.com/event/test-event-2026"}"#;
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/qr-code")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/qr-code?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"url":"javascript:alert(1)"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let response = app
+            .oneshot(
+                Request::post("/api/admin/qr-code?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "image/svg+xml; charset=utf-8"
+        );
+        let body = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("<svg"));
+        assert!(!body.contains("test-token"));
     }
 
     #[tokio::test]

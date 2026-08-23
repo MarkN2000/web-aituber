@@ -15,7 +15,7 @@
 ## セットアップ
 
 1. `config.example.json`を`config.json`へコピーする。
-2. `admin_token`、`event_identifier`、`llm.api_key`、`tts.engine_url`などを環境に合わせて編集する。
+2. `admin_token`、`public_base_url`、`event_identifier`、`llm.api_key`、`tts.engine_url`などを環境に合わせて編集する。
 3. VRMを`assets/model.vrm`、VRMAを`assets/motions/`へ配置する。
 4. TTSエンジンを起動し、FFmpegをPATHへ追加する。
 
@@ -40,7 +40,7 @@ APIキーと管理用トークンは管理画面に表示されません。`conf
 
 メイン画面では、最初に「表示・音声を開始」を押します。
 
-管理画面では、公開イベントリンク、回答の中断、LLM・TTS設定、ユーザー辞書、背景画像、BGMを管理できます。管理画面のURLは共有しないでください。
+管理画面では、公開イベントリンクのコピーとQRコード表示、回答の中断、LLM・TTS設定、ユーザー辞書、背景画像、BGMを管理できます。管理画面のURLは共有しないでください。
 
 ## 他の端末から使う
 

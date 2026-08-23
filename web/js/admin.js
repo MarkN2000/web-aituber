@@ -9,10 +9,13 @@ const elements = {
   tabs: [...document.querySelectorAll('[role="tab"]')],
   status: document.querySelector("#admin-status"), skip: document.querySelector("#skip"), reload: document.querySelector("#reload-config"),
   operationStatus: document.querySelector("#operation-status"), operationError: document.querySelector("#operation-error"),
-  eventForm: document.querySelector("#event-access-form"), eventIdentifier: document.querySelector("#event-identifier"),
+  eventForm: document.querySelector("#event-access-form"), publicBaseUrl: document.querySelector("#public-base-url"), eventIdentifier: document.querySelector("#event-identifier"),
   randomizeEventIdentifier: document.querySelector("#randomize-event-identifier"), saveEventAccess: document.querySelector("#save-event-access"),
   eventMainUrl: document.querySelector("#event-main-url"), eventInputUrl: document.querySelector("#event-input-url"), eventDrawUrl: document.querySelector("#event-draw-url"),
-  eventCopyButtons: [...document.querySelectorAll("[data-copy-event-url]")], eventAccessStatus: document.querySelector("#event-access-status"), eventAccessError: document.querySelector("#event-access-error"),
+  eventCopyButtons: [...document.querySelectorAll("[data-copy-event-url]")], eventQrButtons: [...document.querySelectorAll("[data-qr-event-url]")],
+  eventAccessStatus: document.querySelector("#event-access-status"), eventAccessError: document.querySelector("#event-access-error"),
+  eventQrDialog: document.querySelector("#event-qr-dialog"), eventQrTitle: document.querySelector("#event-qr-title"),
+  eventQrImage: document.querySelector("#event-qr-image"), eventQrUrl: document.querySelector("#event-qr-url"), eventQrClose: document.querySelector("#event-qr-close"),
   aiForm: document.querySelector("#ai-config-form"), ttsForm: document.querySelector("#tts-config-form"),
   aiStatus: document.querySelector("#ai-config-status"), aiError: document.querySelector("#ai-config-error"),
   ttsStatus: document.querySelector("#tts-config-status"), ttsError: document.querySelector("#tts-config-error"),
@@ -50,6 +53,8 @@ let selectedMusicFile;
 let currentMusicExists = false;
 let musicBusy = false;
 let currentEventIdentifier;
+let currentPublicBaseUrl;
+let eventQrImageUrl;
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -60,7 +65,8 @@ function readError(response, fallback) { return response.json().catch(() => ({})
 const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError, stopOtherPreview: releasePreview });
 
 function eventUrls(identifier = elements.eventIdentifier.value.trim()) {
-  const base = identifier ? `${location.origin}/event/${identifier}` : "";
+  const publicBaseUrl = elements.publicBaseUrl.value.trim().replace(/\/+$/, "");
+  const base = publicBaseUrl && identifier ? `${publicBaseUrl}/event/${identifier}` : "";
   return { main: base, input: base ? `${base}/input` : "", draw: base ? `${base}/draw` : "" };
 }
 
@@ -70,6 +76,7 @@ function renderEventUrls() {
   elements.eventInputUrl.value = urls.input;
   elements.eventDrawUrl.value = urls.draw;
   for (const button of elements.eventCopyButtons) button.disabled = !urls[button.dataset.copyEventUrl];
+  for (const button of elements.eventQrButtons) button.disabled = !urls[button.dataset.qrEventUrl];
 }
 
 function randomEventIdentifier() {
@@ -82,7 +89,9 @@ async function loadEventAccess() {
   const response = await fetch(adminUrl("/api/admin/event-access"), { cache: "no-store" });
   if (!response.ok) throw new Error(await readError(response, "公開URLを読み込めませんでした。"));
   const result = await response.json();
+  currentPublicBaseUrl = result.public_base_url;
   currentEventIdentifier = result.event_identifier;
+  elements.publicBaseUrl.value = currentPublicBaseUrl;
   elements.eventIdentifier.value = currentEventIdentifier;
   renderEventUrls();
 }
@@ -90,12 +99,14 @@ async function loadEventAccess() {
 async function saveEventAccess(event) {
   event.preventDefault();
   if (!token || !elements.eventForm.reportValidity()) return;
+  const publicBaseUrl = elements.publicBaseUrl.value.trim().replace(/\/+$/, "");
   const eventIdentifier = elements.eventIdentifier.value.trim();
-  if (eventIdentifier === currentEventIdentifier) {
-    setMessage(elements.eventAccessStatus, elements.eventAccessError, "公開URLは変更されていません。");
+  const identifierChanged = eventIdentifier !== currentEventIdentifier;
+  if (!identifierChanged && publicBaseUrl === currentPublicBaseUrl) {
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, "公開リンク設定は変更されていません。");
     return;
   }
-  if (!window.confirm("以前の公開URLは直ちに使えなくなります。公開URLを変更しますか？")) return;
+  if (identifierChanged && !window.confirm("以前の公開URLは直ちに使えなくなります。公開URLを変更しますか？")) return;
   elements.saveEventAccess.disabled = true;
   const original = elements.saveEventAccess.textContent;
   elements.saveEventAccess.textContent = "変更中…";
@@ -104,20 +115,58 @@ async function saveEventAccess(event) {
     const response = await fetch(adminUrl("/api/admin/event-access"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_identifier: eventIdentifier }),
+      body: JSON.stringify({ public_base_url: publicBaseUrl, event_identifier: eventIdentifier }),
     });
     if (!response.ok) throw new Error(await readError(response, "公開URLを変更できませんでした。"));
     const result = await response.json();
+    currentPublicBaseUrl = result.public_base_url;
     currentEventIdentifier = result.event_identifier;
+    elements.publicBaseUrl.value = currentPublicBaseUrl;
     elements.eventIdentifier.value = currentEventIdentifier;
     renderEventUrls();
-    setMessage(elements.eventAccessStatus, elements.eventAccessError, "公開URLを変更しました。以前のリンクは使用できません。");
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, identifierChanged ? "公開URLを変更しました。以前の識別子を含むリンクは使用できません。" : "公開先ベースURLを保存しました。");
   } catch (error) {
     console.error(error);
     setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを変更できませんでした。", true);
   } finally {
     elements.saveEventAccess.disabled = false;
     elements.saveEventAccess.textContent = original;
+  }
+}
+
+function releaseEventQrImage() {
+  if (eventQrImageUrl) URL.revokeObjectURL(eventQrImageUrl);
+  eventQrImageUrl = undefined;
+  elements.eventQrImage.removeAttribute("src");
+}
+
+async function showEventQr(event) {
+  const button = event.currentTarget;
+  const kind = button.dataset.qrEventUrl;
+  const url = eventUrls()[kind];
+  if (!url) return;
+  const titles = { main: "メイン画面", input: "質問画面", draw: "描画画面" };
+  button.disabled = true;
+  setMessage(elements.eventAccessStatus, elements.eventAccessError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/qr-code"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "QRコードを生成できませんでした。"));
+    releaseEventQrImage();
+    eventQrImageUrl = URL.createObjectURL(await response.blob());
+    elements.eventQrTitle.textContent = `${titles[kind]}のQRコード`;
+    elements.eventQrImage.alt = `${titles[kind]}のQRコード`;
+    elements.eventQrImage.src = eventQrImageUrl;
+    elements.eventQrUrl.textContent = url;
+    elements.eventQrDialog.showModal();
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "QRコードを生成できませんでした。", true);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -606,9 +655,14 @@ for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements])
 }
 elements.skip.addEventListener("click", skip); elements.reload.addEventListener("click", reload); elements.preview.addEventListener("click", previewTts);
 elements.eventForm.addEventListener("submit", saveEventAccess);
+elements.publicBaseUrl.addEventListener("input", renderEventUrls);
 elements.eventIdentifier.addEventListener("input", () => { elements.eventIdentifier.value = elements.eventIdentifier.value.toLowerCase(); renderEventUrls(); });
 elements.randomizeEventIdentifier.addEventListener("click", () => { elements.eventIdentifier.value = randomEventIdentifier(); renderEventUrls(); elements.eventIdentifier.focus(); });
 elements.eventCopyButtons.forEach((button) => button.addEventListener("click", copyEventUrl));
+elements.eventQrButtons.forEach((button) => button.addEventListener("click", showEventQr));
+elements.eventQrClose.addEventListener("click", () => elements.eventQrDialog.close());
+elements.eventQrDialog.addEventListener("click", (event) => { if (event.target === elements.eventQrDialog) elements.eventQrDialog.close(); });
+elements.eventQrDialog.addEventListener("close", releaseEventQrImage);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
@@ -646,4 +700,4 @@ if (!token) {
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); elements.currentMusic.pause(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); releaseEventQrImage(); elements.currentMusic.pause(); });

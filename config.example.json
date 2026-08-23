@@ -1,6 +1,7 @@
 {
   "bind": "0.0.0.0:3000",
   "admin_token": "イベント用に十分長いランダム文字列へ変更",
+  "public_base_url": "https://event.example.com",
   "event_identifier": "event-8k2m4q7x9p",
   "llm": {
     "api_url": "https://api.openai.com/v1/responses",

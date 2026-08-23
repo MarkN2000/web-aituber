@@ -24,6 +24,7 @@ pub struct ConfigReloadResult {
 pub struct AppConfig {
     pub bind: String,
     pub admin_token: String,
+    pub public_base_url: String,
     pub event_identifier: String,
     pub llm: LlmConfig,
     pub tts: TtsConfig,
@@ -172,6 +173,7 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         required("bind", &self.bind)?;
         required("admin_token", &self.admin_token)?;
+        validate_public_base_url(&self.public_base_url)?;
         validate_event_identifier(&self.event_identifier)?;
         required("llm.api_url", &self.llm.api_url)?;
         validate_http_url("llm.api_url", &self.llm.api_url)?;
@@ -379,6 +381,16 @@ pub fn validate_event_identifier(value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_public_base_url(value: &str) -> Result<()> {
+    required("public_base_url", value)?;
+    validate_http_url("public_base_url", value)?;
+    let url = reqwest::Url::parse(value).expect("HTTP(S) URLの検証後は解析できる");
+    if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
+        bail!("設定項目 public_base_url にはパス、クエリ、フラグメントを含めないでください");
+    }
+    Ok(())
+}
+
 fn default_search_fillers() -> Vec<String> {
     vec!["少し調べてみますね。".to_owned()]
 }
@@ -406,6 +418,14 @@ mod tests {
         assert!(validate_event_identifier("Event-2026").is_err());
         assert!(validate_event_identifier("-event-2026").is_err());
         assert!(validate_event_identifier("event-2026-").is_err());
+    }
+
+    #[test]
+    fn public_base_url_accepts_an_origin_and_rejects_extra_components() {
+        assert!(validate_public_base_url("https://event.example.com").is_ok());
+        assert!(validate_public_base_url("http://192.168.1.2:3000/").is_ok());
+        assert!(validate_public_base_url("https://event.example.com/path").is_err());
+        assert!(validate_public_base_url("https://event.example.com/?key=value").is_err());
     }
 
     #[test]
