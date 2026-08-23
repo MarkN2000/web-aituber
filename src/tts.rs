@@ -66,9 +66,65 @@ pub async fn synthesize_user_dict_preview(
         .await
         .map_err(UserDictPreviewError::Engine)?;
     apply_user_dict_preview_accent(&mut audio_query, pronunciation, accent_type)?;
+    refresh_user_dict_preview_pitch(client, config, &mut audio_query)
+        .await
+        .map_err(UserDictPreviewError::Engine)?;
     synthesize_audio_query(client, config, &audio_query)
         .await
         .map_err(UserDictPreviewError::Engine)
+}
+
+async fn refresh_user_dict_preview_pitch(
+    client: &Client,
+    config: &TtsConfig,
+    audio_query: &mut Value,
+) -> Result<()> {
+    let accent_phrases = audio_query
+        .get("accent_phrases")
+        .ok_or_else(|| anyhow!("試聴用のアクセント句がありません"))?;
+    let url = format!("{}/mora_pitch", config.engine_url.trim_end_matches('/'));
+    let refreshed: Value = client
+        .post(url)
+        .query(&[("speaker", config.speaker_id)])
+        .json(accent_phrases)
+        .send()
+        .await
+        .context("TTS の mora_pitch に接続できません")?
+        .error_for_status()
+        .context("TTS の mora_pitch がエラーを返しました")?
+        .json()
+        .await
+        .context("TTS の mora_pitch 応答を解釈できません")?;
+    validate_refreshed_preview_pitch(accent_phrases, &refreshed)?;
+    audio_query["accent_phrases"] = refreshed;
+    Ok(())
+}
+
+fn validate_refreshed_preview_pitch(expected: &Value, refreshed: &Value) -> Result<()> {
+    let expected_phrase = expected
+        .as_array()
+        .filter(|phrases| phrases.len() == 1)
+        .and_then(|phrases| phrases.first())
+        .ok_or_else(|| anyhow!("試聴用のアクセント句が1件ではありません"))?;
+    let refreshed_phrase = refreshed
+        .as_array()
+        .filter(|phrases| phrases.len() == 1)
+        .and_then(|phrases| phrases.first())
+        .ok_or_else(|| anyhow!("mora_pitch のアクセント句が1件ではありません"))?;
+    let mora_texts = |phrase: &Value| -> Option<Vec<String>> {
+        phrase
+            .get("moras")?
+            .as_array()?
+            .iter()
+            .map(|mora| Some(mora.get("text")?.as_str()?.to_owned()))
+            .collect()
+    };
+    if mora_texts(expected_phrase) != mora_texts(refreshed_phrase)
+        || expected_phrase.get("accent") != refreshed_phrase.get("accent")
+    {
+        return Err(anyhow!("mora_pitch が試聴用のモーラ構造を変更しました"));
+    }
+    Ok(())
 }
 
 fn apply_user_dict_preview_accent(
@@ -77,29 +133,40 @@ fn apply_user_dict_preview_accent(
     accent_type: u32,
 ) -> std::result::Result<(), UserDictPreviewError> {
     let accent_phrases = audio_query
-        .get_mut("accent_phrases")
-        .and_then(Value::as_array_mut)
+        .get("accent_phrases")
+        .and_then(Value::as_array)
         .ok_or(UserDictPreviewError::InvalidInput)?;
-    if accent_phrases.len() != 1 {
+    if accent_phrases.is_empty() {
         return Err(UserDictPreviewError::InvalidInput);
     }
-    let accent_phrase = &mut accent_phrases[0];
-    let mora_count = accent_phrase
-        .get("moras")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .ok_or(UserDictPreviewError::InvalidInput)?;
+
+    let mut moras = Vec::new();
+    for accent_phrase in accent_phrases {
+        let phrase_moras = accent_phrase
+            .get("moras")
+            .and_then(Value::as_array)
+            .ok_or(UserDictPreviewError::InvalidInput)?;
+        if phrase_moras.is_empty() {
+            return Err(UserDictPreviewError::InvalidInput);
+        }
+        moras.extend(phrase_moras.iter().cloned());
+        if !matches!(accent_phrase.get("pause_mora"), None | Some(Value::Null))
+            || !matches!(
+                accent_phrase.get("is_interrogative"),
+                None | Some(Value::Bool(false))
+            )
+        {
+            return Err(UserDictPreviewError::InvalidInput);
+        }
+    }
+    let mora_count = moras.len();
     if mora_count == 0 {
         return Err(UserDictPreviewError::InvalidInput);
     }
-    let generated_pronunciation = accent_phrase["moras"]
-        .as_array()
-        .and_then(|moras| {
-            moras
-                .iter()
-                .map(|mora| mora.get("text")?.as_str())
-                .collect::<Option<String>>()
-        })
+    let generated_pronunciation = moras
+        .iter()
+        .map(|mora| mora.get("text")?.as_str())
+        .collect::<Option<String>>()
         .ok_or(UserDictPreviewError::InvalidInput)?;
     if generated_pronunciation != pronunciation {
         return Err(UserDictPreviewError::InvalidInput);
@@ -112,7 +179,11 @@ fn apply_user_dict_preview_accent(
     if !(1..=mora_count).contains(&accent) {
         return Err(UserDictPreviewError::InvalidInput);
     }
-    accent_phrase["accent"] = Value::from(accent);
+
+    let mut merged_phrase = accent_phrases[0].clone();
+    merged_phrase["moras"] = Value::Array(moras);
+    merged_phrase["accent"] = Value::from(accent);
+    audio_query["accent_phrases"] = Value::Array(vec![merged_phrase]);
     Ok(())
 }
 
@@ -511,15 +582,83 @@ mod tests {
     }
 
     #[test]
+    fn preview_accent_merges_phrases_for_one_dictionary_word() {
+        let mut query = serde_json::json!({
+            "accent_phrases": [
+                {
+                    "moras": [{ "text": "タ" }, { "text": "ン" }],
+                    "accent": 1,
+                    "pause_mora": null,
+                    "is_interrogative": false
+                },
+                {
+                    "moras": [
+                        { "text": "タ" }, { "text": "ン" },
+                        { "text": "メ" }, { "text": "ン" }
+                    ],
+                    "accent": 1,
+                    "pause_mora": null,
+                    "is_interrogative": false
+                }
+            ],
+            "tempoDynamicsScale": 1.1
+        });
+
+        apply_user_dict_preview_accent(&mut query, "タンタンメン", 3).unwrap();
+
+        let phrases = query["accent_phrases"].as_array().unwrap();
+        assert_eq!(phrases.len(), 1);
+        assert_eq!(phrases[0]["accent"], 3);
+        assert_eq!(phrases[0]["moras"].as_array().unwrap().len(), 6);
+        assert_eq!(query["tempoDynamicsScale"], 1.1);
+    }
+
+    #[test]
+    fn preview_accent_rejects_pause_or_interrogative_expression() {
+        for mut query in [
+            serde_json::json!({
+                "accent_phrases": [
+                    {
+                        "moras": [{ "text": "テ" }],
+                        "accent": 1,
+                        "pause_mora": { "text": "、" }
+                    },
+                    { "moras": [{ "text": "ス" }, { "text": "ト" }], "accent": 1 }
+                ]
+            }),
+            serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [{ "text": "テ" }, { "text": "ス" }, { "text": "ト" }],
+                    "accent": 1,
+                    "is_interrogative": true
+                }]
+            }),
+        ] {
+            assert!(matches!(
+                apply_user_dict_preview_accent(&mut query, "テスト", 2),
+                Err(UserDictPreviewError::InvalidInput)
+            ));
+        }
+    }
+
+    #[test]
+    fn preview_pitch_rejects_changed_mora_structure() {
+        let expected = serde_json::json!([{
+            "moras": [{ "text": "テ" }, { "text": "ス" }, { "text": "ト" }],
+            "accent": 2
+        }]);
+        let refreshed = serde_json::json!([{
+            "moras": [{ "text": "テ" }, { "text": "キ" }, { "text": "スト" }],
+            "accent": 2
+        }]);
+
+        assert!(validate_refreshed_preview_pitch(&expected, &refreshed).is_err());
+    }
+
+    #[test]
     fn preview_accent_rejects_ambiguous_or_out_of_range_query() {
         for mut query in [
             serde_json::json!({ "accent_phrases": [] }),
-            serde_json::json!({
-                "accent_phrases": [
-                    { "moras": [{ "text": "テ" }], "accent": 1 },
-                    { "moras": [{ "text": "スト" }], "accent": 1 }
-                ]
-            }),
             serde_json::json!({ "accent_phrases": [{ "moras": [], "accent": 1 }] }),
             serde_json::json!({
                 "accent_phrases": [{

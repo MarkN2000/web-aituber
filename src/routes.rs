@@ -1779,31 +1779,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tts_user_dict_preview_uses_unsaved_pronunciation_and_accent() {
+    async fn tts_user_dict_preview_merges_phrases_and_refreshes_pitch() {
         async fn audio_query(
             Query(query): Query<HashMap<String, String>>,
         ) -> Json<serde_json::Value> {
-            assert_eq!(
-                query.get("text").map(String::as_str),
-                Some("エーアイチューバー")
-            );
+            assert_eq!(query.get("text").map(String::as_str), Some("タンタンメン"));
             assert_eq!(query.get("speaker").map(String::as_str), Some("7"));
             Json(serde_json::json!({
-                "accent_phrases": [{
-                    "moras": [
-                        { "text": "エ" }, { "text": "ー" }, { "text": "ア" },
-                        { "text": "イ" }, { "text": "チュ" }, { "text": "ー" },
-                        { "text": "バ" }, { "text": "ー" }
-                    ],
-                    "accent": 1
-                }],
-                "kana": "エーアイチューバー'",
+                "accent_phrases": [
+                    {
+                        "moras": [{ "text": "タ", "pitch": 1.0 }, { "text": "ン", "pitch": 1.0 }],
+                        "accent": 1,
+                        "pause_mora": null,
+                        "is_interrogative": false
+                    },
+                    {
+                        "moras": [
+                            { "text": "タ", "pitch": 1.0 }, { "text": "ン", "pitch": 1.0 },
+                            { "text": "メ", "pitch": 1.0 }, { "text": "ン", "pitch": 1.0 }
+                        ],
+                        "accent": 1,
+                        "pause_mora": null,
+                        "is_interrogative": false
+                    }
+                ],
+                "kana": "タン'/タンメン'",
                 "tempoDynamicsScale": 1.2
             }))
         }
+        async fn mora_pitch(
+            Query(query): Query<HashMap<String, String>>,
+            Json(mut phrases): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(query.get("speaker").map(String::as_str), Some("7"));
+            assert_eq!(phrases.as_array().unwrap().len(), 1);
+            assert_eq!(phrases[0]["accent"], 3);
+            assert_eq!(phrases[0]["moras"].as_array().unwrap().len(), 6);
+            for mora in phrases[0]["moras"].as_array_mut().unwrap() {
+                mora["pitch"] = serde_json::json!(9.0);
+            }
+            Json(phrases)
+        }
         async fn synthesis(Json(query): Json<serde_json::Value>) -> Response {
-            assert_eq!(query["accent_phrases"][0]["accent"], 4);
-            assert_eq!(query["kana"], "エーアイチューバー'");
+            assert_eq!(query["accent_phrases"].as_array().unwrap().len(), 1);
+            assert_eq!(query["accent_phrases"][0]["accent"], 3);
+            assert_eq!(query["accent_phrases"][0]["moras"][0]["pitch"], 9.0);
+            assert_eq!(query["kana"], "タン'/タンメン'");
             assert_eq!(query["tempoDynamicsScale"], 1.2);
             (
                 [(header::CONTENT_TYPE, "audio/wav")],
@@ -1819,6 +1840,7 @@ mod tests {
                 listener,
                 Router::new()
                     .route("/audio_query", post(audio_query))
+                    .route("/mora_pitch", post(mora_pitch))
                     .route("/synthesis", post(synthesis)),
             )
             .await
@@ -1826,8 +1848,8 @@ mod tests {
         });
         let body = serde_json::json!({
             "tts": { "engine_url": format!("http://{address}"), "speaker_id": 7 },
-            "pronunciation": "エーアイチューバー",
-            "accent_type": 4
+            "pronunciation": "タンタンメン",
+            "accent_type": 3
         })
         .to_string();
         let app = router(test_state());
