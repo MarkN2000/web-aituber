@@ -82,7 +82,7 @@ function renderEventUrls() {
 function randomEventIdentifier() {
   const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
   const values = crypto.getRandomValues(new Uint8Array(16));
-  return `event-${[...values].map((value) => alphabet[value % alphabet.length]).join("")}`;
+  return [...values].map((value) => alphabet[value % alphabet.length]).join("");
 }
 
 async function loadEventAccess() {
