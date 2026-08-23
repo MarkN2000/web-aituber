@@ -36,18 +36,6 @@
         </section>
 
         <section class="draw-tools" aria-label="描画ツール">
-          <div class="color-shortcuts" role="group" aria-label="基本色">
-            <button type="button" data-draw-color="#e85d3f" aria-label="赤" aria-pressed="true"></button>
-            <button type="button" data-draw-color="#ef9138" aria-label="オレンジ" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#f2cf45" aria-label="黄色" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#55a868" aria-label="緑" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#4c7fc7" aria-label="青" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#8956ad" aria-label="紫" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#202020" aria-label="黒" aria-pressed="false"></button>
-          </div>
-
-          <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
-
           <div class="tool-switcher" role="group" aria-label="描画方法">
             <button class="secondary-button" type="button" data-draw-tool="pen" aria-pressed="true">ペン</button>
             <button class="secondary-button" type="button" data-draw-tool="bucket" aria-pressed="false">バケツ</button>
@@ -59,6 +47,18 @@
             <button class="secondary-button" type="button" data-brush-size="20" aria-label="普通" aria-pressed="true"><span class="brush-dot brush-dot-medium"></span></button>
             <button class="secondary-button" type="button" data-brush-size="40" aria-label="太い" aria-pressed="false"><span class="brush-dot brush-dot-large"></span></button>
           </div>
+
+          <div class="color-shortcuts" role="group" aria-label="基本色">
+            <button type="button" data-draw-color="#e85d3f" aria-label="赤" aria-pressed="true"></button>
+            <button type="button" data-draw-color="#ef9138" aria-label="オレンジ" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#f2cf45" aria-label="黄色" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#55a868" aria-label="緑" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#4c7fc7" aria-label="青" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#8956ad" aria-label="紫" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#202020" aria-label="黒" aria-pressed="false"></button>
+          </div>
+
+          <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
         </section>
       </div>
     </main>
