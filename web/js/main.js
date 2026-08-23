@@ -3,7 +3,9 @@ import { BackgroundMusic } from "./background-music.js?v=6";
 import { ConversationHistory } from "./history.js?v=9";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=7";
+import { VrmViewer } from "./vrm-viewer.js?v=8";
+
+const foodPropDebug = new URLSearchParams(window.location.search).get("debug") === "food-prop";
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),
@@ -313,7 +315,7 @@ async function startMain() {
       config.background_music_duck_ratio,
     );
 
-    viewer = new VrmViewer(elements.canvas, showViewerMessage);
+    viewer = new VrmViewer(elements.canvas, showViewerMessage, { showFoodPropGizmo: foodPropDebug });
     await viewer.load(config);
     started = true;
     elements.startScreen.hidden = true;

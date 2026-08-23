@@ -6,7 +6,7 @@ import { isEmotion } from './motion.js';
 import { LipSyncAnalyzer } from './lip-sync.js?v=3';
 
 export class VrmViewer {
-  constructor(canvas, report) {
+  constructor(canvas, report, { showFoodPropGizmo = false } = {}) {
     this.canvas = canvas;
     this.report = report;
     this.clock = new THREE.Clock();
@@ -26,6 +26,7 @@ export class VrmViewer {
     this.blinkTimer = 2 + Math.random() * 3;
     this.blinkTime = 0;
     this.foodActionId = 0;
+    this.showFoodPropGizmo = showFoodPropGizmo;
     this.frame = this.frame.bind(this);
     this.onResize = this.onResize.bind(this);
   }
@@ -112,6 +113,41 @@ export class VrmViewer {
     this.foodAnchor.position.fromArray(position);
     this.foodAnchor.rotation.set(...rotation.map(THREE.MathUtils.degToRad));
     hand.add(this.foodAnchor);
+    this.createFoodPropGizmo();
+  }
+
+  createFoodPropGizmo() {
+    if (!this.showFoodPropGizmo || !this.foodAnchor) return;
+
+    const gizmo = new THREE.Group();
+    gizmo.name = 'FoodPropDebugGizmo';
+    const axes = new THREE.AxesHelper(Math.max(this.foodPropSize * 0.75, 0.05));
+    axes.renderOrder = 1000;
+    for (const material of Array.isArray(axes.material) ? axes.material : [axes.material]) {
+      material.depthTest = false;
+    }
+    const plane = new THREE.PlaneGeometry(this.foodPropSize, this.foodPropSize);
+    const frameGeometry = new THREE.EdgesGeometry(plane);
+    plane.dispose();
+    const frame = new THREE.LineSegments(
+      frameGeometry,
+      new THREE.LineBasicMaterial({ color: 0xffff00, depthTest: false, toneMapped: false }),
+    );
+    frame.renderOrder = 1000;
+    gizmo.add(axes, frame);
+    this.foodAnchor.add(gizmo);
+    this.foodPropGizmo = gizmo;
+  }
+
+  disposeFoodPropGizmo() {
+    if (!this.foodPropGizmo) return;
+    this.foodAnchor?.remove(this.foodPropGizmo);
+    this.foodPropGizmo.traverse((object) => {
+      object.geometry?.dispose?.();
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.filter(Boolean).forEach((material) => material.dispose?.());
+    });
+    this.foodPropGizmo = undefined;
   }
 
   async loadMotion(url) {
@@ -302,6 +338,7 @@ export class VrmViewer {
     window.removeEventListener('resize', this.onResize);
     this.renderer.setAnimationLoop(null);
     this.clearFoodProp();
+    this.disposeFoodPropGizmo();
     this.mixer?.stopAllAction();
     this.vrm?.scene.traverse((object) => {
       object.geometry?.dispose?.();
