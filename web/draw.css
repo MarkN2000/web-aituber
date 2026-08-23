@@ -45,6 +45,17 @@
   margin-bottom: 8px;
 }
 
+#clear-canvas {
+  border-color: #b3261e;
+  background: #b3261e;
+  color: #fff;
+}
+
+#clear-canvas:hover:not(:disabled) {
+  border-color: #8f1d17;
+  background: #8f1d17;
+}
+
 .drawing-surface {
   position: relative;
   overflow: hidden;
