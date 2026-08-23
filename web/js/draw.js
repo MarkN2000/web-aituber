@@ -12,6 +12,7 @@ const HUE_RING_INNER_RADIUS = 96;
 const HUE_RING_RADIUS = (HUE_RING_OUTER_RADIUS + HUE_RING_INNER_RADIUS) / 2;
 const SV_FIELD_SIZE = 124;
 const SV_FIELD_START = (COLOR_PICKER_SIZE - SV_FIELD_SIZE) / 2;
+const SUBMISSION_COOLDOWN_MS = 1000;
 
 const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
@@ -39,6 +40,7 @@ let colorPointer;
 let colorPickerRegion;
 let hasDrawing = false;
 let isSubmitting = false;
+let isCoolingDown = false;
 const undoHistory = [];
 
 function clamp01(value) {
@@ -472,9 +474,17 @@ function setStatus(message, kind = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = isSubmitting || !hasDrawing;
+  submitButton.disabled = isSubmitting || isCoolingDown || !hasDrawing;
   submitButton.textContent = isSubmitting ? "送信中…" : "キャラクターに食べてもらう";
   updateUndoState();
+}
+
+function startSubmissionCooldown() {
+  isCoolingDown = true;
+  window.setTimeout(() => {
+    isCoolingDown = false;
+    updateSubmitState();
+  }, SUBMISSION_COOLDOWN_MS);
 }
 
 function closeGaps(mask, width, height) {
@@ -608,8 +618,9 @@ function canvasBlob(canvas) {
 }
 
 async function submitFood() {
-  if (!hasDrawing || isSubmitting) return;
+  if (!hasDrawing || isSubmitting || isCoolingDown) return;
   isSubmitting = true;
+  startSubmissionCooldown();
   updateSubmitState();
   setStatus("");
 

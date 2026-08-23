@@ -3,8 +3,10 @@ const text = document.querySelector("#text");
 const submitButton = document.querySelector("#submit-button");
 const status = document.querySelector("#submission-status");
 const textCount = document.querySelector("#text-count");
+const SUBMISSION_COOLDOWN_MS = 1000;
 
 let isSubmitting = false;
+let isCoolingDown = false;
 
 function setStatus(message, kind = "") {
   status.textContent = message;
@@ -12,13 +14,21 @@ function setStatus(message, kind = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = isSubmitting || !text.value.trim();
+  submitButton.disabled = isSubmitting || isCoolingDown || !text.value.trim();
   submitButton.dataset.loading = String(isSubmitting);
   if (submitButton.classList.contains("composer-send-button")) {
     const label = isSubmitting ? "質問を送信中" : "質問を送る";
     submitButton.setAttribute("aria-label", label);
     submitButton.title = label;
   }
+}
+
+function startSubmissionCooldown() {
+  isCoolingDown = true;
+  window.setTimeout(() => {
+    isCoolingDown = false;
+    updateSubmitState();
+  }, SUBMISSION_COOLDOWN_MS);
 }
 
 function updateTextCount() {
@@ -30,6 +40,7 @@ text.addEventListener("input", updateTextCount);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (isSubmitting || isCoolingDown) return;
 
   if (!text.value.trim()) {
     setStatus("質問を入力してください。", "error");
@@ -38,6 +49,7 @@ form.addEventListener("submit", async (event) => {
   }
 
   isSubmitting = true;
+  startSubmissionCooldown();
   updateSubmitState();
   setStatus("");
 
