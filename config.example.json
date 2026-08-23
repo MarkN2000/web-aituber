@@ -69,7 +69,8 @@
         3.0,
         2.0
       ],
-      "ambient_intensity": 0.8
+      "ambient_intensity": 0.8,
+      "brightness": 1.0
     }
   }
 }

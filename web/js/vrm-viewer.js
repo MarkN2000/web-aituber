@@ -78,10 +78,11 @@ export class VrmViewer {
     this.camera.updateProjectionMatrix();
     this.renderer.setClearColor(0x000000, 0);
     const light = config.light || {};
-    const directional = new THREE.DirectionalLight(light.color || '#ffffff', light.intensity ?? 2.2);
+    const brightness = light.brightness ?? 1;
+    const directional = new THREE.DirectionalLight(light.color || '#ffffff', (light.intensity ?? 2.2) * brightness);
     directional.position.fromArray(light.position || [1, 2, 3]);
     this.scene.add(directional);
-    this.scene.add(new THREE.AmbientLight(light.color || '#ffffff', light.ambient_intensity ?? 1));
+    this.scene.add(new THREE.AmbientLight(light.color || '#ffffff', (light.ambient_intensity ?? 1) * brightness));
   }
 
   async loadMotions(config) {

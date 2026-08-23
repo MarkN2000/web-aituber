@@ -28,6 +28,9 @@ const elements = {
   engineUrl: document.querySelector("#tts-engine-url"),
   vrmForm: document.querySelector("#vrm-model-form"), vrmInput: document.querySelector("#vrm-model"),
   selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
+  brightnessForm: document.querySelector("#model-brightness-form"), brightness: document.querySelector("#model-brightness"),
+  brightnessValue: document.querySelector("#model-brightness-value"), saveBrightness: document.querySelector("#save-model-brightness"),
+  vrmStatus: document.querySelector("#vrm-status"), vrmError: document.querySelector("#vrm-error"),
   backgroundForm: document.querySelector("#background-form"), backgroundInput: document.querySelector("#background-image"),
   uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
   currentBackgroundPreview: document.querySelector("#current-background-preview"), currentBackgroundEmpty: document.querySelector("#current-background-empty"),
@@ -51,6 +54,7 @@ let loadedConfig;
 let selectedSpeakerId;
 let selectedVrmFile;
 let vrmBusy = false;
+let brightnessBusy = false;
 let selectedBackgroundBlob;
 let selectedBackgroundUrl;
 let currentBackgroundExists = false;
@@ -209,6 +213,14 @@ function updateVrmControls() {
   elements.vrmInput.disabled = vrmBusy || !token;
   elements.uploadVrm.disabled = vrmBusy || !selectedVrmFile || !token;
 }
+function updateBrightnessControls() {
+  elements.brightness.disabled = brightnessBusy || !token;
+  elements.saveBrightness.disabled = brightnessBusy || !token;
+}
+function updateBrightnessLabel() {
+  elements.brightnessValue.value = `${elements.brightness.value}%`;
+  elements.brightnessValue.textContent = `${elements.brightness.value}%`;
+}
 function updateBackgroundControls() {
   elements.backgroundInput.disabled = backgroundBusy || !token;
   elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
@@ -227,21 +239,21 @@ function selectVrmModel() {
   const [file] = elements.vrmInput.files;
   selectedVrmFile = undefined;
   elements.selectedVrm.textContent = "なし";
-  setMessage(elements.displayStatus, elements.displayError);
+  setMessage(elements.vrmStatus, elements.vrmError);
   if (!file) {
     updateVrmControls();
     return;
   }
   if (!file.name.toLowerCase().endsWith(".vrm")) {
     elements.vrmInput.value = "";
-    setMessage(elements.displayStatus, elements.displayError, ".vrmファイルを選択してください。", true);
+    setMessage(elements.vrmStatus, elements.vrmError, ".vrmファイルを選択してください。", true);
   } else if (file.size > MAX_VRM_MODEL_BYTES) {
     elements.vrmInput.value = "";
-    setMessage(elements.displayStatus, elements.displayError, "VRMモデルは100MiB以下にしてください。", true);
+    setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルは100MiB以下にしてください。", true);
   } else {
     selectedVrmFile = file;
     elements.selectedVrm.textContent = `${file.name}（${(file.size / 1024 / 1024).toFixed(1)}MiB）`;
-    setMessage(elements.displayStatus, elements.displayError, "置き換えるVRMモデルを選択しました。");
+    setMessage(elements.vrmStatus, elements.vrmError, "置き換えるVRMモデルを選択しました。");
   }
   updateVrmControls();
 }
@@ -374,11 +386,16 @@ async function convertBackground(file) {
   if (blob.size > MAX_BACKGROUND_BYTES) throw new Error("WebP変換後の画像が10MiBを超えています。別の画像を選択してください。");
   return blob;
 }
-async function loadDisplayConfig({ background = true, music = true, volume = true } = {}) {
+async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
   if (music) showCurrentMusic(config.background_music_url);
+  if (brightness) {
+    const configuredBrightness = Number(config.light?.brightness);
+    elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
+    updateBrightnessLabel();
+  }
   if (volume) {
     const configuredVolume = Number(config.background_music_volume);
     elements.musicVolume.value = String(Math.round((Number.isFinite(configuredVolume) ? configuredVolume : 0.3) * 100));
@@ -421,7 +438,7 @@ async function uploadVrmModel(event) {
   updateVrmControls();
   const original = elements.uploadVrm.textContent;
   elements.uploadVrm.textContent = "アップロード中…";
-  setMessage(elements.displayStatus, elements.displayError);
+  setMessage(elements.vrmStatus, elements.vrmError);
   try {
     const body = new FormData();
     body.append("model", selectedVrmFile, selectedVrmFile.name);
@@ -430,14 +447,39 @@ async function uploadVrmModel(event) {
     selectedVrmFile = undefined;
     elements.vrmInput.value = "";
     elements.selectedVrm.textContent = "なし";
-    setMessage(elements.displayStatus, elements.displayError, "VRMモデルを更新しました。接続中のメイン画面は現在の処理後に読み込み直します。");
+    setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを更新しました。接続中のメイン画面は現在の処理後に読み込み直します。");
   } catch (error) {
     console.error(error);
-    setMessage(elements.displayStatus, elements.displayError, error.message || "VRMモデルを置き換えられませんでした。", true);
+    setMessage(elements.vrmStatus, elements.vrmError, error.message || "VRMモデルを置き換えられませんでした。", true);
   } finally {
     vrmBusy = false;
     elements.uploadVrm.textContent = original;
     updateVrmControls();
+  }
+}
+async function saveModelBrightness(event) {
+  event.preventDefault();
+  if (!token || brightnessBusy) return;
+  brightnessBusy = true;
+  updateBrightnessControls();
+  const original = elements.saveBrightness.textContent;
+  elements.saveBrightness.textContent = "保存中…";
+  setMessage(elements.vrmStatus, elements.vrmError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/model-brightness"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brightness: Number(elements.brightness.value) / 100 }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "モデルの明るさを保存できませんでした。"));
+    setMessage(elements.vrmStatus, elements.vrmError, "モデルの明るさを保存しました。接続中のメイン画面は現在の処理後に反映します。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.vrmStatus, elements.vrmError, error.message || "モデルの明るさを保存できませんでした。", true);
+  } finally {
+    brightnessBusy = false;
+    elements.saveBrightness.textContent = original;
+    updateBrightnessControls();
   }
 }
 async function uploadBackground(event) {
@@ -744,6 +786,8 @@ elements.eventQrDialog.addEventListener("close", releaseEventQrImage);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
 elements.vrmInput.addEventListener("change", selectVrmModel);
 elements.vrmForm.addEventListener("submit", uploadVrmModel);
+elements.brightness.addEventListener("input", updateBrightnessLabel);
+elements.brightnessForm.addEventListener("submit", saveModelBrightness);
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
 elements.deleteBackground.addEventListener("click", deleteBackground);
@@ -771,9 +815,10 @@ elements.aiForm.addEventListener("submit", (event) => { event.preventDefault(); 
 elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("tts", elements.ttsForm, elements.saveTts, elements.ttsStatus, elements.ttsError); });
 if (!token) {
   setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
+  setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadConfig();

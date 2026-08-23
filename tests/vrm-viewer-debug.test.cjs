@@ -29,6 +29,21 @@ class FakeMesh {
   }
 }
 
+class FakeDirectionalLight {
+  constructor(color, intensity) {
+    this.color = color;
+    this.intensity = intensity;
+    this.position = { fromArray: (value) => { this.lightPosition = value; } };
+  }
+}
+
+class FakeAmbientLight {
+  constructor(color, intensity) {
+    this.color = color;
+    this.intensity = intensity;
+  }
+}
+
 const context = vm.createContext({
   THREE: {
     LoopOnce: "once",
@@ -37,6 +52,8 @@ const context = vm.createContext({
     PlaneGeometry: FakeGeometry,
     MeshBasicMaterial: FakeMaterial,
     Mesh: FakeMesh,
+    DirectionalLight: FakeDirectionalLight,
+    AmbientLight: FakeAmbientLight,
     MathUtils: { clamp: (value, min, max) => Math.min(Math.max(value, min), max) },
   },
   createVRMAnimationClip: () => ({ tracks: [] }),
@@ -83,6 +100,26 @@ function createViewer() {
   viewer.onDebugStateChange = (state) => viewer.debugStates.push({ ...state });
   return viewer;
 }
+
+test("明るさ倍率を主光源と環境光の両方へ適用する", () => {
+  const viewer = Object.create(context.VrmViewer.prototype);
+  const lights = [];
+  viewer.camera = {
+    position: { fromArray() {} },
+    lookAt() {},
+    updateProjectionMatrix() {},
+  };
+  viewer.renderer = { setClearColor() {} };
+  viewer.scene = { add: (light) => lights.push(light) };
+
+  viewer.configureScene({
+    camera: {},
+    light: { color: "#fff", intensity: 1.5, position: [2, 3, 2], ambient_intensity: 0.8, brightness: 1.5 },
+  });
+
+  assert.equal(lights[0].intensity, 2.25);
+  assert.ok(Math.abs(lights[1].intensity - 1.2) < 1e-10);
+});
 
 function debugState(overrides = {}) {
   return {

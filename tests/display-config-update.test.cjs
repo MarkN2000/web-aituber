@@ -21,7 +21,7 @@ function config(overrides = {}) {
     emotion_motions: {},
     food_prop: { position: [0, 0, 0], rotation_degrees: [0, 0, 0], size: 0.2 },
     camera: { fov: 30, position: [0, 1, 3], target: [0, 1, 0] },
-    light: { color: "#fff", intensity: 1, position: [1, 2, 3], ambient_intensity: 1 },
+    light: { color: "#fff", intensity: 1, position: [1, 2, 3], ambient_intensity: 1, brightness: 1 },
     background_color: "#000",
     background_image_url: null,
     background_music_url: "/assets/background-music.webm?v=1",
@@ -83,4 +83,15 @@ test("VRMのURLが変わった場合だけビューアーの再読み込みを�
 
   assert.equal(calls.viewerReloads, 1);
   assert.equal(context.pending().vrm_url, changed.vrm_url);
+});
+
+test("モデルの明るさが変わるとビューアーの再読み込みを予約する", () => {
+  const initial = config();
+  const { context, calls } = loadContext(initial);
+  const changed = config({ light: { ...initial.light, brightness: 1.5 } });
+
+  context.apply(changed);
+
+  assert.equal(calls.viewerReloads, 1);
+  assert.equal(context.pending().light.brightness, 1.5);
 });

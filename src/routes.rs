@@ -62,6 +62,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/admin/qr-code", post(admin_qr_code))
         .route("/api/admin/display-config", get(admin_display_config))
         .route(
+            "/api/admin/model-brightness",
+            axum::routing::put(update_model_brightness),
+        )
+        .route(
             "/api/admin/config",
             get(admin_config).put(update_admin_config),
         )
@@ -847,6 +851,38 @@ async fn update_background_music_volume(
         Err(error) => {
             tracing::warn!(error = ?error, "BGM音量を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "BGM音量を保存できませんでした")
+        }
+    }
+}
+
+async fn update_model_brightness(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<ModelBrightnessRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if !request.brightness.is_finite() || !(0.0..=2.0).contains(&request.brightness) {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "モデルの明るさは0.0から2.0で指定してください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.character.light.brightness = request.brightness;
+    }) {
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "モデルの明るさを保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "モデルの明るさを保存できませんでした",
+            )
         }
     }
 }
@@ -1730,6 +1766,11 @@ struct DisplayConfigDto {
 struct BackgroundMusicVolumeRequest {
     volume: f32,
     duck_ratio: f32,
+}
+
+#[derive(Deserialize)]
+struct ModelBrightnessRequest {
+    brightness: f32,
 }
 
 #[derive(Serialize)]
@@ -3904,6 +3945,66 @@ mod tests {
             0.6
         );
         std::fs::remove_file(config_path).unwrap();
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_brightness_update_requires_token_validates_and_preserves_other_settings() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let config = (*state.config.current()).clone();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/model-brightness")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"brightness":1.25}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        for invalid in [-0.1, 2.1] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/model-brightness?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(format!(r#"{{"brightness":{invalid}}}"#)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        let mut events = state.events.subscribe();
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/model-brightness?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"brightness":1.25}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.character.light.brightness, 1.25);
+        assert_eq!(saved.character.light.intensity, 1.5);
+        assert_eq!(saved.character.light.ambient_intensity, 0.8);
+        assert_eq!(state.config.current().character.light.brightness, 1.25);
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 

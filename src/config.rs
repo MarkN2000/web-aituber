@@ -87,6 +87,8 @@ pub struct LightConfig {
     pub intensity: f32,
     pub position: [f32; 3],
     pub ambient_intensity: f32,
+    #[serde(default = "default_light_brightness")]
+    pub brightness: f32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -139,6 +141,7 @@ impl Default for LightConfig {
             intensity: 1.5,
             position: [2.0, 3.0, 2.0],
             ambient_intensity: 0.8,
+            brightness: default_light_brightness(),
         }
     }
 }
@@ -153,6 +156,10 @@ fn default_background_music_volume() -> f32 {
 
 fn default_background_music_duck_ratio() -> f32 {
     0.4
+}
+
+fn default_light_brightness() -> f32 {
+    1.0
 }
 
 impl AppConfig {
@@ -192,6 +199,11 @@ impl AppConfig {
         validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         required("character.vrm_url", &self.character.vrm_url)?;
+        if !self.character.light.brightness.is_finite()
+            || !(0.0..=2.0).contains(&self.character.light.brightness)
+        {
+            bail!("設定項目 character.light.brightness は0.0から2.0の有限値にしてください");
+        }
         if !self.character.background_music_volume.is_finite()
             || !(0.0..=1.0).contains(&self.character.background_music_volume)
         {
@@ -497,6 +509,7 @@ mod tests {
         assert_eq!(character.background_music_volume, 0.3);
         assert_eq!(character.background_music_duck_ratio, 0.4);
         assert_eq!(character.light.ambient_intensity, 0.8);
+        assert_eq!(character.light.brightness, 1.0);
     }
 
     #[test]
@@ -582,6 +595,21 @@ mod tests {
         }
         for invalid in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
             config.character.background_music_duck_ratio = invalid;
+            assert!(config.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn model_brightness_must_be_between_zero_and_two() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+
+        for valid in [0.0, 1.0, 2.0] {
+            config.character.light.brightness = valid;
+            assert!(config.validate().is_ok());
+        }
+        for invalid in [-0.1, 2.1, f32::NAN, f32::INFINITY] {
+            config.character.light.brightness = invalid;
             assert!(config.validate().is_err());
         }
     }

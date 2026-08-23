@@ -163,7 +163,7 @@
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
-      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデルは現在の処理が終わってから切り替わります。</p>
+      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデルと明るさは現在の処理が終わってから切り替わります。</p>
       <section class="display-setting-section" aria-labelledby="vrm-model-title">
         <h3 id="vrm-model-title">VRMモデル</h3>
         <form id="vrm-model-form" novalidate>
@@ -174,6 +174,18 @@
             <button id="upload-vrm-model" type="submit" disabled>VRMモデルを置き換える</button>
           </div>
         </form>
+        <form id="model-brightness-form" novalidate>
+          <label for="model-brightness">モデルの明るさ</label>
+          <div class="volume-control">
+            <input id="model-brightness" type="range" min="0" max="200" step="5" value="100">
+            <output id="model-brightness-value" for="model-brightness">100%</output>
+          </div>
+          <div class="admin-form-actions">
+            <button id="save-model-brightness" type="submit">明るさを保存</button>
+          </div>
+        </form>
+        <p id="vrm-status" class="status" role="status" aria-live="polite"></p>
+        <p id="vrm-error" class="status" role="alert"></p>
       </section>
       <section class="display-setting-section" aria-labelledby="background-image-title">
         <h3 id="background-image-title">背景画像</h3>
@@ -250,6 +262,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=28"></script>
+  <script type="module" src="/static/js/admin.js?v=29"></script>
 </body>
 </html>
