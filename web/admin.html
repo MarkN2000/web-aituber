@@ -183,7 +183,7 @@
       <form id="background-form" novalidate>
         <label for="background-image">背景画像</label>
         <input id="background-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="background-image-note">
-        <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺3840px以内のWebPへ変換して保存します。</p>
+        <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
         <div class="admin-form-actions">
           <button id="upload-background" type="submit" disabled>背景画像をアップロード</button>
           <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
@@ -236,6 +236,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=26"></script>
+  <script type="module" src="/static/js/admin.js?v=27"></script>
 </body>
 </html>
