@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
-import { motionFileName } from './debug.js?v=1';
+import { motionFileName } from './debug.js?v=2';
 import { isEmotion } from './motion.js';
 import { LipSyncAnalyzer } from './lip-sync.js?v=3';
 
@@ -24,10 +24,12 @@ export class VrmViewer {
     this.currentAction = undefined;
     this.currentMotion = undefined;
     this.currentExpression = 'neutral';
+    this.currentExpressionSupport = 'base';
     this.lipSync = new LipSyncAnalyzer();
     this.blinkTimer = 2 + Math.random() * 3;
     this.blinkTime = 0;
     this.foodActionId = 0;
+    this.foodActionState = 'none';
     this.showFoodPropGizmo = showFoodPropGizmo;
     this.onDebugStateChange = onDebugStateChange;
     this.lastDebugStateKey = undefined;
@@ -209,8 +211,25 @@ export class VrmViewer {
     const value = isEmotion(emotion) ? emotion : 'neutral';
     if (this.vrm?.expressionManager) this.setExpressionValue(this.currentExpression, 0);
     this.currentExpression = value;
+    this.currentExpressionSupport = this.expressionSupport(value);
     if (this.vrm?.expressionManager) this.setExpressionValue(value, value === 'neutral' ? 0 : 1);
     this.reportDebugState();
+  }
+
+  expressionSupport(name) {
+    if (name === 'neutral') return 'base';
+    const manager = this.vrm?.expressionManager;
+    if (!manager) return 'unsupported';
+    try {
+      const expressionName = manager.expressions
+        ?.find((expression) => expression.expressionName?.toLowerCase() === name.toLowerCase())
+        ?.expressionName ?? name;
+      return !manager.getExpression || manager.getExpression(expressionName)
+        ? 'supported'
+        : 'unsupported';
+    } catch {
+      return 'unsupported';
+    }
   }
 
   reportDebugState() {
@@ -219,6 +238,8 @@ export class VrmViewer {
       motionFileName: this.currentMotion?.fileName,
       motionKind: this.currentMotion?.kind,
       expression: this.currentExpression,
+      expressionSupport: this.currentExpressionSupport,
+      foodAction: this.foodActionState,
     };
     const stateKey = JSON.stringify(state);
     if (stateKey === this.lastDebugStateKey) return;
@@ -265,11 +286,18 @@ export class VrmViewer {
       consumeAt,
       duration,
     };
+    this.setFoodActionState('loading');
 
     this.textureLoader.loadAsync(imageUrl)
       .then((texture) => {
         if (this.foodAction?.id !== actionId) {
           texture.dispose();
+          return;
+        }
+        const elapsed = performance.now() - this.foodAction.startedAt;
+        if (elapsed >= this.foodAction.duration) {
+          texture.dispose();
+          this.clearFoodProp();
           return;
         }
         texture.colorSpace = THREE.SRGBColorSpace;
@@ -284,10 +312,12 @@ export class VrmViewer {
         mesh.name = 'FoodPropQuad';
         this.foodAnchor.add(mesh);
         this.foodMesh = mesh;
+        this.setFoodActionState(elapsed >= this.foodAction.consumeAt ? 'consuming' : 'displaying');
       })
       .catch((error) => {
         console.error('食事用画像を読み込めませんでした', error);
         if (this.foodAction?.id === actionId) {
+          this.setFoodActionState('failed');
           this.report('食事用の絵を表示できませんでした。');
         }
       });
@@ -298,6 +328,7 @@ export class VrmViewer {
     if (!action) return;
     const elapsed = performance.now() - action.startedAt;
     if (this.foodMesh && elapsed >= action.consumeAt) {
+      this.setFoodActionState('consuming');
       const consumeDuration = Math.max(action.duration - action.consumeAt, 1);
       const progress = THREE.MathUtils.clamp((elapsed - action.consumeAt) / consumeDuration, 0, 1);
       const remaining = 1 - progress;
@@ -309,12 +340,19 @@ export class VrmViewer {
   clearFoodProp() {
     this.foodActionId += 1;
     this.foodAction = undefined;
+    this.setFoodActionState('none');
     if (!this.foodMesh) return;
     this.foodAnchor?.remove(this.foodMesh);
     this.foodMesh.geometry.dispose();
     this.foodMesh.material.map?.dispose();
     this.foodMesh.material.dispose();
     this.foodMesh = undefined;
+  }
+
+  setFoodActionState(state) {
+    if (this.foodActionState === state) return;
+    this.foodActionState = state;
+    this.reportDebugState();
   }
 
   updateLipSync(delta) {

@@ -1,10 +1,10 @@
 import { AudioQueue } from "./audio-queue.js?v=4";
 import { BackgroundMusic } from "./background-music.js?v=6";
 import { ConversationHistory } from "./history.js?v=9";
-import { isDebugEnabled, renderDebugState } from "./debug.js?v=1";
+import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=9";
+import { VrmViewer } from "./vrm-viewer.js?v=10";
 
 const debugEnabled = isDebugEnabled(window.location.search);
 
@@ -27,6 +27,26 @@ const elements = {
   sourceList: document.querySelector("#source-list"),
   sourceClose: document.querySelector("#source-close"),
 };
+
+let debugState = debugEnabled ? { connection: "connecting" } : undefined;
+let debugStateKey;
+
+function updateDebugState(partialState) {
+  if (!debugState) return;
+  debugState = { ...debugState, ...partialState };
+  const nextKey = JSON.stringify(debugState);
+  if (nextKey === debugStateKey) return;
+  debugStateKey = nextKey;
+  renderDebugState(elements.debugOverlay, debugState);
+}
+
+function resetDebugState() {
+  if (!debugEnabled) return;
+  debugState = { connection: "connecting" };
+  debugStateKey = undefined;
+  elements.debugOverlay.hidden = true;
+  elements.debugOverlay.textContent = "";
+}
 
 const sourceDialog = new SourceDialog(elements.sourceDialog, elements.sourceList, elements.sourceClose);
 const historyView = new ConversationHistory(
@@ -139,10 +159,12 @@ function cancelTurnAudio(turnId) {
   backgroundMusic?.setDucked(false);
 }
 
-function connect() {
+function connect(connectionState = "connecting") {
   if (!started) return;
+  updateDebugState({ connection: connectionState });
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(`${scheme}//${window.location.host}/ws`);
+  socket.addEventListener("open", () => updateDebugState({ connection: "connected" }));
   socket.addEventListener("message", (event) => {
     try {
       handleServerEvent(JSON.parse(event.data));
@@ -153,8 +175,9 @@ function connect() {
   });
   socket.addEventListener("close", () => {
     if (!started) return;
+    updateDebugState({ connection: "reconnecting" });
     window.clearTimeout(reconnectTimer);
-    reconnectTimer = window.setTimeout(connect, 2000);
+    reconnectTimer = window.setTimeout(() => connect("reconnecting"), 2000);
   });
   socket.addEventListener("error", () => socket.close());
 }
@@ -274,6 +297,7 @@ function onAudioEnd(item) {
 }
 
 async function startMain() {
+  resetDebugState();
   elements.start.disabled = true;
   elements.startError.textContent = "";
   let backgroundMusicResume;
@@ -320,7 +344,7 @@ async function startMain() {
     viewer = new VrmViewer(elements.canvas, showViewerMessage, {
       showFoodPropGizmo: debugEnabled,
       onDebugStateChange: debugEnabled
-        ? (state) => renderDebugState(elements.debugOverlay, state)
+        ? updateDebugState
         : undefined,
     });
     await viewer.load(config);
@@ -337,8 +361,7 @@ async function startMain() {
     backgroundMusic = undefined;
     viewer?.dispose();
     viewer = undefined;
-    elements.debugOverlay.hidden = true;
-    elements.debugOverlay.textContent = "";
+    resetDebugState();
   }
 }
 

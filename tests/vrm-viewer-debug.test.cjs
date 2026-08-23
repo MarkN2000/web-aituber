@@ -7,12 +7,43 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../web/js/vrm-viewer.js"), "utf8")
   .replace(/^import .*;\r?\n/gm, "")
   .replace("export class VrmViewer", "class VrmViewer");
+let currentTime = 0;
+
+class FakeGeometry {
+  dispose() {}
+}
+
+class FakeMaterial {
+  constructor(options) {
+    Object.assign(this, options);
+  }
+
+  dispose() {}
+}
+
+class FakeMesh {
+  constructor(geometry, material) {
+    this.geometry = geometry;
+    this.material = material;
+    this.scale = { setScalar: (value) => { this.scaleValue = value; } };
+  }
+}
+
 const context = vm.createContext({
-  THREE: { LoopOnce: "once" },
+  THREE: {
+    LoopOnce: "once",
+    SRGBColorSpace: "srgb",
+    DoubleSide: "double",
+    PlaneGeometry: FakeGeometry,
+    MeshBasicMaterial: FakeMaterial,
+    Mesh: FakeMesh,
+    MathUtils: { clamp: (value, min, max) => Math.min(Math.max(value, min), max) },
+  },
   createVRMAnimationClip: () => ({ tracks: [] }),
   isEmotion: (value) => ["neutral", "happy", "sad", "angry", "surprised"].includes(value),
   motionFileName: (url) => new URL(url, "http://localhost/").pathname.split("/").pop(),
-  console,
+  performance: { now: () => currentTime },
+  console: { ...console, error() {} },
 });
 vm.runInContext(`${source}\nthis.VrmViewer = VrmViewer;`, context);
 
@@ -42,12 +73,26 @@ function createViewer() {
   viewer.currentAction = undefined;
   viewer.currentMotion = undefined;
   viewer.currentExpression = "neutral";
+  viewer.currentExpressionSupport = "base";
+  viewer.foodActionId = 0;
+  viewer.foodActionState = "none";
   viewer.lastDebugStateKey = undefined;
   viewer.idleClips = [];
   viewer.emotionClips = new Map();
   viewer.debugStates = [];
   viewer.onDebugStateChange = (state) => viewer.debugStates.push({ ...state });
   return viewer;
+}
+
+function debugState(overrides = {}) {
+  return {
+    motionFileName: undefined,
+    motionKind: undefined,
+    expression: "neutral",
+    expressionSupport: "base",
+    foodAction: "none",
+    ...overrides,
+  };
 }
 
 test("読み込んだモーションはクリップとファイル名を保持する", async () => {
@@ -77,9 +122,14 @@ test("実際に選択した待機・感情モーションを状態変更時だ�
   viewer.setEmotion("happy");
 
   assert.deepEqual(viewer.debugStates, [
-    { motionFileName: "idle.vrma", motionKind: "idle", expression: "neutral" },
-    { motionFileName: "happy.vrma", motionKind: "emotion", expression: "neutral" },
-    { motionFileName: "happy.vrma", motionKind: "emotion", expression: "happy" },
+    debugState({ motionFileName: "idle.vrma", motionKind: "idle" }),
+    debugState({ motionFileName: "happy.vrma", motionKind: "emotion" }),
+    debugState({
+      motionFileName: "happy.vrma",
+      motionKind: "emotion",
+      expression: "happy",
+      expressionSupport: "unsupported",
+    }),
   ]);
 });
 
@@ -94,11 +144,10 @@ test("感情モーション終了後は実際に選択した待機モーショ�
 
   viewer.onAnimationFinished({ action: emotionAction });
 
-  assert.deepEqual(viewer.debugStates.at(-1), {
+  assert.deepEqual(viewer.debugStates.at(-1), debugState({
     motionFileName: "idle.vrma",
     motionKind: "idle",
-    expression: "neutral",
-  });
+  }));
 });
 
 test("再生できる身体モーションがない場合はなしを通知する", () => {
@@ -107,7 +156,7 @@ test("再生できる身体モーションがない場合はなしを通知す�
   viewer.resumeIdle();
 
   assert.deepEqual(viewer.debugStates, [
-    { motionFileName: undefined, motionKind: undefined, expression: "neutral" },
+    debugState(),
   ]);
 });
 
@@ -117,6 +166,91 @@ test("不正な表情はneutralとして通知する", () => {
   viewer.setEmotion("unknown");
 
   assert.deepEqual(viewer.debugStates, [
-    { motionFileName: undefined, motionKind: undefined, expression: "neutral" },
+    debugState(),
   ]);
+});
+
+test("要求表情に対するVRMの対応状況を通知する", () => {
+  const viewer = createViewer();
+  viewer.vrm = {
+    expressionManager: {
+      expressions: [{ expressionName: "Happy" }],
+      getExpression: (name) => name === "Happy" ? {} : undefined,
+      setValue() {},
+    },
+  };
+
+  viewer.setEmotion("happy");
+  viewer.setEmotion("sad");
+  viewer.setEmotion("neutral");
+
+  assert.deepEqual(viewer.debugStates.map((state) => state.expressionSupport), [
+    "supported",
+    "unsupported",
+    "base",
+  ]);
+});
+
+test("食事動作は画像読込中・表示中・消費中・なしへ遷移する", async () => {
+  const viewer = createViewer();
+  let resolveTexture;
+  viewer.foodAnchor = { add() {}, remove() {} };
+  viewer.foodPropSize = 0.2;
+  viewer.report = () => {};
+  viewer.textureLoader = {
+    loadAsync: () => new Promise((resolve) => { resolveTexture = resolve; }),
+  };
+  currentTime = 0;
+
+  viewer.playFoodAction("/food/test.png", 1000, 3000);
+  assert.equal(viewer.debugStates.at(-1).foodAction, "loading");
+
+  resolveTexture({ dispose() {} });
+  await Promise.resolve();
+  assert.equal(viewer.debugStates.at(-1).foodAction, "displaying");
+
+  currentTime = 1000;
+  viewer.updateFoodAction();
+  assert.equal(viewer.debugStates.at(-1).foodAction, "consuming");
+
+  currentTime = 3000;
+  viewer.updateFoodAction();
+  assert.equal(viewer.debugStates.at(-1).foodAction, "none");
+});
+
+test("食事画像を読み込めない場合は読込失敗を通知する", async () => {
+  const viewer = createViewer();
+  viewer.foodAnchor = { add() {}, remove() {} };
+  viewer.foodPropSize = 0.2;
+  viewer.report = () => {};
+  viewer.textureLoader = { loadAsync: async () => { throw new Error("load failed"); } };
+  currentTime = 0;
+
+  viewer.playFoodAction("/food/test.png", 1000, 3000);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(viewer.debugStates.at(-1).foodAction, "failed");
+});
+
+test("食事動作終了後に読み込みが完了した画像は表示しない", async () => {
+  const viewer = createViewer();
+  let resolveTexture;
+  let textureDisposed = false;
+  viewer.foodAnchor = { add() { throw new Error("終了後の画像を追加しました"); }, remove() {} };
+  viewer.foodPropSize = 0.2;
+  viewer.report = () => {};
+  viewer.textureLoader = {
+    loadAsync: () => new Promise((resolve) => { resolveTexture = resolve; }),
+  };
+  currentTime = 0;
+
+  viewer.playFoodAction("/food/test.png", 1000, 3000);
+  currentTime = 3000;
+  resolveTexture({ dispose: () => { textureDisposed = true; } });
+  await Promise.resolve();
+
+  assert.equal(textureDisposed, true);
+  assert.equal(viewer.foodMesh, undefined);
+  assert.equal(viewer.debugStates.at(-1).foodAction, "none");
 });

@@ -36,19 +36,49 @@ test("デバッグ状態はモーション種別と要求表情を表示する",
   const element = { hidden: true, textContent: "" };
 
   context.render(element, {
+    connection: "connected",
     motionFileName: "happy.vrma",
     motionKind: "emotion",
     expression: "happy",
+    expressionSupport: "supported",
+    foodAction: "consuming",
   });
 
   assert.equal(element.hidden, false);
-  assert.equal(element.textContent, "モーション: happy.vrma\n種別: 感情\n要求表情: happy");
+  assert.equal(
+    element.textContent,
+    "接続: 接続済み\nモーション: happy.vrma\n種別: 感情\n要求表情: happy\n表情対応: あり\n食事動作: 消費中",
+  );
 });
 
 test("身体モーションがない状態を明示する", () => {
   const element = { hidden: true, textContent: "" };
 
-  context.render(element, { expression: "neutral" });
+  context.render(element, {
+    connection: "reconnecting",
+    expression: "neutral",
+    expressionSupport: "base",
+    foodAction: "none",
+  });
 
-  assert.equal(element.textContent, "モーション: なし\n種別: なし\n要求表情: neutral");
+  assert.equal(
+    element.textContent,
+    "接続: 再接続中\nモーション: なし\n種別: なし\n要求表情: neutral\n表情対応: 基本状態\n食事動作: なし",
+  );
+});
+
+test("接続中・未対応表情・食事画像読込失敗を表示する", () => {
+  const element = { hidden: true, textContent: "" };
+
+  context.render(element, {
+    connection: "connecting",
+    expression: "sad",
+    expressionSupport: "unsupported",
+    foodAction: "failed",
+  });
+
+  assert.equal(
+    element.textContent,
+    "接続: 接続中\nモーション: なし\n種別: なし\n要求表情: sad\n表情対応: 未対応\n食事動作: 読込失敗",
+  );
 });
