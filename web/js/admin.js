@@ -1,4 +1,4 @@
-import { UserDictionaryEditor } from "./user-dictionary.js?v=6";
+import { UserDictionaryEditor } from "./user-dictionary.js?v=7";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;

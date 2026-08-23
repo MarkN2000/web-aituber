@@ -8,7 +8,6 @@ const WORD_TYPE_LABELS = {
 
 const COMBINING_SMALL_KATAKANA = new Set(["ァ", "ィ", "ゥ", "ェ", "ォ", "ャ", "ュ", "ョ", "ヮ"]);
 const KATAKANA_PRONUNCIATION_PATTERN = /^[ァ-ヴー]+$/u;
-const ACCENT_MORA_WIDTH = 52;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 export function hiraganaToKatakana(value) {
@@ -154,30 +153,37 @@ export class UserDictionaryEditor {
     this.elements.accentSlider.value = String(accentTypeToSliderValue(moras.length, accentType));
 
     const levels = accentPitchLevels(moras.length, accentType);
-    const trackWidth = levels.length * ACCENT_MORA_WIDTH;
+    this.elements.accentTrack.style.setProperty("--accent-columns", String(levels.length));
+    this.elements.accentTrack.style.setProperty("--accent-slider-margin", `${50 / levels.length}%`);
+    this.elements.accentTrack.style.setProperty("--accent-slider-width", `${100 - (100 / levels.length)}%`);
+    this.elements.accentTrack.style.setProperty("--accent-label-size", `${90 / levels.length}cqw`);
     const svg = document.createElementNS(SVG_NAMESPACE, "svg");
     svg.classList.add("tts-user-dictionary-accent-line");
-    svg.setAttribute("viewBox", `0 0 ${trackWidth} 44`);
-    svg.setAttribute("width", String(trackWidth));
     svg.setAttribute("height", "44");
     svg.setAttribute("aria-hidden", "true");
     const pointCoordinates = levels.map((level, index) => ({
-      x: (index * ACCENT_MORA_WIDTH) + (ACCENT_MORA_WIDTH / 2),
+      x: `${((index + 0.5) / levels.length) * 100}%`,
       y: level === 1 ? 10 : 34,
     }));
-    const line = document.createElementNS(SVG_NAMESPACE, "polyline");
-    line.setAttribute("points", pointCoordinates.map(({ x, y }) => `${x},${y}`).join(" "));
-    svg.append(line);
+    for (let index = 1; index < pointCoordinates.length; index += 1) {
+      const previous = pointCoordinates[index - 1];
+      const current = pointCoordinates[index];
+      const line = document.createElementNS(SVG_NAMESPACE, "line");
+      line.setAttribute("x1", previous.x);
+      line.setAttribute("y1", String(previous.y));
+      line.setAttribute("x2", current.x);
+      line.setAttribute("y2", String(current.y));
+      svg.append(line);
+    }
     for (const [index, { x, y }] of pointCoordinates.entries()) {
       const point = document.createElementNS(SVG_NAMESPACE, "circle");
-      point.setAttribute("cx", String(x));
+      point.setAttribute("cx", x);
       point.setAttribute("cy", String(y));
       point.setAttribute("r", index === pointCoordinates.length - 1 ? "4" : "5");
       if (index === pointCoordinates.length - 1) point.classList.add("is-after-word");
       svg.append(point);
     }
 
-    this.elements.accentLabels.style.gridTemplateColumns = `repeat(${levels.length}, ${ACCENT_MORA_WIDTH}px)`;
     for (const mora of moras) {
       const label = document.createElement("span");
       label.textContent = mora;
@@ -187,7 +193,6 @@ export class UserDictionaryEditor {
     flatLabel.className = "is-flat";
     flatLabel.textContent = "平板";
     this.elements.accentLabels.append(flatLabel);
-    this.elements.accentTrack.style.width = `${trackWidth}px`;
     this.elements.accentDiagram.append(svg);
   }
 

@@ -654,22 +654,26 @@ textarea::placeholder {
 .tts-user-dictionary-accent-viewport {
   max-width: 100%;
   padding: 10px 12px;
-  overflow-x: auto;
   border: 1px solid #dededb;
   border-radius: 8px;
   background: #f8f8f6;
-  overscroll-behavior-x: contain;
 }
 
 .tts-user-dictionary-accent-track {
-  min-width: max-content;
+  --accent-columns: 2;
+  --accent-slider-margin: 25%;
+  --accent-slider-width: 50%;
+  --accent-label-size: .85rem;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .admin-card .tts-user-dictionary-accent-slider {
   display: block;
-  width: calc(100% - 36px);
+  width: var(--accent-slider-width);
   min-height: 32px;
-  margin: 0 18px;
+  margin: 0 var(--accent-slider-margin);
   padding: 0;
   border: 0;
   background: transparent;
@@ -679,9 +683,10 @@ textarea::placeholder {
 
 .tts-user-dictionary-accent-line {
   display: block;
+  width: 100%;
 }
 
-.tts-user-dictionary-accent-line polyline {
+.tts-user-dictionary-accent-line line {
   fill: none;
   stroke: #505050;
   stroke-width: 3;
@@ -699,9 +704,13 @@ textarea::placeholder {
 
 .tts-user-dictionary-accent-labels {
   display: grid;
+  grid-template-columns: repeat(var(--accent-columns), minmax(0, 1fr));
   text-align: center;
   color: #686868;
   font-size: .85rem;
+  font-size: min(.85rem, var(--accent-label-size));
+  line-height: 1;
+  overflow-wrap: anywhere;
 }
 
 .tts-user-dictionary-accent-labels .is-flat {
