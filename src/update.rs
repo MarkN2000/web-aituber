@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{self},
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::{self, Command, Stdio},
     time::Duration,
 };
 
@@ -200,7 +200,7 @@ fn asset_url(assets: &[GitHubAsset], name: &str) -> Option<String> {
 }
 
 fn install_layout() -> Result<InstallLayout> {
-    if cfg!(target_os = "linux") && env::var_os("INVOCATION_ID").is_some() {
+    if is_directly_managed_by_systemd() {
         bail!("systemdで管理されているため、管理画面からは更新できません");
     }
     RELEASE_ASSET_NAME.context("このOS・CPUは自己更新に対応していません")?;
@@ -239,6 +239,15 @@ fn install_layout() -> Result<InstallLayout> {
         executable_name,
         updater,
     })
+}
+
+fn is_directly_managed_by_systemd() -> bool {
+    cfg!(target_os = "linux")
+        && systemd_exec_pid_matches(env::var("SYSTEMD_EXEC_PID").ok().as_deref(), process::id())
+}
+
+fn systemd_exec_pid_matches(systemd_exec_pid: Option<&str>, current_pid: u32) -> bool {
+    systemd_exec_pid.and_then(|value| value.parse().ok()) == Some(current_pid)
 }
 
 async fn download_text(http: &reqwest::Client, url: &str, limit: u64) -> Result<String> {
@@ -529,6 +538,14 @@ fn package_root_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn systemd判定は直接起動されたプロセスだけに一致する() {
+        assert!(systemd_exec_pid_matches(Some("4242"), 4242));
+        assert!(!systemd_exec_pid_matches(Some("4241"), 4242));
+        assert!(!systemd_exec_pid_matches(None, 4242));
+        assert!(!systemd_exec_pid_matches(Some("invalid"), 4242));
+    }
 
     #[test]
     fn checksum_requires_expected_file_name() {
