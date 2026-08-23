@@ -95,3 +95,18 @@ test("モデルの明るさが変わるとビューアーの再読み込みを�
   assert.equal(calls.viewerReloads, 1);
   assert.equal(context.pending().light.brightness, 1.5);
 });
+
+test("CameraとFood Propの配置が変わるとビューアーの再読み込みを予約する", () => {
+  const initial = config();
+  const { context, calls } = loadContext(initial);
+  const changed = config({
+    camera: { ...initial.camera, position: [0.1, 1.5, 2.8] },
+    food_prop: { ...initial.food_prop, rotation_degrees: [10, 20, 30], size: 0.25 },
+  });
+
+  context.apply(changed);
+
+  assert.equal(calls.viewerReloads, 1);
+  assert.deepEqual(context.pending().camera.position, [0.1, 1.5, 2.8]);
+  assert.deepEqual(context.pending().food_prop.rotation_degrees, [10, 20, 30]);
+});

@@ -66,6 +66,10 @@ pub fn router(state: AppState) -> Router {
             axum::routing::put(update_model_brightness),
         )
         .route(
+            "/api/admin/model-layout",
+            axum::routing::put(update_model_layout),
+        )
+        .route(
             "/api/admin/config",
             get(admin_config).put(update_admin_config),
         )
@@ -883,6 +887,46 @@ async fn update_model_brightness(
                 StatusCode::BAD_REQUEST,
                 "モデルの明るさを保存できませんでした",
             )
+        }
+    }
+}
+
+async fn update_model_layout(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<ModelLayoutRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if request
+        .camera_position
+        .iter()
+        .chain(request.food_prop_position.iter())
+        .chain(request.food_prop_rotation_degrees.iter())
+        .any(|value| !value.is_finite())
+        || !request.food_prop_scale.is_finite()
+        || request.food_prop_scale <= 0.0
+    {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "位置と回転は有限値、Scaleは0より大きい有限値で指定してください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.character.camera.position = request.camera_position;
+        config.character.food_prop.position = request.food_prop_position;
+        config.character.food_prop.rotation_degrees = request.food_prop_rotation_degrees;
+        config.character.food_prop.size = request.food_prop_scale;
+    }) {
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "モデル配置を保存できませんでした");
+            admin_error(StatusCode::BAD_REQUEST, "モデル配置を保存できませんでした")
         }
     }
 }
@@ -1771,6 +1815,14 @@ struct BackgroundMusicVolumeRequest {
 #[derive(Deserialize)]
 struct ModelBrightnessRequest {
     brightness: f32,
+}
+
+#[derive(Deserialize)]
+struct ModelLayoutRequest {
+    camera_position: [f32; 3],
+    food_prop_position: [f32; 3],
+    food_prop_rotation_degrees: [f32; 3],
+    food_prop_scale: f32,
 }
 
 #[derive(Serialize)]
@@ -4005,6 +4057,72 @@ mod tests {
         assert_eq!(saved.character.light.intensity, 1.5);
         assert_eq!(saved.character.light.ambient_intensity, 0.8);
         assert_eq!(state.config.current().character.light.brightness, 1.25);
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_layout_update_validates_and_preserves_camera_target_and_fov() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let mut config = (*state.config.current()).clone();
+        config.character.camera.target = [0.0, 1.25, 0.0];
+        config.character.camera.fov = 35.0;
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+        let request = r#"{"camera_position":[0.1,1.5,2.8],"food_prop_position":[0.01,0.02,0.03],"food_prop_rotation_degrees":[10.0,20.0,30.0],"food_prop_scale":0.25}"#;
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/model-layout")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/model-layout?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request.replace("0.25", "0.0")))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let mut events = state.events.subscribe();
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/model-layout?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.character.camera.position, [0.1, 1.5, 2.8]);
+        assert_eq!(saved.character.camera.target, [0.0, 1.25, 0.0]);
+        assert_eq!(saved.character.camera.fov, 35.0);
+        assert_eq!(saved.character.food_prop.position, [0.01, 0.02, 0.03]);
+        assert_eq!(
+            saved.character.food_prop.rotation_degrees,
+            [10.0, 20.0, 30.0]
+        );
+        assert_eq!(saved.character.food_prop.size, 0.25);
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 

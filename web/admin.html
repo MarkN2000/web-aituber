@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -184,6 +184,42 @@
             <button id="save-model-brightness" type="submit">明るさを保存</button>
           </div>
         </form>
+        <form id="model-layout-form" class="model-layout-form" novalidate>
+          <fieldset class="model-layout-group">
+            <legend>Camera</legend>
+            <fieldset class="model-vector-group">
+              <legend>Position</legend>
+              <div class="model-vector-inputs">
+                <label>X<input id="camera-position-x" type="number" step="0.01" required></label>
+                <label>Y<input id="camera-position-y" type="number" step="0.01" required></label>
+                <label>Z<input id="camera-position-z" type="number" step="0.01" required></label>
+              </div>
+            </fieldset>
+          </fieldset>
+          <fieldset class="model-layout-group">
+            <legend>Food Prop</legend>
+            <fieldset class="model-vector-group">
+              <legend>Position</legend>
+              <div class="model-vector-inputs">
+                <label>X<input id="food-prop-position-x" type="number" step="0.01" required></label>
+                <label>Y<input id="food-prop-position-y" type="number" step="0.01" required></label>
+                <label>Z<input id="food-prop-position-z" type="number" step="0.01" required></label>
+              </div>
+            </fieldset>
+            <fieldset class="model-vector-group">
+              <legend>Rotation</legend>
+              <div class="model-vector-inputs">
+                <label>X<input id="food-prop-rotation-x" type="number" step="1" required></label>
+                <label>Y<input id="food-prop-rotation-y" type="number" step="1" required></label>
+                <label>Z<input id="food-prop-rotation-z" type="number" step="1" required></label>
+              </div>
+            </fieldset>
+            <label class="model-scale-input">Scale<input id="food-prop-scale" type="number" step="0.01" required></label>
+          </fieldset>
+          <div class="admin-form-actions">
+            <button id="save-model-layout" type="submit">位置調整を保存</button>
+          </div>
+        </form>
         <p id="vrm-status" class="status" role="status" aria-live="polite"></p>
         <p id="vrm-error" class="status" role="alert"></p>
       </section>
@@ -262,6 +298,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=29"></script>
+  <script type="module" src="/static/js/admin.js?v=31"></script>
 </body>
 </html>

@@ -30,6 +30,11 @@ const elements = {
   selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
   brightnessForm: document.querySelector("#model-brightness-form"), brightness: document.querySelector("#model-brightness"),
   brightnessValue: document.querySelector("#model-brightness-value"), saveBrightness: document.querySelector("#save-model-brightness"),
+  layoutForm: document.querySelector("#model-layout-form"), saveLayout: document.querySelector("#save-model-layout"),
+  cameraPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#camera-position-${axis}`)),
+  foodPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-position-${axis}`)),
+  foodRotation: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-rotation-${axis}`)),
+  foodScale: document.querySelector("#food-prop-scale"),
   vrmStatus: document.querySelector("#vrm-status"), vrmError: document.querySelector("#vrm-error"),
   backgroundForm: document.querySelector("#background-form"), backgroundInput: document.querySelector("#background-image"),
   uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
@@ -55,6 +60,7 @@ let selectedSpeakerId;
 let selectedVrmFile;
 let vrmBusy = false;
 let brightnessBusy = false;
+let layoutBusy = false;
 let selectedBackgroundBlob;
 let selectedBackgroundUrl;
 let currentBackgroundExists = false;
@@ -216,6 +222,9 @@ function updateVrmControls() {
 function updateBrightnessControls() {
   elements.brightness.disabled = brightnessBusy || !token;
   elements.saveBrightness.disabled = brightnessBusy || !token;
+}
+function updateLayoutControls() {
+  [...elements.layoutForm.elements].forEach((element) => { element.disabled = layoutBusy || !token; });
 }
 function updateBrightnessLabel() {
   elements.brightnessValue.value = `${elements.brightness.value}%`;
@@ -386,7 +395,13 @@ async function convertBackground(file) {
   if (blob.size > MAX_BACKGROUND_BYTES) throw new Error("WebP変換後の画像が10MiBを超えています。別の画像を選択してください。");
   return blob;
 }
-async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true } = {}) {
+function setVectorInputs(inputs, values) {
+  inputs.forEach((input, index) => { input.value = String(values?.[index] ?? 0); });
+}
+function vectorValues(inputs) {
+  return inputs.map((input) => Number(input.value));
+}
+async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true, layout = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
@@ -395,6 +410,12 @@ async function loadDisplayConfig({ background = true, music = true, volume = tru
     const configuredBrightness = Number(config.light?.brightness);
     elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
     updateBrightnessLabel();
+  }
+  if (layout) {
+    setVectorInputs(elements.cameraPosition, config.camera?.position);
+    setVectorInputs(elements.foodPosition, config.food_prop?.position);
+    setVectorInputs(elements.foodRotation, config.food_prop?.rotation_degrees);
+    elements.foodScale.value = String(config.food_prop?.size ?? 0.2);
   }
   if (volume) {
     const configuredVolume = Number(config.background_music_volume);
@@ -480,6 +501,44 @@ async function saveModelBrightness(event) {
     brightnessBusy = false;
     elements.saveBrightness.textContent = original;
     updateBrightnessControls();
+  }
+}
+async function saveModelLayout(event) {
+  event.preventDefault();
+  if (!token || layoutBusy) return;
+  const cameraPosition = vectorValues(elements.cameraPosition);
+  const foodPosition = vectorValues(elements.foodPosition);
+  const foodRotation = vectorValues(elements.foodRotation);
+  const foodScale = Number(elements.foodScale.value);
+  if (![...cameraPosition, ...foodPosition, ...foodRotation, foodScale].every(Number.isFinite) || foodScale <= 0) {
+    setMessage(elements.vrmStatus, elements.vrmError, "PositionとRotationは数値、Scaleは0より大きい数値で入力してください。", true);
+    return;
+  }
+  layoutBusy = true;
+  updateLayoutControls();
+  const original = elements.saveLayout.textContent;
+  elements.saveLayout.textContent = "保存中…";
+  setMessage(elements.vrmStatus, elements.vrmError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/model-layout"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        camera_position: cameraPosition,
+        food_prop_position: foodPosition,
+        food_prop_rotation_degrees: foodRotation,
+        food_prop_scale: foodScale,
+      }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "位置調整を保存できませんでした。"));
+    setMessage(elements.vrmStatus, elements.vrmError, "位置調整を保存しました。接続中のメイン画面は現在の処理後に反映します。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.vrmStatus, elements.vrmError, error.message || "位置調整を保存できませんでした。", true);
+  } finally {
+    layoutBusy = false;
+    elements.saveLayout.textContent = original;
+    updateLayoutControls();
   }
 }
 async function uploadBackground(event) {
@@ -788,6 +847,8 @@ elements.vrmInput.addEventListener("change", selectVrmModel);
 elements.vrmForm.addEventListener("submit", uploadVrmModel);
 elements.brightness.addEventListener("input", updateBrightnessLabel);
 elements.brightnessForm.addEventListener("submit", saveModelBrightness);
+elements.layoutForm.addEventListener("submit", saveModelLayout);
+updateLayoutControls();
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
 elements.deleteBackground.addEventListener("click", deleteBackground);

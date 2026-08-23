@@ -944,6 +944,51 @@ textarea::placeholder {
   text-align: right;
 }
 
+.model-layout-form {
+  margin-top: 24px;
+}
+
+.model-layout-group,
+.model-vector-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.model-layout-group + .model-layout-group,
+.model-vector-group,
+.model-scale-input {
+  margin-top: 16px;
+}
+
+.model-layout-group > legend {
+  padding: 0;
+  font-weight: 700;
+}
+
+.model-vector-group > legend {
+  padding: 0;
+  font-size: .9rem;
+}
+
+.model-vector-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.model-vector-inputs label,
+.model-scale-input {
+  display: grid;
+  gap: 4px;
+  color: #606060;
+  font-size: .85rem;
+}
+
+.model-scale-input {
+  width: min(100%, 200px);
+}
+
 [hidden] {
   display: none !important;
 }
