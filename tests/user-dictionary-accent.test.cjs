@@ -9,9 +9,15 @@ const source = fs.readFileSync(path.join(__dirname, "../web/js/user-dictionary.j
   .replace("export class ", "class ");
 const context = vm.createContext({});
 vm.runInContext(
-  `${source}\nthis.splitMoras = splitPronunciationMoras; this.pitchLevels = accentPitchLevels; this.toSlider = accentTypeToSliderValue; this.toAccent = sliderValueToAccentType;`,
+  `${source}\nthis.toKatakana = hiraganaToKatakana; this.splitMoras = splitPronunciationMoras; this.pitchLevels = accentPitchLevels; this.toSlider = accentTypeToSliderValue; this.toAccent = sliderValueToAccentType;`,
   context,
 );
+
+test("ひらがなをカタカナへ変換する", () => {
+  assert.equal(context.toKatakana("かいづか"), "カイヅカ");
+  assert.equal(context.toKatakana("ゔぉーかる"), "ヴォーカル");
+  assert.equal(context.toKatakana("カタカナ・漢字123"), "カタカナ・漢字123");
+});
 
 test("読みを小書きカタカナだけ直前へ連結してモーラに分ける", () => {
   const cases = [

@@ -11,6 +11,12 @@ const KATAKANA_PRONUNCIATION_PATTERN = /^[ァ-ヴー]+$/u;
 const ACCENT_MORA_WIDTH = 52;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
+export function hiraganaToKatakana(value) {
+  return value.replace(/[ぁ-ゖ]/gu, (character) => (
+    String.fromCodePoint(character.codePointAt(0) + 0x60)
+  ));
+}
+
 export function splitPronunciationMoras(pronunciation) {
   const moras = [];
   for (const character of pronunciation) {
@@ -88,7 +94,12 @@ export class UserDictionaryEditor {
     this.elements.cancel.addEventListener("click", () => this.closeEditor());
     this.elements.preview.addEventListener("click", () => this.preview());
     this.elements.form.addEventListener("submit", (event) => this.save(event));
-    this.elements.pronunciation.addEventListener("input", () => this.renderAccentPicker());
+    this.elements.pronunciation.addEventListener("input", (event) => {
+      if (!event.isComposing) {
+        this.elements.pronunciation.value = hiraganaToKatakana(this.elements.pronunciation.value);
+      }
+      this.renderAccentPicker();
+    });
     this.elements.accentSlider.addEventListener("input", () => this.updateAccentFromSlider());
     this.elements.priority.addEventListener("input", () => this.updatePriorityLabel());
     for (const field of this.elements.form.elements) {

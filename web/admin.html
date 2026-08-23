@@ -117,7 +117,7 @@
           <input id="tts-user-dictionary-surface" type="text" required autocomplete="off">
           <label for="tts-user-dictionary-pronunciation">読み（カタカナ）</label>
           <input id="tts-user-dictionary-pronunciation" type="text" required pattern="[ァ-ヴー]+" autocomplete="off" aria-describedby="tts-user-dictionary-pronunciation-note">
-          <p id="tts-user-dictionary-pronunciation-note" class="field-note admin-field-note">全角カタカナで入力してください。</p>
+          <p id="tts-user-dictionary-pronunciation-note" class="field-note admin-field-note">ひらがなは入力確定後にカタカナへ変換されます。</p>
           <fieldset class="tts-user-dictionary-accent">
             <legend>アクセント</legend>
             <input id="tts-user-dictionary-accent-type" type="hidden" value="0">
@@ -233,6 +233,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=22"></script>
+  <script type="module" src="/static/js/admin.js?v=23"></script>
 </body>
 </html>
