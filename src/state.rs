@@ -27,6 +27,7 @@ pub struct AppState {
     pub food_images: Arc<RwLock<HashMap<String, InputImage>>>,
     pub audio_dir: Arc<PathBuf>,
     pub assets_dir: Arc<PathBuf>,
+    pub vrm_model_lock: Arc<Mutex<()>>,
     pub background_image_lock: Arc<Mutex<()>>,
     pub background_music_lock: Arc<Mutex<()>>,
     pub search_filler_rotation: Arc<SearchFillerRotation>,

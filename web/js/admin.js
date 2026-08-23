@@ -2,6 +2,7 @@ import { UserDictionaryEditor } from "./user-dictionary.js?v=8";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
+const MAX_VRM_MODEL_BYTES = 100 * 1024 * 1024;
 const MAX_BACKGROUND_MUSIC_BYTES = 100 * 1024 * 1024;
 const MAX_BACKGROUND_DIMENSION = 1920;
 const BACKGROUND_WEBP_QUALITY = 0.85;
@@ -25,6 +26,8 @@ const elements = {
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
   engineUrl: document.querySelector("#tts-engine-url"),
+  vrmForm: document.querySelector("#vrm-model-form"), vrmInput: document.querySelector("#vrm-model"),
+  selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
   backgroundForm: document.querySelector("#background-form"), backgroundInput: document.querySelector("#background-image"),
   uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
   currentBackgroundPreview: document.querySelector("#current-background-preview"), currentBackgroundEmpty: document.querySelector("#current-background-empty"),
@@ -46,6 +49,8 @@ let previewAudioUrl;
 let previewAbortController;
 let loadedConfig;
 let selectedSpeakerId;
+let selectedVrmFile;
+let vrmBusy = false;
 let selectedBackgroundBlob;
 let selectedBackgroundUrl;
 let currentBackgroundExists = false;
@@ -200,6 +205,10 @@ function tabKeydown(event) {
   event.preventDefault(); activateTab(elements.tabs[byKey[event.key]], true);
 }
 
+function updateVrmControls() {
+  elements.vrmInput.disabled = vrmBusy || !token;
+  elements.uploadVrm.disabled = vrmBusy || !selectedVrmFile || !token;
+}
 function updateBackgroundControls() {
   elements.backgroundInput.disabled = backgroundBusy || !token;
   elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
@@ -212,6 +221,29 @@ function updateMusicControls() {
   elements.musicVolume.disabled = musicBusy || !token;
   elements.musicDuckRatio.disabled = musicBusy || !token;
   elements.saveMusicVolume.disabled = musicBusy || !token;
+}
+function selectVrmModel() {
+  if (vrmBusy) return;
+  const [file] = elements.vrmInput.files;
+  selectedVrmFile = undefined;
+  elements.selectedVrm.textContent = "なし";
+  setMessage(elements.displayStatus, elements.displayError);
+  if (!file) {
+    updateVrmControls();
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith(".vrm")) {
+    elements.vrmInput.value = "";
+    setMessage(elements.displayStatus, elements.displayError, ".vrmファイルを選択してください。", true);
+  } else if (file.size > MAX_VRM_MODEL_BYTES) {
+    elements.vrmInput.value = "";
+    setMessage(elements.displayStatus, elements.displayError, "VRMモデルは100MiB以下にしてください。", true);
+  } else {
+    selectedVrmFile = file;
+    elements.selectedVrm.textContent = `${file.name}（${(file.size / 1024 / 1024).toFixed(1)}MiB）`;
+    setMessage(elements.displayStatus, elements.displayError, "置き換えるVRMモデルを選択しました。");
+  }
+  updateVrmControls();
 }
 function updateMusicVolumeLabels() {
   elements.musicVolumeValue.value = `${elements.musicVolume.value}%`;
@@ -380,6 +412,32 @@ async function selectBackground() {
     backgroundBusy = false;
     elements.selectedBackgroundEmpty.textContent = "画像を選択してください。";
     updateBackgroundControls();
+  }
+}
+async function uploadVrmModel(event) {
+  event.preventDefault();
+  if (!token || !selectedVrmFile || vrmBusy) return;
+  vrmBusy = true;
+  updateVrmControls();
+  const original = elements.uploadVrm.textContent;
+  elements.uploadVrm.textContent = "アップロード中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const body = new FormData();
+    body.append("model", selectedVrmFile, selectedVrmFile.name);
+    const response = await fetch(adminUrl("/api/admin/vrm-model"), { method: "POST", body });
+    if (!response.ok) throw new Error(await readError(response, "VRMモデルを置き換えられませんでした。"));
+    selectedVrmFile = undefined;
+    elements.vrmInput.value = "";
+    elements.selectedVrm.textContent = "なし";
+    setMessage(elements.displayStatus, elements.displayError, "VRMモデルを更新しました。接続中のメイン画面は現在の処理後に読み込み直します。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "VRMモデルを置き換えられませんでした。", true);
+  } finally {
+    vrmBusy = false;
+    elements.uploadVrm.textContent = original;
+    updateVrmControls();
   }
 }
 async function uploadBackground(event) {
@@ -684,6 +742,8 @@ elements.eventQrClose.addEventListener("click", () => elements.eventQrDialog.clo
 elements.eventQrDialog.addEventListener("click", (event) => { if (event.target === elements.eventQrDialog) elements.eventQrDialog.close(); });
 elements.eventQrDialog.addEventListener("close", releaseEventQrImage);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
+elements.vrmInput.addEventListener("change", selectVrmModel);
+elements.vrmForm.addEventListener("submit", uploadVrmModel);
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
 elements.deleteBackground.addEventListener("click", deleteBackground);
@@ -711,9 +771,9 @@ elements.aiForm.addEventListener("submit", (event) => { event.preventDefault(); 
 elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("tts", elements.ttsForm, elements.saveTts, elements.ttsStatus, elements.ttsError); });
 if (!token) {
   setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
-  setMessage(elements.displayStatus, elements.displayError, "背景画像を変更するには管理用トークンが必要です。", true);
+  setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadConfig();

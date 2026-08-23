@@ -35,10 +35,13 @@ use crate::{
 
 const MAX_TEXT_CHARS: usize = 2_000;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_VRM_MODEL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_TEXT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_FOOD_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 const MAX_BACKGROUND_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
+const MAX_VRM_MODEL_REQUEST_BYTES: usize = MAX_VRM_MODEL_BYTES + 128 * 1024;
 const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_BYTES + 128 * 1024;
+const VRM_MODEL_FILE_NAME: &str = "model.vrm";
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 
 pub fn router(state: AppState) -> Router {
@@ -76,6 +79,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/admin/tts-user-dict-word/{word_uuid}",
             axum::routing::put(update_tts_user_dict_word).delete(delete_tts_user_dict_word),
+        )
+        .route(
+            "/api/admin/vrm-model",
+            post(upload_vrm_model).layer(DefaultBodyLimit::max(MAX_VRM_MODEL_REQUEST_BYTES)),
         )
         .route(
             "/api/admin/background-image",
@@ -475,6 +482,80 @@ fn append_asset_version(url: &str, version: &str) -> String {
     format!("{url}{separator}v={version}{fragment}")
 }
 
+async fn upload_vrm_model(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    mut multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if state.config.current().character.vrm_url != "/assets/model.vrm" {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "character.vrm_urlを/assets/model.vrmに設定してください",
+        );
+    }
+
+    let mut model = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "VRMモデルを読み取れませんでした"),
+    } {
+        if field.name() != Some("model") || model.is_some() {
+            continue;
+        }
+        let is_vrm_file = field
+            .file_name()
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".vrm"));
+        if !is_vrm_file {
+            return admin_error(StatusCode::BAD_REQUEST, ".vrmファイルを選択してください");
+        }
+        let bytes = match field.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return admin_error(StatusCode::BAD_REQUEST, "VRMモデルを読み取れませんでした");
+            }
+        };
+        if bytes.len() > MAX_VRM_MODEL_BYTES {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "VRMモデルは100MiB以下にしてください",
+            );
+        }
+        if !has_valid_vrm_model(&bytes) {
+            return admin_error(StatusCode::BAD_REQUEST, "VRMモデルの形式が不正です");
+        }
+        model = Some(bytes);
+    }
+
+    let Some(model) = model else {
+        return admin_error(StatusCode::BAD_REQUEST, "VRMモデルがありません");
+    };
+    let _guard = state.vrm_model_lock.lock().await;
+    let path = state.assets_dir.join(VRM_MODEL_FILE_NAME);
+    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &model)).await {
+        Ok(Ok(())) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Ok(Err(error)) => {
+            tracing::error!(error = ?error, "VRMモデルを保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "VRMモデルを保存できませんでした",
+            )
+        }
+        Err(error) => {
+            tracing::error!(error = ?error, "VRMモデルの保存処理を実行できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "VRMモデルを保存できませんでした",
+            )
+        }
+    }
+}
+
 async fn upload_background_image(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
@@ -789,6 +870,61 @@ fn has_valid_webp_container(bytes: &[u8]) -> bool {
     20_usize
         .checked_add(padded_chunk_size)
         .is_some_and(|end| end <= bytes.len())
+}
+
+fn has_valid_vrm_model(bytes: &[u8]) -> bool {
+    if bytes.len() < 20 || !bytes.len().is_multiple_of(4) || &bytes[..4] != b"glTF" {
+        return false;
+    }
+    if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) != 2 {
+        return false;
+    }
+    let declared_length = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    if declared_length != bytes.len() {
+        return false;
+    }
+
+    let mut offset = 12_usize;
+    let mut first_chunk = true;
+    let mut has_vrm_extension = false;
+    while offset < bytes.len() {
+        let Some(header_end) = offset.checked_add(8) else {
+            return false;
+        };
+        if header_end > bytes.len() {
+            return false;
+        }
+        let chunk_length =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        if !chunk_length.is_multiple_of(4) {
+            return false;
+        }
+        let Some(chunk_end) = header_end.checked_add(chunk_length) else {
+            return false;
+        };
+        if chunk_end > bytes.len() {
+            return false;
+        }
+        if first_chunk {
+            if &bytes[offset + 4..header_end] != b"JSON" {
+                return false;
+            }
+            let Ok(root) =
+                serde_json::from_slice::<serde_json::Value>(&bytes[header_end..chunk_end])
+            else {
+                return false;
+            };
+            has_vrm_extension = root
+                .get("extensions")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|extensions| {
+                    extensions.contains_key("VRM") || extensions.contains_key("VRMC_vrm")
+                });
+            first_chunk = false;
+        }
+        offset = chunk_end;
+    }
+    !first_chunk && has_vrm_extension
 }
 
 fn write_file_atomically(path: &FilePath, bytes: &[u8]) -> anyhow::Result<()> {
@@ -1776,6 +1912,7 @@ mod tests {
                 food_images: Arc::new(RwLock::new(HashMap::new())),
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
                 assets_dir: Arc::new(PathBuf::from("target/test-assets")),
+                vrm_model_lock: Arc::new(Mutex::new(())),
                 background_image_lock: Arc::new(Mutex::new(())),
                 background_music_lock: Arc::new(Mutex::new(())),
                 search_filler_rotation: Arc::new(SearchFillerRotation::default()),
@@ -1805,6 +1942,34 @@ mod tests {
         body.extend_from_slice(image);
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
         body
+    }
+
+    fn multipart_vrm_body(boundary: &str, file_name: &str, model: &[u8]) -> Vec<u8> {
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(model);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    fn vrm_container(extension: &str) -> Vec<u8> {
+        let mut json =
+            format!(r#"{{"asset":{{"version":"2.0"}},"extensions":{{"{extension}":{{}}}}}}"#)
+                .into_bytes();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let total_length = 20 + json.len();
+        let mut model = Vec::with_capacity(total_length);
+        model.extend_from_slice(b"glTF");
+        model.extend_from_slice(&2_u32.to_le_bytes());
+        model.extend_from_slice(&u32::try_from(total_length).unwrap().to_le_bytes());
+        model.extend_from_slice(&u32::try_from(json.len()).unwrap().to_le_bytes());
+        model.extend_from_slice(b"JSON");
+        model.extend_from_slice(&json);
+        model
     }
 
     fn multipart_audio_body(
@@ -2917,6 +3082,91 @@ mod tests {
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
+    }
+
+    #[test]
+    fn vrm_model_validation_accepts_vrm_zero_and_one_only() {
+        assert!(has_valid_vrm_model(&vrm_container("VRM")));
+        assert!(has_valid_vrm_model(&vrm_container("VRMC_vrm")));
+        assert!(!has_valid_vrm_model(&vrm_container("OTHER")));
+        assert!(!has_valid_vrm_model(b"not-a-vrm"));
+    }
+
+    #[tokio::test]
+    async fn vrm_model_upload_requires_token_validates_and_atomically_replaces_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join(VRM_MODEL_FILE_NAME);
+        std::fs::write(&path, b"current-model").unwrap();
+        let valid_model = vrm_container("VRMC_vrm");
+        let boundary = "vrm-model-boundary";
+        let app = router(state.clone());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/vrm-model")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_vrm_body(
+                        boundary,
+                        "model.vrm",
+                        &valid_model,
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(std::fs::read(&path).unwrap(), b"current-model");
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/vrm-model?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_vrm_body(
+                        boundary,
+                        "model.vrm",
+                        b"invalid-model",
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(&path).unwrap(), b"current-model");
+
+        let mut events = state.events.subscribe();
+        let updated = app
+            .oneshot(
+                Request::post("/api/admin/vrm-model?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_vrm_body(
+                        boundary,
+                        "model.VRM",
+                        &valid_model,
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::NO_CONTENT);
+        assert_eq!(updated.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(std::fs::read(&path).unwrap(), valid_model);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]

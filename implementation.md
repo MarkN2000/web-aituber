@@ -79,7 +79,7 @@ assets/
 
 - サーバーは`0.0.0.0:3000`で待ち受け、同一ローカルネットワークとCloudflare Tunnelの両方から接続できるようにする。
 - WAVからWebM/Opusへの変換にはFFmpegを使用する。
-- VRMモデルは `assets/model.vrm` に配置する。
+- VRMモデルは`assets/model.vrm`に配置する。管理画面から置き換える場合は、サーバーでGLB構造とVRM拡張を検証してから原子的に置換し、表示設定の変更として接続中のメイン画面へ通知する。
 - VRMAは `assets/motions/` に配置する。
 - メイン画面は、表示開始ボタンが押された後に音声再生とAudioContextを開始する。
 - メイン画面はPage Visibility APIで非表示を検知し、BGMとTTS音声を再生位置と待機列を保持したまま一時停止する。再表示時はAudioContextと各音声を再開する。

@@ -163,32 +163,46 @@
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
-      <p class="admin-help">背景画像やBGMを変更した後は、メイン画面を再読み込みしてください。</p>
-      <div class="background-previews">
-        <figure class="background-preview">
-          <figcaption>現在の背景画像</figcaption>
-          <div class="background-preview-frame">
-            <img id="current-background-preview" alt="現在設定されている背景画像" hidden>
-            <p id="current-background-empty">背景画像は設定されていません。</p>
+      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデルは現在の処理が終わってから切り替わります。</p>
+      <section class="display-setting-section" aria-labelledby="vrm-model-title">
+        <h3 id="vrm-model-title">VRMモデル</h3>
+        <form id="vrm-model-form" novalidate>
+          <label for="vrm-model">置き換えるモデル</label>
+          <input id="vrm-model" type="file" accept=".vrm" aria-describedby="vrm-model-note">
+          <p id="vrm-model-note" class="field-note admin-field-note">VRM（100MiB以下）。選択中: <span id="selected-vrm-model">なし</span></p>
+          <div class="admin-form-actions">
+            <button id="upload-vrm-model" type="submit" disabled>VRMモデルを置き換える</button>
           </div>
-        </figure>
-        <figure class="background-preview">
-          <figcaption>選択した画像</figcaption>
-          <div class="background-preview-frame">
-            <img id="selected-background-preview" alt="アップロードする背景画像のプレビュー" hidden>
-            <p id="selected-background-empty">画像を選択してください。</p>
-          </div>
-        </figure>
-      </div>
-      <form id="background-form" novalidate>
-        <label for="background-image">背景画像</label>
-        <input id="background-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="background-image-note">
-        <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-        <div class="admin-form-actions">
-          <button id="upload-background" type="submit" disabled>背景画像をアップロード</button>
-          <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
+        </form>
+      </section>
+      <section class="display-setting-section" aria-labelledby="background-image-title">
+        <h3 id="background-image-title">背景画像</h3>
+        <div class="background-previews">
+          <figure class="background-preview">
+            <figcaption>現在の背景画像</figcaption>
+            <div class="background-preview-frame">
+              <img id="current-background-preview" alt="現在設定されている背景画像" hidden>
+              <p id="current-background-empty">背景画像は設定されていません。</p>
+            </div>
+          </figure>
+          <figure class="background-preview">
+            <figcaption>選択した画像</figcaption>
+            <div class="background-preview-frame">
+              <img id="selected-background-preview" alt="アップロードする背景画像のプレビュー" hidden>
+              <p id="selected-background-empty">画像を選択してください。</p>
+            </div>
+          </figure>
         </div>
-      </form>
+        <form id="background-form" novalidate>
+          <label for="background-image">背景画像</label>
+          <input id="background-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="background-image-note">
+          <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
+          <div class="admin-form-actions">
+            <button id="upload-background" type="submit" disabled>背景画像をアップロード</button>
+            <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
+          </div>
+        </form>
+      </section>
       <p id="display-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="display-config-error" class="status" role="alert"></p>
       <section class="display-setting-section" aria-labelledby="background-music-title">
@@ -236,6 +250,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=27"></script>
+  <script type="module" src="/static/js/admin.js?v=28"></script>
 </body>
 </html>
