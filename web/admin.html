@@ -72,7 +72,10 @@
         <label for="search-fillers">検索中フィラー</label>
         <textarea id="search-fillers" required rows="5" aria-describedby="search-fillers-note"></textarea>
         <p id="search-fillers-note" class="field-note admin-field-note">1行に1文ずつ入力してください。</p>
-        <div class="admin-form-actions"><button id="save-ai-config" type="submit">AI設定を保存</button></div>
+        <div class="admin-form-actions">
+          <button id="save-ai-config" type="submit">AI設定を保存</button>
+          <button id="clear-conversation-history" class="secondary-button" type="button">会話履歴を削除</button>
+        </div>
       </form>
       <p id="ai-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="ai-config-error" class="status" role="alert"></p>
@@ -233,6 +236,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=24"></script>
+  <script type="module" src="/static/js/admin.js?v=25"></script>
 </body>
 </html>

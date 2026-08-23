@@ -47,6 +47,10 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn(add_asset_cache_headers));
     let admin_api = Router::new()
         .route("/api/admin/skip", post(skip))
+        .route(
+            "/api/admin/conversation-history",
+            axum::routing::delete(clear_conversation_history),
+        )
         .route("/api/admin/reload-config", post(reload_config))
         .route(
             "/api/admin/event-access",
@@ -905,6 +909,21 @@ async fn skip(
     {
         active.cancel.cancel();
     }
+    admin_no_store(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn clear_conversation_history(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    state.history.lock().await.clear();
+    let _ = state
+        .events
+        .send(ServerEvent::History { turns: Vec::new() });
     admin_no_store(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -3613,6 +3632,52 @@ mod tests {
         );
         std::fs::remove_file(config_path).unwrap();
         std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn conversation_history_delete_requires_token_and_broadcasts_empty_history() {
+        let state = test_state();
+        state
+            .history
+            .lock()
+            .await
+            .record(crate::protocol::ConversationTurn {
+                turn_id: "turn-1".to_owned(),
+                question: "質問".to_owned(),
+                answer: "回答".to_owned(),
+                sources: Vec::new(),
+            });
+        let history = state.history.clone();
+        let mut events = state.events.subscribe();
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/admin/conversation-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(history.lock().await.snapshot().len(), 1);
+
+        let authorized = app
+            .oneshot(
+                Request::delete("/api/admin/conversation-history?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), StatusCode::NO_CONTENT);
+        assert!(history.lock().await.snapshot().is_empty());
+        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event, ServerEvent::History { turns } if turns.is_empty()));
     }
 
     #[tokio::test]

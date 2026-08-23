@@ -18,6 +18,7 @@ const elements = {
   eventQrImage: document.querySelector("#event-qr-image"), eventQrUrl: document.querySelector("#event-qr-url"), eventQrClose: document.querySelector("#event-qr-close"),
   aiForm: document.querySelector("#ai-config-form"), ttsForm: document.querySelector("#tts-config-form"),
   aiStatus: document.querySelector("#ai-config-status"), aiError: document.querySelector("#ai-config-error"),
+  clearHistory: document.querySelector("#clear-conversation-history"),
   ttsStatus: document.querySelector("#tts-config-status"), ttsError: document.querySelector("#tts-config-error"),
   saveAi: document.querySelector("#save-ai-config"), saveTts: document.querySelector("#save-tts-config"), preview: document.querySelector("#preview-tts"),
   loadSpeakers: document.querySelector("#load-tts-speakers"), speakerList: document.querySelector("#tts-speaker-list"), speakersStatus: document.querySelector("#tts-speakers-status"),
@@ -627,6 +628,24 @@ async function skip() {
   try { const response = await fetch(adminUrl("/api/admin/skip"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ turn_id: currentTurn.turn_id }) }); if (!response.ok) throw new Error(await readError(response, "中断操作に失敗しました。")); }
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "中断操作に失敗しました。", true); elements.skip.disabled = false; }
 }
+async function clearConversationHistory() {
+  if (!token || !window.confirm("共有会話履歴をすべて削除しますか？この操作は元に戻せません。")) return;
+  elements.clearHistory.disabled = true;
+  const original = elements.clearHistory.textContent;
+  elements.clearHistory.textContent = "削除中…";
+  setMessage(elements.aiStatus, elements.aiError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/conversation-history"), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, "会話履歴を削除できませんでした。"));
+    setMessage(elements.aiStatus, elements.aiError, "会話履歴を削除しました。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.aiStatus, elements.aiError, error.message || "会話履歴を削除できませんでした。", true);
+  } finally {
+    elements.clearHistory.disabled = false;
+    elements.clearHistory.textContent = original;
+  }
+}
 async function reload() {
   if (!token) return;
   elements.reload.disabled = true; const original = elements.reload.textContent; elements.reload.textContent = "再読み込み中…"; setMessage(elements.operationStatus, elements.operationError);
@@ -654,6 +673,7 @@ for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements])
   });
 }
 elements.skip.addEventListener("click", skip); elements.reload.addEventListener("click", reload); elements.preview.addEventListener("click", previewTts);
+elements.clearHistory.addEventListener("click", clearConversationHistory);
 elements.eventForm.addEventListener("submit", saveEventAccess);
 elements.publicBaseUrl.addEventListener("input", renderEventUrls);
 elements.eventIdentifier.addEventListener("input", () => { elements.eventIdentifier.value = elements.eventIdentifier.value.toLowerCase(); renderEventUrls(); });

@@ -73,6 +73,10 @@ impl ConversationHistory {
         }
         self.turns.push_back(turn);
     }
+
+    pub fn clear(&mut self) {
+        self.turns.clear();
+    }
 }
 
 #[cfg(test)]
