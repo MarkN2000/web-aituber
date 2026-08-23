@@ -60,6 +60,7 @@ const context = vm.createContext({
   isEmotion: (value) => ["neutral", "happy", "sad", "angry", "surprised"].includes(value),
   motionFileName: (url) => new URL(url, "http://localhost/").pathname.split("/").pop(),
   performance: { now: () => currentTime },
+  window: { devicePixelRatio: 1, innerWidth: 1280, innerHeight: 720 },
   console: { ...console, error() {} },
 });
 vm.runInContext(`${source}\nthis.VrmViewer = VrmViewer;`, context);
@@ -124,6 +125,72 @@ test("明るさ倍率を主光源と環境光の両方へ適用する", () => {
 
   assert.equal(lights[0].intensity, 2.25);
   assert.ok(Math.abs(lights[1].intensity - 1.2) < 1e-10);
+});
+
+test("Canvasはリサイズ時の実DPRで描画する", () => {
+  const viewer = Object.create(context.VrmViewer.prototype);
+  let pixelRatio;
+  viewer.canvas = { clientWidth: 800, clientHeight: 600 };
+  viewer.camera = { updateProjectionMatrix() {} };
+  viewer.renderer = {
+    setPixelRatio: (value) => { pixelRatio = value; },
+    setSize() {},
+  };
+
+  context.window.devicePixelRatio = 1.75;
+  viewer.onResize();
+
+  assert.equal(pixelRatio, 1.75);
+  assert.equal(viewer.camera.aspect, 4 / 3);
+});
+
+test("VRM描画を最大30fpsに制限する", () => {
+  const viewer = Object.create(context.VrmViewer.prototype);
+  let renders = 0;
+  viewer.lastFrameTime = undefined;
+  viewer.clock = { getDelta: () => 1 / 30 };
+  viewer.mixer = { update() {} };
+  viewer.updateBlink = () => {};
+  viewer.updateLipSync = () => {};
+  viewer.updateFoodAction = () => {};
+  viewer.vrm = { update() {} };
+  viewer.renderer = { render: () => { renders += 1; } };
+
+  for (const timestamp of [0, 16, 33, 49, 66, 82, 99]) viewer.frame(timestamp);
+
+  assert.equal(renders, 4);
+});
+
+test("表示状態に応じて描画ループを開始・停止する", () => {
+  const viewer = Object.create(context.VrmViewer.prototype);
+  const loops = [];
+  let clockResets = 0;
+  viewer.renderingEnabled = false;
+  viewer.lastFrameTime = 100;
+  viewer.frame = () => {};
+  viewer.clock = { getDelta: () => { clockResets += 1; } };
+  viewer.renderer = { setAnimationLoop: (callback) => loops.push(callback) };
+
+  viewer.setRenderingEnabled(true);
+  viewer.setRenderingEnabled(true);
+  viewer.setRenderingEnabled(false);
+
+  assert.deepEqual(loops, [viewer.frame, null]);
+  assert.equal(clockResets, 2);
+  assert.equal(viewer.lastFrameTime, undefined);
+});
+
+test("音声停止中は口の表情を毎フレーム更新しない", () => {
+  const viewer = Object.create(context.VrmViewer.prototype);
+  const applied = [];
+  viewer.applyMouthWeights = (weights) => applied.push(weights);
+  viewer.lipSync = { update: () => undefined };
+
+  viewer.updateLipSync(1 / 30);
+  viewer.lipSync.update = () => ({ aa: 0.5 });
+  viewer.updateLipSync(1 / 30);
+
+  assert.deepEqual(applied, [{ aa: 0.5 }]);
 });
 
 function debugState(overrides = {}) {

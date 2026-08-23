@@ -52,7 +52,7 @@ export class LipSyncAnalyzer {
   }
 
   update(delta) {
-    if (!this.analyser || !this.timeData || !this.frequencyData) return this.weights;
+    if (!this.analyser || !this.timeData || !this.frequencyData) return undefined;
 
     this.analyser.getFloatTimeDomainData(this.timeData);
     const rms = calculateRms(this.timeData);

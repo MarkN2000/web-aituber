@@ -119,3 +119,7 @@ test("通常モードではデバッグ状態を描画しない", () => {
 
   assert.deepEqual(rendered, []);
 });
+
+test("画面の表示状態をVRM描画ループへ反映する", () => {
+  assert.match(source, /viewer\?\.setRenderingEnabled\(visible\)/);
+});
