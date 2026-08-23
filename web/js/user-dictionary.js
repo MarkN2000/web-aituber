@@ -73,7 +73,6 @@ export class UserDictionaryEditor {
       accentTrack: document.querySelector("#tts-user-dictionary-accent-track"),
       accentDiagram: document.querySelector("#tts-user-dictionary-accent-diagram"),
       accentLabels: document.querySelector("#tts-user-dictionary-accent-labels"),
-      accentSummary: document.querySelector("#tts-user-dictionary-accent-summary"),
       wordType: document.querySelector("#tts-user-dictionary-word-type"),
       priority: document.querySelector("#tts-user-dictionary-priority"),
       priorityValue: document.querySelector("#tts-user-dictionary-priority-value"),
@@ -179,12 +178,6 @@ export class UserDictionaryEditor {
     this.elements.accentLabels.append(flatLabel);
     this.elements.accentTrack.style.width = `${trackWidth}px`;
     this.elements.accentDiagram.append(svg);
-    const selectionText = accentType === 0
-      ? "選択中: 平板"
-      : `選択中: ${accentType}（「${moras[accentType - 1]}」の後で下がる）`;
-    this.elements.accentSlider.setAttribute("aria-valuetext", selectionText.replace("選択中: ", ""));
-    this.elements.accentSummary.value = selectionText;
-    this.elements.accentSummary.textContent = this.elements.accentSummary.value;
   }
 
   updateControls() {

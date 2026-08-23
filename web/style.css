@@ -709,17 +709,6 @@ textarea::placeholder {
   font-weight: 700;
 }
 
-#tts-user-dictionary-accent-summary {
-  display: block;
-  margin-top: 10px;
-  color: #505050;
-  font-size: .9rem;
-}
-
-.tts-user-dictionary-accent .admin-field-note {
-  margin-bottom: 0;
-}
-
 .tts-user-dictionary-list {
   display: grid;
   gap: 10px;
