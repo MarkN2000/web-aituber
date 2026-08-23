@@ -367,8 +367,8 @@ pub fn validate_http_url(name: &str, value: &str) -> Result<()> {
 }
 
 pub fn validate_event_identifier(value: &str) -> Result<()> {
-    if !(8..=64).contains(&value.len()) {
-        bail!("設定項目 event_identifier は8文字から64文字にしてください");
+    if !(1..=64).contains(&value.len()) {
+        bail!("設定項目 event_identifier は1文字から64文字にしてください");
     }
     if !value.bytes().all(|character| {
         character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'-'
@@ -410,11 +410,13 @@ mod tests {
     #[test]
     fn event_identifier_accepts_public_url_safe_value() {
         assert!(validate_event_identifier("summer-2026-8k2m").is_ok());
+        assert!(validate_event_identifier("a").is_ok());
     }
 
     #[test]
-    fn event_identifier_rejects_short_uppercase_and_edge_hyphen() {
-        assert!(validate_event_identifier("short").is_err());
+    fn event_identifier_rejects_empty_uppercase_and_edge_hyphen() {
+        assert!(validate_event_identifier("").is_err());
+        assert!(validate_event_identifier(&"a".repeat(65)).is_err());
         assert!(validate_event_identifier("Event-2026").is_err());
         assert!(validate_event_identifier("-event-2026").is_err());
         assert!(validate_event_identifier("event-2026-").is_err());

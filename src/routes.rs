@@ -2070,7 +2070,7 @@ mod tests {
                 Request::put("/api/admin/event-access?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
-                        r#"{"public_base_url":"https://event.example.com","event_identifier":"next-event-7q9m2k4p"}"#,
+                        r#"{"public_base_url":"https://event.example.com","event_identifier":"x"}"#,
                     ))
                     .unwrap(),
             )
@@ -2083,7 +2083,7 @@ mod tests {
         ));
         assert_eq!(
             AppConfig::load_from_path(&path).unwrap().event_identifier,
-            "next-event-7q9m2k4p"
+            "x"
         );
         assert_eq!(
             AppConfig::load_from_path(&path).unwrap().public_base_url,
@@ -2101,11 +2101,7 @@ mod tests {
             .unwrap();
         assert_eq!(old.status(), StatusCode::NOT_FOUND);
         let current = app
-            .oneshot(
-                Request::get("/event/next-event-7q9m2k4p")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/event/x").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(current.status(), StatusCode::OK);
