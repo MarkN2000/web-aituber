@@ -157,6 +157,25 @@ textarea::placeholder {
   height: 100%;
 }
 
+#debug-overlay {
+  position: fixed;
+  z-index: 4;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 8px;
+  background: rgb(0 0 0 / 68%);
+  color: #fff;
+  font: 13px/1.55 ui-monospace, "Cascadia Mono", "Noto Sans Mono", monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+
 #panel {
   width: 100%;
   padding: 16px 20px;

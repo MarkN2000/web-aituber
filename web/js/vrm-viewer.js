@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
+import { motionFileName } from './debug.js?v=1';
 import { isEmotion } from './motion.js';
 import { LipSyncAnalyzer } from './lip-sync.js?v=3';
 
 export class VrmViewer {
-  constructor(canvas, report, { showFoodPropGizmo = false } = {}) {
+  constructor(canvas, report, { showFoodPropGizmo = false, onDebugStateChange } = {}) {
     this.canvas = canvas;
     this.report = report;
     this.clock = new THREE.Clock();
@@ -21,12 +22,15 @@ export class VrmViewer {
     this.idleClips = [];
     this.emotionClips = new Map();
     this.currentAction = undefined;
+    this.currentMotion = undefined;
     this.currentExpression = 'neutral';
     this.lipSync = new LipSyncAnalyzer();
     this.blinkTimer = 2 + Math.random() * 3;
     this.blinkTime = 0;
     this.foodActionId = 0;
     this.showFoodPropGizmo = showFoodPropGizmo;
+    this.onDebugStateChange = onDebugStateChange;
+    this.lastDebugStateKey = undefined;
     this.frame = this.frame.bind(this);
     this.onResize = this.onResize.bind(this);
   }
@@ -159,23 +163,28 @@ export class VrmViewer {
     if (hips) {
       clip.tracks = clip.tracks.filter((track) => track.name !== `${hips.name}.position`);
     }
-    return clip;
+    return { clip, fileName: motionFileName(url) };
   }
 
   resumeIdle() {
-    if (!this.idleClips.length || !this.mixer) return;
-    const next = this.idleClips[Math.floor(Math.random() * this.idleClips.length)];
-    this.playClip(next, true);
+    if (!this.idleClips.length || !this.mixer) {
+      this.currentAction = undefined;
+      this.currentMotion = undefined;
+      this.reportDebugState();
+      return;
+    }
+    const motion = this.idleClips[Math.floor(Math.random() * this.idleClips.length)];
+    this.playClip(motion, true, 'idle');
   }
 
   playEmotionMotion(emotion) {
-    const clip = this.emotionClips.get(emotion);
-    if (!clip || !this.mixer) return;
-    this.playClip(clip, false);
+    const motion = this.emotionClips.get(emotion);
+    if (!motion || !this.mixer) return;
+    this.playClip(motion, false, 'emotion');
   }
 
-  playClip(clip, loop) {
-    const next = this.mixer.clipAction(clip);
+  playClip(motion, loop, kind) {
+    const next = this.mixer.clipAction(motion.clip);
     const previous = this.currentAction;
     if (previous === next && previous.isRunning()) return;
     previous?.fadeOut(0.2);
@@ -184,21 +193,37 @@ export class VrmViewer {
     next.clampWhenFinished = true;
     next.setEffectiveWeight(1).fadeIn(0.2).play();
     this.currentAction = next;
+    this.currentMotion = { fileName: motion.fileName, kind };
+    this.reportDebugState();
   }
 
   onAnimationFinished(event) {
     if (event.action !== this.currentAction) return;
     event.action.fadeOut(0.2);
-    this.currentAction = event.action;
+    this.currentAction = undefined;
+    this.currentMotion = undefined;
     this.resumeIdle();
   }
 
   setEmotion(emotion) {
     const value = isEmotion(emotion) ? emotion : 'neutral';
-    if (!this.vrm?.expressionManager) return;
-    this.setExpressionValue(this.currentExpression, 0);
+    if (this.vrm?.expressionManager) this.setExpressionValue(this.currentExpression, 0);
     this.currentExpression = value;
-    this.setExpressionValue(value, value === 'neutral' ? 0 : 1);
+    if (this.vrm?.expressionManager) this.setExpressionValue(value, value === 'neutral' ? 0 : 1);
+    this.reportDebugState();
+  }
+
+  reportDebugState() {
+    if (!this.onDebugStateChange) return;
+    const state = {
+      motionFileName: this.currentMotion?.fileName,
+      motionKind: this.currentMotion?.kind,
+      expression: this.currentExpression,
+    };
+    const stateKey = JSON.stringify(state);
+    if (stateKey === this.lastDebugStateKey) return;
+    this.lastDebugStateKey = stateKey;
+    this.onDebugStateChange(state);
   }
 
   setExpressionValue(name, value) {

@@ -1,11 +1,12 @@
 import { AudioQueue } from "./audio-queue.js?v=4";
 import { BackgroundMusic } from "./background-music.js?v=6";
 import { ConversationHistory } from "./history.js?v=9";
+import { isDebugEnabled, renderDebugState } from "./debug.js?v=1";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=8";
+import { VrmViewer } from "./vrm-viewer.js?v=9";
 
-const foodPropDebug = new URLSearchParams(window.location.search).get("debug") === "food-prop";
+const debugEnabled = isDebugEnabled(window.location.search);
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),
@@ -14,6 +15,7 @@ const elements = {
   stage: document.querySelector("#stage"),
   canvas: document.querySelector("#vrm-canvas"),
   viewerMessage: document.querySelector("#viewer-message"),
+  debugOverlay: document.querySelector("#debug-overlay"),
   panel: document.querySelector("#panel"),
   loader: document.querySelector("#answer-loader"),
   answer: document.querySelector("#answer"),
@@ -315,7 +317,12 @@ async function startMain() {
       config.background_music_duck_ratio,
     );
 
-    viewer = new VrmViewer(elements.canvas, showViewerMessage, { showFoodPropGizmo: foodPropDebug });
+    viewer = new VrmViewer(elements.canvas, showViewerMessage, {
+      showFoodPropGizmo: debugEnabled,
+      onDebugStateChange: debugEnabled
+        ? (state) => renderDebugState(elements.debugOverlay, state)
+        : undefined,
+    });
     await viewer.load(config);
     started = true;
     elements.startScreen.hidden = true;
@@ -330,6 +337,8 @@ async function startMain() {
     backgroundMusic = undefined;
     viewer?.dispose();
     viewer = undefined;
+    elements.debugOverlay.hidden = true;
+    elements.debugOverlay.textContent = "";
   }
 }
 
