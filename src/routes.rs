@@ -5,21 +5,26 @@ use axum::{
         DefaultBodyLimit, Multipart, Path, Query, State, WebSocketUpgrade, multipart::Field,
         ws::Message,
     },
-    http::{StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::Write, path::Path as FilePath, time::Duration};
+use std::{
+    fs,
+    io::Write,
+    path::{Component, Path as FilePath, PathBuf},
+    time::{Duration, UNIX_EPOCH},
+};
 use tokio::io::AsyncWriteExt;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
     background_music,
-    config::{TtsConfig, validate_http_url},
+    config::{CharacterConfig, TtsConfig, validate_http_url},
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
     tts,
@@ -34,6 +39,9 @@ const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_B
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 
 pub fn router(state: AppState) -> Router {
+    let asset_routes = Router::new()
+        .nest_service("/assets", ServeDir::new(state.assets_dir.as_ref()))
+        .layer(middleware::from_fn(add_asset_cache_headers));
     let admin_api = Router::new()
         .route("/api/admin/skip", post(skip))
         .route("/api/admin/reload-config", post(reload_config))
@@ -92,7 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/food-images/{id}", get(food_image))
         .nest_service("/static", ServeDir::new("web"))
-        .nest_service("/assets", ServeDir::new(state.assets_dir.as_ref()))
+        .merge(asset_routes)
         .nest_service("/audio", ServeDir::new(state.audio_dir.as_ref()))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -257,36 +265,131 @@ fn queue_error(error: tokio::sync::mpsc::error::TrySendError<Submission>) -> Api
 async fn display_config(State(state): State<AppState>) -> Response {
     let config = state.config.current();
     let background_image_path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
-    let background_image_url = match tokio::fs::try_exists(&background_image_path).await {
-        Ok(true) => Some(format!(
-            "/assets/{BACKGROUND_IMAGE_FILE_NAME}?v={}",
-            Uuid::new_v4()
-        )),
-        Ok(false) => None,
-        Err(error) => {
-            tracing::warn!(path = %background_image_path.display(), error = ?error, "背景画像の存在を確認できませんでした");
-            None
-        }
-    };
+    let background_image_url = existing_versioned_asset_url(
+        &background_image_path,
+        &format!("/assets/{BACKGROUND_IMAGE_FILE_NAME}"),
+        "背景画像",
+    )
+    .await;
     let background_music_path = state.assets_dir.join(background_music::FILE_NAME);
-    let background_music_url = match tokio::fs::try_exists(&background_music_path).await {
-        Ok(true) => Some(format!(
-            "/assets/{}?v={}",
-            background_music::FILE_NAME,
-            Uuid::new_v4()
-        )),
-        Ok(false) => None,
-        Err(error) => {
-            tracing::warn!(path = %background_music_path.display(), error = ?error, "BGMの存在を確認できませんでした");
-            None
-        }
-    };
+    let background_music_url = existing_versioned_asset_url(
+        &background_music_path,
+        &format!("/assets/{}", background_music::FILE_NAME),
+        "BGM",
+    )
+    .await;
     let response = DisplayConfigDto {
-        character: config.character.clone(),
+        character: version_character_asset_urls(
+            config.character.clone(),
+            state.assets_dir.as_ref(),
+        )
+        .await,
         background_image_url,
         background_music_url,
     };
     no_store(Json(response).into_response())
+}
+
+async fn add_asset_cache_headers(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    let is_versioned = request.uri().query().is_some_and(|query| {
+        query.split('&').any(|parameter| {
+            parameter
+                .strip_prefix("v=")
+                .is_some_and(|value| !value.is_empty())
+        })
+    });
+    let mut response = next.run(request).await;
+    let can_cache_immutably =
+        response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if is_versioned && can_cache_immutably {
+            "public, max-age=31536000, immutable"
+        } else {
+            "public, max-age=0, must-revalidate"
+        }),
+    );
+    response
+}
+
+async fn version_character_asset_urls(
+    mut character: CharacterConfig,
+    assets_dir: &FilePath,
+) -> CharacterConfig {
+    character.vrm_url = version_local_asset_url(assets_dir, &character.vrm_url).await;
+    for url in &mut character.idle_motions {
+        *url = version_local_asset_url(assets_dir, url).await;
+    }
+    for url in character.emotion_motions.values_mut() {
+        *url = version_local_asset_url(assets_dir, url).await;
+    }
+    character
+}
+
+async fn version_local_asset_url(assets_dir: &FilePath, url: &str) -> String {
+    let Some(path) = local_asset_path(assets_dir, url) else {
+        return url.to_owned();
+    };
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => asset_version(&metadata)
+            .map(|version| append_asset_version(url, &version))
+            .unwrap_or_else(|| url.to_owned()),
+        Err(_) => url.to_owned(),
+    }
+}
+
+async fn existing_versioned_asset_url(
+    path: &FilePath,
+    url: &str,
+    asset_name: &str,
+) -> Option<String> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Some(
+            asset_version(&metadata)
+                .map(|version| append_asset_version(url, &version))
+                .unwrap_or_else(|| url.to_owned()),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = ?error, asset_name, "表示アセットを確認できませんでした");
+            None
+        }
+    }
+}
+
+fn local_asset_path(assets_dir: &FilePath, url: &str) -> Option<PathBuf> {
+    let path = url.split(['?', '#']).next()?;
+    let relative = path.strip_prefix("/assets/")?;
+    let relative = FilePath::new(relative);
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(assets_dir.join(relative))
+}
+
+fn asset_version(metadata: &fs::Metadata) -> Option<String> {
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())?
+        .as_nanos();
+    Some(format!("{:x}-{modified:x}", metadata.len()))
+}
+
+fn append_asset_version(url: &str, version: &str) -> String {
+    let (url, fragment) = url
+        .split_once('#')
+        .map_or((url, None), |(url, fragment)| (url, Some(fragment)));
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let fragment = fragment.map_or_else(String::new, |fragment| format!("#{fragment}"));
+    format!("{url}{separator}v={version}{fragment}")
 }
 
 async fn upload_background_image(
@@ -2497,7 +2600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn display_config_returns_fresh_background_url_only_when_image_exists() {
+    async fn display_config_returns_stable_background_version_until_image_changes() {
         let (state, assets_dir) = state_with_temporary_assets();
         let app = router(state);
 
@@ -2536,7 +2639,140 @@ mod tests {
             assert!(url.starts_with("/assets/background.webp?v="));
             urls.push(url);
         }
-        assert_ne!(urls[0], urls[1]);
+        assert_eq!(urls[0], urls[1]);
+
+        std::fs::write(
+            assets_dir.join(BACKGROUND_IMAGE_FILE_NAME),
+            b"updated-background",
+        )
+        .unwrap();
+        let changed = app
+            .oneshot(
+                Request::get("/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(changed.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_ne!(json["background_image_url"], urls[0]);
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn display_config_versions_character_assets_and_sets_cache_headers() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        std::fs::create_dir_all(assets_dir.join("motions")).unwrap();
+        std::fs::write(assets_dir.join("model.vrm"), b"model").unwrap();
+        std::fs::write(assets_dir.join("motions/VRMA_01.vrma"), b"motion").unwrap();
+        let app = router(state);
+
+        let load_config = || async {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/api/display-config")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+        };
+        let first = load_config().await;
+        let second = load_config().await;
+        let vrm_url = first["vrm_url"].as_str().unwrap();
+        let motion_url = first["idle_motions"][0].as_str().unwrap();
+        assert!(vrm_url.starts_with("/assets/model.vrm?v="));
+        assert!(motion_url.starts_with("/assets/motions/VRMA_01.vrma?v="));
+        assert_eq!(first["vrm_url"], second["vrm_url"]);
+        assert_eq!(first["idle_motions"][0], second["idle_motions"][0]);
+
+        let versioned = app
+            .clone()
+            .oneshot(Request::get(vrm_url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            versioned.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        let unversioned = app
+            .clone()
+            .oneshot(
+                Request::get("/assets/model.vrm")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            unversioned.headers()[header::CACHE_CONTROL],
+            "public, max-age=0, must-revalidate"
+        );
+        let range = app
+            .clone()
+            .oneshot(
+                Request::get(vrm_url)
+                    .header(header::RANGE, "bytes=0-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(range.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            range.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        for response in [
+            app.clone()
+                .oneshot(
+                    Request::get("/assets/missing.vrm?v=missing")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+            app.clone()
+                .oneshot(
+                    Request::get(vrm_url)
+                        .header(header::RANGE, "bytes=999-1000")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        ] {
+            assert!(matches!(
+                response.status(),
+                StatusCode::NOT_FOUND | StatusCode::RANGE_NOT_SATISFIABLE
+            ));
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=0, must-revalidate"
+            );
+        }
+
+        std::fs::write(assets_dir.join("model.vrm"), b"updated-model").unwrap();
+        let changed = load_config().await;
+        assert_ne!(first["vrm_url"], changed["vrm_url"]);
+        assert_eq!(
+            version_local_asset_url(&assets_dir, "https://example.com/model.vrm").await,
+            "https://example.com/model.vrm"
+        );
+        assert_eq!(
+            version_local_asset_url(&assets_dir, "/static/model.vrm").await,
+            "/static/model.vrm"
+        );
+        assert!(local_asset_path(&assets_dir, "/assets/../config.json").is_none());
+        assert_eq!(
+            append_asset_version("/assets/model.vrm?quality=high#preview", "version"),
+            "/assets/model.vrm?quality=high&v=version#preview"
+        );
 
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
@@ -2751,7 +2987,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn display_config_returns_music_volume_and_fresh_url() {
+    async fn display_config_returns_music_volume_and_stable_version() {
         let (state, assets_dir) = state_with_temporary_assets();
         let app = router(state);
 
@@ -2788,7 +3024,24 @@ mod tests {
             assert!(url.starts_with("/assets/background-music.webm?v="));
             urls.push(url);
         }
-        assert_ne!(urls[0], urls[1]);
+        assert_eq!(urls[0], urls[1]);
+
+        std::fs::write(
+            assets_dir.join(background_music::FILE_NAME),
+            b"updated-music",
+        )
+        .unwrap();
+        let changed = app
+            .oneshot(
+                Request::get("/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(changed.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_ne!(json["background_music_url"], urls[0]);
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
