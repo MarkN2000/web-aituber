@@ -21,6 +21,14 @@ const submissionSource = drawSource.slice(
   drawSource.indexOf("function createFilledCanvas"),
   drawSource.indexOf("function canvasBlob"),
 );
+const colorConversionSource = drawSource.slice(
+  drawSource.indexOf("function clamp01"),
+  drawSource.indexOf("function drawPickerHandle"),
+);
+const pickerRegionSource = drawSource.slice(
+  drawSource.indexOf("function pickerRegionAt"),
+  drawSource.indexOf("function updateColorPickerFromPoint"),
+);
 const context = vm.createContext({});
 vm.runInContext(
   `const ALPHA_THRESHOLD = 128; const GAP_CLOSE_RADIUS = 2; ${algorithmSource}; this.fill = fillEnclosedAreas;`,
@@ -33,6 +41,16 @@ vm.runInContext(
 );
 const undoHistoryContext = vm.createContext({});
 vm.runInContext(`${undoHistorySource}; this.add = addUndoState;`, undoHistoryContext);
+const colorContext = vm.createContext({});
+vm.runInContext(
+  `${colorConversionSource}; this.hsvToRgb = hsvToRgb; this.rgbToHsv = rgbToHsv; this.rgbToHex = rgbToHex;`,
+  colorContext,
+);
+const pickerRegionContext = vm.createContext({});
+vm.runInContext(
+  `const COLOR_PICKER_CENTER = 128; const HUE_RING_INNER_RADIUS = 96; const HUE_RING_OUTER_RADIUS = 124; const SV_FIELD_START = 66; const SV_FIELD_SIZE = 124; ${pickerRegionSource}; this.region = pickerRegionAt;`,
+  pickerRegionContext,
+);
 
 function createImage(width, height) {
   return { data: new Uint8ClampedArray(width * height * 4) };
@@ -71,6 +89,22 @@ test("取り消し履歴は最新10件だけを保持する", () => {
   assert.deepEqual(history.map((state) => state.index), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.equal(history.pop().index, 11);
   assert.equal(history.pop().index, 10);
+});
+
+test("HSVとRGBの変換で基本色を維持する", () => {
+  assert.deepEqual(Array.from(colorContext.hsvToRgb(0, 1, 1)), [255, 0, 0]);
+  assert.deepEqual(Array.from(colorContext.hsvToRgb(120, 1, 1)), [0, 255, 0]);
+  assert.deepEqual(Array.from(colorContext.hsvToRgb(240, 1, 1)), [0, 0, 255]);
+  const hsv = colorContext.rgbToHsv(232, 93, 63);
+  assert.equal(colorContext.rgbToHex(...colorContext.hsvToRgb(hsv.hue, hsv.saturation, hsv.value)), "#e85d3f");
+});
+
+test("カラーUIは外周を色相リング、中央を彩度と明度として扱う", () => {
+  assert.equal(pickerRegionContext.region({ x: 238, y: 128 }), "hue");
+  assert.equal(pickerRegionContext.region({ x: 128, y: 128 }), "sv");
+  assert.equal(pickerRegionContext.region({ x: 189, y: 189 }), "sv");
+  assert.equal(pickerRegionContext.region({ x: 190, y: 190 }), undefined);
+  assert.equal(pickerRegionContext.region({ x: 128, y: 35 }), undefined);
 });
 
 test("バケツで線に囲まれた透明領域だけを選択色で塗る", () => {

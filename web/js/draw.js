@@ -5,23 +5,235 @@ const WEBP_QUALITY = 0.75;
 const ALPHA_THRESHOLD = 128;
 const GAP_CLOSE_RADIUS = 2;
 const UNDO_HISTORY_LIMIT = 10;
+const COLOR_PICKER_SIZE = 256;
+const COLOR_PICKER_CENTER = COLOR_PICKER_SIZE / 2;
+const HUE_RING_OUTER_RADIUS = 124;
+const HUE_RING_INNER_RADIUS = 96;
+const HUE_RING_RADIUS = (HUE_RING_OUTER_RADIUS + HUE_RING_INNER_RADIUS) / 2;
+const SV_FIELD_SIZE = 124;
+const SV_FIELD_START = (COLOR_PICKER_SIZE - SV_FIELD_SIZE) / 2;
 
 const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
-const color = document.querySelector("#draw-color");
-const brushSize = document.querySelector("#brush-size");
+const colorPicker = document.querySelector("#color-picker");
+const colorPickerContext = colorPicker.getContext("2d");
+const colorButtons = [...document.querySelectorAll("[data-draw-color]")];
 const toolButtons = [...document.querySelectorAll("[data-draw-tool]")];
+const brushSizeButtons = [...document.querySelectorAll("[data-brush-size]")];
 const undoButton = document.querySelector("#undo-canvas");
 const clearButton = document.querySelector("#clear-canvas");
 const submitButton = document.querySelector("#submit-food");
 const status = document.querySelector("#draw-status");
+const drawCursor = document.querySelector("#draw-cursor");
+const drawingSurface = document.querySelector(".drawing-surface");
 
 let activePointer;
 let previousPoint;
 let activeTool = "pen";
+let brushSize = 20;
+let selectedColor = "#e85d3f";
+let selectedHue = 10;
+let selectedSaturation = 0.76;
+let selectedValue = 0.91;
+let colorPointer;
+let colorPickerRegion;
 let hasDrawing = false;
 let isSubmitting = false;
 const undoHistory = [];
+
+function clamp01(value) {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function hsvToRgb(hue, saturation, value) {
+  const chroma = value * saturation;
+  const segment = ((hue % 360) + 360) % 360 / 60;
+  const intermediate = chroma * (1 - Math.abs((segment % 2) - 1));
+  const base = segment < 1 ? [chroma, intermediate, 0]
+    : segment < 2 ? [intermediate, chroma, 0]
+      : segment < 3 ? [0, chroma, intermediate]
+        : segment < 4 ? [0, intermediate, chroma]
+          : segment < 5 ? [intermediate, 0, chroma]
+            : [chroma, 0, intermediate];
+  const match = value - chroma;
+  return base.map((channel) => Math.round((channel + match) * 255));
+}
+
+function rgbToHsv(red, green, blue) {
+  const channels = [red / 255, green / 255, blue / 255];
+  const maximum = Math.max(...channels);
+  const minimum = Math.min(...channels);
+  const difference = maximum - minimum;
+  let hue = 0;
+  if (difference > 0) {
+    if (maximum === channels[0]) hue = 60 * (((channels[1] - channels[2]) / difference) % 6);
+    else if (maximum === channels[1]) hue = 60 * (((channels[2] - channels[0]) / difference) + 2);
+    else hue = 60 * (((channels[0] - channels[1]) / difference) + 4);
+  }
+  return {
+    hue: (hue + 360) % 360,
+    saturation: maximum === 0 ? 0 : difference / maximum,
+    value: maximum,
+  };
+}
+
+function hexToRgb(hex) {
+  return [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function rgbToHex(red, green, blue) {
+  return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function drawPickerHandle(x, y) {
+  colorPickerContext.beginPath();
+  colorPickerContext.arc(x, y, 7, 0, Math.PI * 2);
+  colorPickerContext.lineWidth = 4;
+  colorPickerContext.strokeStyle = "#fff";
+  colorPickerContext.stroke();
+  colorPickerContext.lineWidth = 1;
+  colorPickerContext.strokeStyle = "#202020";
+  colorPickerContext.stroke();
+}
+
+function renderColorPicker() {
+  colorPickerContext.clearRect(0, 0, COLOR_PICKER_SIZE, COLOR_PICKER_SIZE);
+  colorPickerContext.save();
+  colorPickerContext.translate(COLOR_PICKER_CENTER, COLOR_PICKER_CENTER);
+  colorPickerContext.lineWidth = HUE_RING_OUTER_RADIUS - HUE_RING_INNER_RADIUS;
+  for (let degree = 0; degree < 360; degree += 1) {
+    const start = degree * Math.PI / 180;
+    const end = (degree + 1.5) * Math.PI / 180;
+    colorPickerContext.beginPath();
+    colorPickerContext.arc(0, 0, HUE_RING_RADIUS, start, end);
+    colorPickerContext.strokeStyle = `hsl(${degree} 100% 50%)`;
+    colorPickerContext.stroke();
+  }
+  colorPickerContext.restore();
+
+  const field = colorPickerContext.createImageData(SV_FIELD_SIZE, SV_FIELD_SIZE);
+  for (let y = 0; y < SV_FIELD_SIZE; y += 1) {
+    const value = 1 - y / (SV_FIELD_SIZE - 1);
+    for (let x = 0; x < SV_FIELD_SIZE; x += 1) {
+      const saturation = x / (SV_FIELD_SIZE - 1);
+      const [red, green, blue] = hsvToRgb(selectedHue, saturation, value);
+      const offset = (y * SV_FIELD_SIZE + x) * 4;
+      field.data[offset] = red;
+      field.data[offset + 1] = green;
+      field.data[offset + 2] = blue;
+      field.data[offset + 3] = 255;
+    }
+  }
+  colorPickerContext.putImageData(field, SV_FIELD_START, SV_FIELD_START);
+  colorPickerContext.strokeStyle = "#fff";
+  colorPickerContext.lineWidth = 2;
+  colorPickerContext.strokeRect(SV_FIELD_START, SV_FIELD_START, SV_FIELD_SIZE, SV_FIELD_SIZE);
+
+  const angle = selectedHue * Math.PI / 180;
+  drawPickerHandle(
+    COLOR_PICKER_CENTER + Math.cos(angle) * HUE_RING_RADIUS,
+    COLOR_PICKER_CENTER + Math.sin(angle) * HUE_RING_RADIUS,
+  );
+  drawPickerHandle(
+    SV_FIELD_START + selectedSaturation * (SV_FIELD_SIZE - 1),
+    SV_FIELD_START + (1 - selectedValue) * (SV_FIELD_SIZE - 1),
+  );
+}
+
+function updateSelectedColor() {
+  selectedColor = rgbToHex(...hsvToRgb(selectedHue, selectedSaturation, selectedValue));
+  for (const button of colorButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.drawColor.toLowerCase() === selectedColor));
+  }
+  colorPicker.setAttribute("aria-valuetext", selectedColor);
+  renderColorPicker();
+}
+
+function selectHexColor(hex) {
+  const hsv = rgbToHsv(...hexToRgb(hex));
+  selectedHue = hsv.hue;
+  selectedSaturation = hsv.saturation;
+  selectedValue = hsv.value;
+  updateSelectedColor();
+}
+
+function colorPickerPoint(event) {
+  const bounds = colorPicker.getBoundingClientRect();
+  return {
+    x: (event.clientX - bounds.left) * (COLOR_PICKER_SIZE / bounds.width),
+    y: (event.clientY - bounds.top) * (COLOR_PICKER_SIZE / bounds.height),
+  };
+}
+
+function pickerRegionAt(point) {
+  const offsetX = point.x - COLOR_PICKER_CENTER;
+  const offsetY = point.y - COLOR_PICKER_CENTER;
+  const distance = Math.hypot(offsetX, offsetY);
+  if (distance >= HUE_RING_INNER_RADIUS && distance <= HUE_RING_OUTER_RADIUS) return "hue";
+  if (
+    point.x >= SV_FIELD_START
+    && point.x <= SV_FIELD_START + SV_FIELD_SIZE - 1
+    && point.y >= SV_FIELD_START
+    && point.y <= SV_FIELD_START + SV_FIELD_SIZE - 1
+  ) return "sv";
+  return undefined;
+}
+
+function updateColorPickerFromPoint(point) {
+  if (colorPickerRegion === "hue") {
+    selectedHue = (Math.atan2(
+      point.y - COLOR_PICKER_CENTER,
+      point.x - COLOR_PICKER_CENTER,
+    ) * 180 / Math.PI + 360) % 360;
+  } else if (colorPickerRegion === "sv") {
+    selectedSaturation = clamp01((point.x - SV_FIELD_START) / (SV_FIELD_SIZE - 1));
+    selectedValue = 1 - clamp01((point.y - SV_FIELD_START) / (SV_FIELD_SIZE - 1));
+  }
+  updateSelectedColor();
+}
+
+function startColorPicking(event) {
+  if (colorPointer !== undefined || event.button > 0) return;
+  const point = colorPickerPoint(event);
+  colorPickerRegion = pickerRegionAt(point);
+  if (!colorPickerRegion) return;
+  event.preventDefault();
+  colorPointer = event.pointerId;
+  colorPicker.setPointerCapture(event.pointerId);
+  updateColorPickerFromPoint(point);
+}
+
+function continueColorPicking(event) {
+  if (event.pointerId !== colorPointer) return;
+  event.preventDefault();
+  updateColorPickerFromPoint(colorPickerPoint(event));
+}
+
+function stopColorPicking(event) {
+  if (event.pointerId !== colorPointer) return;
+  if (colorPicker.hasPointerCapture(event.pointerId)) colorPicker.releasePointerCapture(event.pointerId);
+  colorPointer = undefined;
+  colorPickerRegion = undefined;
+}
+
+function handleColorPickerKey(event) {
+  const step = 2;
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    selectedHue = (selectedHue + (event.key === "ArrowLeft" ? -step : step) + 360) % 360;
+  } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    const direction = event.key === "ArrowUp" ? 0.02 : -0.02;
+    if (event.shiftKey) selectedSaturation = clamp01(selectedSaturation + direction);
+    else selectedValue = clamp01(selectedValue + direction);
+  } else {
+    return;
+  }
+  event.preventDefault();
+  updateSelectedColor();
+}
 
 function addUndoState(history, state, limit) {
   history.push(state);
@@ -30,6 +242,7 @@ function addUndoState(history, state, limit) {
 
 function updateUndoState() {
   undoButton.disabled = isSubmitting || undoHistory.length === 0;
+  clearButton.disabled = isSubmitting || !hasDrawing;
 }
 
 function rememberCanvas() {
@@ -66,9 +279,9 @@ function drawLine(from, to) {
   context.lineTo(to.x, to.y);
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.lineWidth = Number(brushSize.value);
+  context.lineWidth = brushSize;
   context.globalCompositeOperation = activeTool === "eraser" ? "destination-out" : "source-over";
-  context.strokeStyle = color.value;
+  context.strokeStyle = selectedColor;
   context.stroke();
   context.restore();
   hasDrawing = true;
@@ -111,8 +324,42 @@ function setTool(tool) {
   for (const button of toolButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.drawTool === tool));
   }
-  brushSize.disabled = tool === "bucket";
+  for (const button of brushSizeButtons) button.disabled = tool === "bucket";
   canvas.dataset.tool = tool;
+  drawCursor.dataset.tool = tool;
+  updateDrawCursorSize();
+}
+
+function setBrushSize(size) {
+  brushSize = Number(size);
+  for (const button of brushSizeButtons) {
+    button.setAttribute("aria-pressed", String(Number(button.dataset.brushSize) === brushSize));
+  }
+  updateDrawCursorSize();
+}
+
+function updateDrawCursorSize() {
+  if (activeTool === "bucket") return;
+  const bounds = canvas.getBoundingClientRect();
+  const displayedSize = Math.max(brushSize * (bounds.width / canvas.width), 4);
+  drawCursor.style.setProperty("--cursor-size", `${displayedSize}px`);
+}
+
+function moveDrawCursor(event) {
+  if (event.pointerType === "touch") {
+    drawCursor.hidden = true;
+    return;
+  }
+  const bounds = drawingSurface.getBoundingClientRect();
+  drawCursor.style.left = `${event.clientX - bounds.left}px`;
+  drawCursor.style.top = `${event.clientY - bounds.top}px`;
+  updateDrawCursorSize();
+  drawCursor.hidden = false;
+}
+
+function hideDrawCursor(event) {
+  if (event.pointerId === activePointer) return;
+  drawCursor.hidden = true;
 }
 
 function rgbaFromHex(hex) {
@@ -201,7 +448,7 @@ function fillAt(point) {
     CANVAS_SIZE,
     Math.floor(point.x),
     Math.floor(point.y),
-    rgbaFromHex(color.value),
+    rgbaFromHex(selectedColor),
   );
   if (!changed) return;
   addUndoState(undoHistory, { image: previousImage, hasDrawing }, UNDO_HISTORY_LIMIT);
@@ -226,7 +473,7 @@ function setStatus(message, kind = "") {
 
 function updateSubmitState() {
   submitButton.disabled = isSubmitting || !hasDrawing;
-  submitButton.textContent = isSubmitting ? "送信中…" : "食べてもらう";
+  submitButton.textContent = isSubmitting ? "送信中…" : "キャラクターに食べてもらう";
   updateUndoState();
 }
 
@@ -400,8 +647,22 @@ canvas.addEventListener("pointerdown", startDrawing);
 canvas.addEventListener("pointermove", continueDrawing);
 canvas.addEventListener("pointerup", stopDrawing);
 canvas.addEventListener("pointercancel", stopDrawing);
+canvas.addEventListener("pointerenter", moveDrawCursor);
+canvas.addEventListener("pointermove", moveDrawCursor);
+canvas.addEventListener("pointerleave", hideDrawCursor);
+colorPicker.addEventListener("pointerdown", startColorPicking);
+colorPicker.addEventListener("pointermove", continueColorPicking);
+colorPicker.addEventListener("pointerup", stopColorPicking);
+colorPicker.addEventListener("pointercancel", stopColorPicking);
+colorPicker.addEventListener("keydown", handleColorPickerKey);
+for (const button of colorButtons) {
+  button.addEventListener("click", () => selectHexColor(button.dataset.drawColor));
+}
 for (const button of toolButtons) {
   button.addEventListener("click", () => setTool(button.dataset.drawTool));
+}
+for (const button of brushSizeButtons) {
+  button.addEventListener("click", () => setBrushSize(button.dataset.brushSize));
 }
 undoButton.addEventListener("click", undoCanvas);
 clearButton.addEventListener("click", () => {
@@ -413,5 +674,7 @@ clearButton.addEventListener("click", () => {
 });
 submitButton.addEventListener("click", submitFood);
 
+selectHexColor(selectedColor);
 setTool("pen");
+setBrushSize(brushSize);
 clearCanvas();

@@ -5,43 +5,62 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Web AITuber | 食べ物を描く</title>
     <link rel="stylesheet" href="/static/style.css?v=5">
-    <link rel="stylesheet" href="/static/draw.css?v=4">
+    <link rel="stylesheet" href="/static/draw.css?v=5">
   </head>
   <body class="draw-page">
     <main class="draw-card">
-      <p class="eyebrow">Web AITuber</p>
       <h1>食べ物を描こう</h1>
       <p class="lead">AIキャラクターに食べてもらいたいものを自由に描いてください。</p>
 
-      <div class="drawing-surface">
-        <canvas id="food-canvas" width="512" height="512" aria-label="食べ物を描くキャンバス"></canvas>
-      </div>
+      <div class="draw-workspace">
+        <section class="canvas-column" aria-label="描画キャンバス">
+          <div class="canvas-actions">
+            <button id="undo-canvas" class="secondary-button" type="button" disabled>1つ戻す</button>
+            <button id="clear-canvas" class="secondary-button" type="button" disabled>全消去</button>
+          </div>
+          <div class="drawing-surface">
+            <canvas id="food-canvas" width="512" height="512" aria-label="食べ物を描くキャンバス"></canvas>
+            <div id="draw-cursor" class="draw-cursor" data-tool="pen" aria-hidden="true" hidden>
+              <span class="draw-cursor-ring"></span>
+              <svg class="draw-cursor-bucket" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 2.8 0L19 5M5 2l5 5M2 13h15M22 20a2 2 0 0 1-4 0c0-1.6 2-4 2-4s2 2.4 2 4Z"></path>
+              </svg>
+              <svg class="draw-cursor-eraser" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 21-4.3-4.3a2.3 2.3 0 0 1 0-3.2L13.4 2.8a2.3 2.3 0 0 1 3.2 0l4.6 4.6a2.3 2.3 0 0 1 0 3.2L11.8 20H7ZM5 11l9 9M22 21H7"></path>
+              </svg>
+            </div>
+          </div>
+          <button id="submit-food" class="food-submit" type="button" disabled>キャラクターに食べてもらう</button>
+          <p id="draw-status" class="status" role="status" aria-live="polite"></p>
+        </section>
 
-      <div class="draw-tools" aria-label="描画ツール">
-        <label class="color-tool" for="draw-color">
-          <span>色</span>
-          <input id="draw-color" type="color" value="#e85d3f">
-        </label>
-        <label class="size-tool" for="brush-size">
-          <span>太さ</span>
-          <input id="brush-size" type="range" min="4" max="48" value="16">
-        </label>
-        <div class="tool-mode-row">
+        <section class="draw-tools" aria-label="描画ツール">
+          <div class="color-shortcuts" role="group" aria-label="基本色">
+            <button type="button" data-draw-color="#e85d3f" aria-label="赤" aria-pressed="true"></button>
+            <button type="button" data-draw-color="#ef9138" aria-label="オレンジ" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#f2cf45" aria-label="黄色" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#55a868" aria-label="緑" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#4c7fc7" aria-label="青" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#8956ad" aria-label="紫" aria-pressed="false"></button>
+            <button type="button" data-draw-color="#202020" aria-label="黒" aria-pressed="false"></button>
+          </div>
+
+          <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
+
           <div class="tool-switcher" role="group" aria-label="描画方法">
             <button class="secondary-button" type="button" data-draw-tool="pen" aria-pressed="true">ペン</button>
             <button class="secondary-button" type="button" data-draw-tool="bucket" aria-pressed="false">バケツ</button>
             <button class="secondary-button" type="button" data-draw-tool="eraser" aria-pressed="false">消しゴム</button>
           </div>
-          <div class="canvas-actions">
-            <button id="undo-canvas" class="secondary-button" type="button" disabled>1つ戻す</button>
-            <button id="clear-canvas" class="secondary-button" type="button">全消去</button>
-          </div>
-        </div>
-      </div>
 
-      <button id="submit-food" class="food-submit" type="button" disabled>食べてもらう</button>
-      <p id="draw-status" class="status" role="status" aria-live="polite"></p>
+          <div class="brush-sizes" role="group" aria-label="線の太さ">
+            <button class="secondary-button" type="button" data-brush-size="8" aria-label="細い" aria-pressed="false"><span class="brush-dot brush-dot-small"></span></button>
+            <button class="secondary-button" type="button" data-brush-size="20" aria-label="普通" aria-pressed="true"><span class="brush-dot brush-dot-medium"></span></button>
+            <button class="secondary-button" type="button" data-brush-size="40" aria-label="太い" aria-pressed="false"><span class="brush-dot brush-dot-large"></span></button>
+          </div>
+        </section>
+      </div>
     </main>
-    <script type="module" src="/static/js/draw.js?v=12"></script>
+    <script type="module" src="/static/js/draw.js?v=14"></script>
   </body>
 </html>

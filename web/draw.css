@@ -7,25 +7,56 @@
 }
 
 .draw-card {
-  width: min(100%, 680px);
-  padding: clamp(24px, 5vw, 40px);
+  width: min(100%, 960px);
+  padding: clamp(24px, 4vw, 40px);
   border: 1px solid #dededb;
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 12px 32px rgb(0 0 0 / 7%);
 }
 
+.draw-card h1 {
+  margin-top: 0;
+}
+
 .draw-card .lead {
   margin-bottom: 20px;
 }
 
+.draw-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 512px) minmax(260px, 320px);
+  justify-content: center;
+  align-items: start;
+  gap: clamp(18px, 3vw, 32px);
+}
+
+.canvas-column {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+}
+
+.canvas-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: min(100%, 512px);
+  margin-bottom: 8px;
+}
+
 .drawing-surface {
+  position: relative;
   overflow: hidden;
   width: min(100%, 512px);
-  margin-inline: auto;
   border: 1px solid #c9c9c5;
   border-radius: 12px;
-  background: #fff;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #f0f0ed 25%, transparent 25%, transparent 75%, #f0f0ed 75%),
+    linear-gradient(45deg, #f0f0ed 25%, transparent 25%, transparent 75%, #f0f0ed 75%);
+  background-position: 0 0, 10px 10px;
+  background-size: 20px 20px;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 3%);
 }
 
@@ -34,72 +65,130 @@
   width: 100%;
   height: auto;
   aspect-ratio: 1;
-  cursor: crosshair;
   touch-action: none;
 }
 
-#food-canvas[data-tool="bucket"] {
-  cursor: cell;
+.draw-cursor {
+  --cursor-size: 20px;
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  width: var(--cursor-size);
+  height: var(--cursor-size);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.draw-cursor-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #202020, inset 0 0 0 1px #202020;
+}
+
+.draw-cursor svg {
+  position: absolute;
+  display: none;
+  width: 28px;
+  height: 28px;
+  fill: #fff;
+  stroke: #202020;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 1px #fff);
+}
+
+.draw-cursor[data-tool="bucket"] {
+  width: 28px;
+  height: 28px;
+}
+
+.draw-cursor[data-tool="bucket"] .draw-cursor-ring {
+  display: none;
+}
+
+.draw-cursor[data-tool="bucket"] .draw-cursor-bucket {
+  display: block;
+  left: -5px;
+  top: -23px;
+}
+
+.draw-cursor[data-tool="eraser"] .draw-cursor-eraser {
+  display: block;
+  right: -17px;
+  bottom: -17px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #food-canvas {
+    cursor: none;
+  }
 }
 
 .draw-tools {
   display: grid;
-  grid-template-columns: auto minmax(140px, 1fr);
-  align-items: end;
-  gap: 10px;
-  width: min(100%, 512px);
-  margin: 16px auto 0;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #dededb;
+  border-radius: 12px;
+  background: #fafaf8;
 }
 
-.draw-tools label {
+.color-shortcuts {
   display: grid;
-  gap: 6px;
-  margin: 0;
-  color: #555;
-  font-size: .85rem;
+  grid-template-columns: repeat(7, minmax(32px, 1fr));
+  gap: 7px;
 }
 
-.draw-tools input[type="color"] {
-  width: 52px;
-  height: 42px;
-  border: 1px solid #c9c9c5;
-  border-radius: 8px;
-  padding: 3px;
-  background: #fff;
-  cursor: pointer;
+.color-shortcuts button {
+  width: 100%;
+  min-width: 32px;
+  aspect-ratio: 1;
+  min-height: 32px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  padding: 0;
+  box-shadow: 0 0 0 1px #bdbdb8;
 }
 
-.draw-tools input[type="range"] {
-  min-height: 42px;
-  accent-color: #202020;
+.color-shortcuts button[aria-pressed="true"] {
+  box-shadow: 0 0 0 3px #202020;
 }
 
-.draw-tools input[type="range"]:disabled {
-  opacity: .45;
+.color-shortcuts [data-draw-color="#e85d3f"] { background: #e85d3f; }
+.color-shortcuts [data-draw-color="#ef9138"] { background: #ef9138; }
+.color-shortcuts [data-draw-color="#f2cf45"] { background: #f2cf45; }
+.color-shortcuts [data-draw-color="#55a868"] { background: #55a868; }
+.color-shortcuts [data-draw-color="#4c7fc7"] { background: #4c7fc7; }
+.color-shortcuts [data-draw-color="#8956ad"] { background: #8956ad; }
+.color-shortcuts [data-draw-color="#202020"] { background: #202020; }
+
+.color-picker {
+  display: block;
+  width: min(100%, 240px);
+  height: auto;
+  aspect-ratio: 1;
+  margin-inline: auto;
+  touch-action: none;
+  cursor: crosshair;
 }
 
-.tool-mode-row {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+.color-picker:focus-visible {
+  border-radius: 50%;
+  outline: 3px solid #5b8def;
+  outline-offset: 3px;
 }
 
-.tool-switcher {
+.tool-switcher,
+.brush-sizes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.canvas-actions {
-  display: grid;
-  grid-template-columns: repeat(2, auto);
-  gap: 10px;
-}
-
-.tool-switcher .secondary-button {
-  padding-inline: 6px;
-  white-space: nowrap;
+  gap: 8px;
 }
 
 .secondary-button {
@@ -116,25 +205,61 @@
   background: #eeeeeb;
 }
 
+.tool-switcher .secondary-button {
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+
+.brush-sizes .secondary-button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.brush-dot {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.brush-dot-small {
+  width: 8px;
+  height: 8px;
+}
+
+.brush-dot-medium {
+  width: 18px;
+  height: 18px;
+}
+
+.brush-dot-large {
+  width: 30px;
+  height: 30px;
+}
+
 .food-submit {
   display: block;
   width: min(100%, 512px);
   min-height: 52px;
-  margin: 18px auto 0;
+  margin: 16px auto 0;
   padding: 12px 24px;
   font-size: 1.05rem;
 }
 
 .draw-card .status {
   width: min(100%, 512px);
-  margin: 14px auto 0;
+  margin: 12px auto 0;
+}
+
+.draw-card .status:empty {
+  margin: 0;
 }
 
 .draw-card .status[data-kind="success"] {
   color: #287a46;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 720px) and (orientation: portrait) {
   .draw-page {
     display: block;
     padding: 12px;
@@ -145,19 +270,89 @@
     border-radius: 12px;
   }
 
-  .draw-tools {
-    grid-template-columns: auto minmax(110px, 1fr);
+  .draw-workspace {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .tool-mode-row {
-    grid-template-columns: 1fr;
+  .draw-tools {
+    width: min(100%, 512px);
+    margin-inline: auto;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .draw-page {
+    display: block;
+    padding: 8px;
+  }
+
+  .draw-card {
+    width: min(100%, 960px);
+    padding: 12px;
+    border-radius: 10px;
+  }
+
+  .draw-card h1 {
+    margin-bottom: 2px;
+  }
+
+  .draw-card .lead {
+    margin: 0 0 8px;
+  }
+
+  .draw-workspace {
+    grid-template-columns: minmax(250px, 1fr) minmax(250px, .72fr);
+    gap: 12px;
+  }
+
+  .drawing-surface {
+    width: min(100%, 512px, max(280px, calc(100dvh - 174px)));
+  }
+
+  .draw-tools {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .color-picker {
+    width: min(100%, max(150px, calc(100dvh - 190px)));
+  }
+
+  .food-submit {
+    min-height: 44px;
+    margin-top: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .draw-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .draw-tools {
+    width: min(100%, 512px);
+    margin-inline: auto;
   }
 
   .canvas-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  .secondary-button {
-    width: 100%;
+  .canvas-actions .secondary-button {
+    padding-inline: 12px;
+  }
+
+  .draw-tools {
+    padding: 12px;
+  }
+
+  .color-shortcuts {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 360px) {
+  .color-shortcuts {
+    grid-template-columns: repeat(4, minmax(32px, 1fr));
   }
 }
