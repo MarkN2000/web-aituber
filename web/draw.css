@@ -228,7 +228,7 @@
 .tool-switcher .secondary-button[aria-pressed="true"],
 .brush-sizes .secondary-button[aria-pressed="true"] {
   border-color: #202020;
-  background: #bfe9ff;
+  background: #fff;
   color: #202020;
   box-shadow: 0 0 0 2px #202020;
 }
