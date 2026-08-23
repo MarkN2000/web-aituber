@@ -1,6 +1,7 @@
 import { AudioQueue } from "./audio-queue.js?v=4";
 import { BackgroundMusic } from "./background-music.js?v=7";
 import { ConversationHistory } from "./history.js?v=9";
+import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.js?v=1";
 import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
@@ -94,8 +95,8 @@ function viewerConfigKey(config) {
 async function fetchDisplayConfig() {
   const response = await fetch(`${eventBasePath}/api/display-config`, { cache: "no-store" });
   if (response.status === 404) {
-    eventEnded = true;
-    throw new Error("このイベントリンクは終了しました。");
+    endEventAccess();
+    throw new Error(INVALID_EVENT_MESSAGE);
   }
   if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
   return response.json();
@@ -358,17 +359,7 @@ function endEventAccess() {
   backgroundMusic = undefined;
   viewer?.dispose();
   viewer = undefined;
-  elements.panel.hidden = true;
-  elements.history.hidden = true;
-  elements.startScreen.hidden = false;
-  elements.start.disabled = true;
-  elements.startError.textContent = "このイベントリンクは終了しました。";
-  const form = document.querySelector("#submission-form");
-  const text = document.querySelector("#text");
-  const submit = document.querySelector("#submit-button");
-  if (form) form.setAttribute("aria-disabled", "true");
-  if (text) text.disabled = true;
-  if (submit) submit.disabled = true;
+  showInvalidEventScreen();
 }
 
 function receiveSegment(segment) {

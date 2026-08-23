@@ -1,3 +1,5 @@
+import { showInvalidEventScreen } from "./invalid-event.js?v=1";
+
 const CANVAS_SIZE = 512;
 const VRM_IMAGE_SIZE = 256;
 const AI_IMAGE_SIZE = 128;
@@ -641,7 +643,11 @@ async function submitFood() {
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      if (response.status === 404) eventEnded = true;
+      if (response.status === 404) {
+        eventEnded = true;
+        showInvalidEventScreen();
+        return;
+      }
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 

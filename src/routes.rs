@@ -131,7 +131,7 @@ async fn main_page(
     State(state): State<AppState>,
 ) -> Response {
     if !has_valid_event_identifier(&state, &event_identifier) {
-        return StatusCode::NOT_FOUND.into_response();
+        return invalid_event_page().await;
     }
     html_file("web/main.html").await
 }
@@ -141,7 +141,7 @@ async fn input_page(
     State(state): State<AppState>,
 ) -> Response {
     if !has_valid_event_identifier(&state, &event_identifier) {
-        return StatusCode::NOT_FOUND.into_response();
+        return invalid_event_page().await;
     }
     html_file("web/input.html").await
 }
@@ -151,7 +151,7 @@ async fn draw_page(
     State(state): State<AppState>,
 ) -> Response {
     if !has_valid_event_identifier(&state, &event_identifier) {
-        return StatusCode::NOT_FOUND.into_response();
+        return invalid_event_page().await;
     }
     html_file("web/draw.html").await
 }
@@ -171,6 +171,17 @@ async fn html_file(path: &str) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+async fn invalid_event_page() -> Response {
+    let mut response = html_file("web/invalid-event.html").await;
+    if response.status().is_success() {
+        *response.status_mut() = StatusCode::NOT_FOUND;
+    }
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 async fn submit(
@@ -1542,12 +1553,12 @@ fn require_valid_event_identifier(
     if has_valid_event_identifier(state, event_identifier) {
         Ok(())
     } else {
-        Err(ApiError::not_found("このイベントリンクは終了しました。"))
+        Err(ApiError::not_found("このURLは使用できません。"))
     }
 }
 
 fn event_ended_response() -> Response {
-    ApiError::not_found("このイベントリンクは終了しました。").into_response()
+    ApiError::not_found("このURLは使用できません。").into_response()
 }
 
 #[derive(Deserialize)]
@@ -1957,15 +1968,24 @@ mod tests {
             .unwrap();
         assert_eq!(draw.status(), StatusCode::OK);
 
-        let old = app
-            .oneshot(
-                Request::get("/event/old-event-2026")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(old.status(), StatusCode::NOT_FOUND);
+        for path in [
+            "/event/old-event-2026",
+            "/event/old-event-2026/input",
+            "/event/old-event-2026/draw",
+        ] {
+            let old = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(old.status(), StatusCode::NOT_FOUND);
+            assert_eq!(old.headers()[header::CACHE_CONTROL], "no-store");
+            let body = to_bytes(old.into_body(), 32 * 1024).await.unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains("このURLは使用できません。"));
+            assert!(!body.contains("このイベントリンクは終了しました。"));
+            assert!(!body.contains("<button"));
+        }
     }
 
     #[tokio::test]

@@ -1,3 +1,5 @@
+import { showInvalidEventScreen } from "./invalid-event.js?v=1";
+
 const form = document.querySelector("#submission-form");
 const text = document.querySelector("#text");
 const submitButton = document.querySelector("#submit-button");
@@ -65,7 +67,11 @@ form.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      if (response.status === 404) eventEnded = true;
+      if (response.status === 404) {
+        eventEnded = true;
+        showInvalidEventScreen();
+        return;
+      }
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 
