@@ -1,77 +1,74 @@
 # Web AITuber
 
-イベント来場者の質問を受け付け、VRMキャラクターがLLMとTTSで回答するローカルサーバーです。各端末はCloudflare Tunnelの公開URLへブラウザから接続します。
+来場者の質問に、VRMキャラクターがLLMと音声で回答するイベント向けWebアプリです。LANまたは公開URLから複数端末で利用できます。
 
-## 配布版の実行に必要なもの
+## 必要なもの
 
-- FFmpeg（PATHに追加するか、設定で実行ファイルの絶対パスを指定）
+- OpenAI APIキー
 - VOICEVOXまたはAivisSpeech Engine
-- テキスト・画像入力・Web検索対応のOpenAI Responses API
+- FFmpeg
 - `assets/model.vrm`
-- `assets/motions/*.vrma`（待機・感情モーション）
+- `assets/motions/*.vrma`
 
-配布版の利用にRustは不要です。ソースからビルドする場合だけRust 1.85以降が必要です。
+配布版の利用にRustは不要です。ソースから起動する場合はRust 1.85以降が必要です。
 
-## 設定
+## セットアップ
 
-1. `config.example.json`を`config.json`としてコピーする。
-2. LLM、TTS、管理用トークン、キャラクター設定を編集する。
-3. VRMとVRMAを設定したパスへ配置する。
+1. `config.example.json`を`config.json`へコピーする。
+2. `admin_token`、`llm.api_key`、`tts.engine_url`などを環境に合わせて編集する。
+3. VRMを`assets/model.vrm`、VRMAを`assets/motions/`へ配置する。
+4. TTSエンジンを起動し、FFmpegをPATHへ追加する。
 
-`character.food_prop`には、食事投稿の画像を表示するQuadの位置、回転、大きさをVRMの右手ローカル座標で指定します。使用するモデルに合わせてイベント前に調整してください。
+APIキーと管理用トークンは管理画面に表示されません。`config.json`で管理してください。
 
-`llm.api_url`にはResponses APIエンドポイントの完全なURLを指定します。OpenAIでは`https://api.openai.com/v1/responses`です。`llm.food_reaction_prompt`には食事投稿だけに追加する感想の書き方を指定します。`llm.search_fillers`にはWeb検索を開始した場合だけ順番に読み上げる短い文の一覧を指定します。`ffmpeg_path`は通常`ffmpeg`のままで構いません。PATHにない場合はFFmpeg実行ファイルの絶対パスを指定してください。
+## 起動
 
-起動後は管理画面から、LLM APIのURL、モデル名、通常・食事用プロンプト、検索中フィラー、TTSエンジンURL、使用する話者・スタイルを編集して保存できます。音声設定では、VOICEVOX・AivisSpeech共通形式のユーザー辞書にある単語の追加、編集、削除も行えます。辞書の変更はTTSエンジンへ直接保存され、同じエンジンを使用する他のアプリにも反映されます。保存した設定内容は次に処理を開始する投稿から反映されます。APIキーと管理用トークンは管理画面へ表示されないため、`config.json`で管理してください。
+配布ファイルを展開したフォルダ、またはリポジトリのルートで実行します。
 
-Web検索の使用はLLMが質問内容から判断します。検索時も最終回答は1回だけ表示・読み上げし、回答末尾の地球儀アイコンから出典URLを確認できます。
+- Windows: `.\web-aituber.exe`
+- Linux: `./web-aituber`
+- ソースから起動: `cargo run --release`
 
-AivisSpeechを使用する場合、通常の接続先は`http://127.0.0.1:10101`です。`speaker_id`には、AivisSpeech Engineの`GET /speakers`で確認できる使用モデル・スタイルのIDを指定します。
+## 画面
 
-設定ファイルを別の場所に置く場合は、環境変数`APP_CONFIG_FILE`へそのパスを指定します。
+| 用途 | URL |
+| --- | --- |
+| メイン画面 | `http://127.0.0.1:3000/` |
+| 簡易入力 | `http://127.0.0.1:3000/input` |
+| 食べ物の描画 | `http://127.0.0.1:3000/draw` |
+| 管理画面 | `http://127.0.0.1:3000/admin?token=管理用トークン` |
 
-## 配布版の起動
+メイン画面では、最初に「表示・音声を開始」を押します。
 
-Windowsでは次を実行します。
+管理画面では、回答の中断、LLM・TTS設定、ユーザー辞書、背景画像、BGMを管理できます。管理画面のURLは共有しないでください。
 
-```powershell
-.\web-aituber.exe
-```
+## 他の端末から使う
 
-Linuxでは次を実行します。
+同じLANでは、URLの`127.0.0.1`をサーバーPCのIPv4アドレスへ置き換えます。接続できない場合は、ファイアウォールでTCP 3000番を許可してください。
 
-```bash
-./web-aituber
-```
+Cloudflare Tunnelを使う場合は、接続先を`http://127.0.0.1:3000`にします。食事投稿を使う場合は、公開URLの`/draw`も案内します。
 
-## ソースからの起動
+## デバッグ表示
+
+メイン画面のURLに`?debug`を付けます。
 
 ```text
-cargo run --release
+http://127.0.0.1:3000/?debug
 ```
 
-## 接続先
+`debug`パラメータは値に関係なく有効です。
 
-- メイン画面: `http://127.0.0.1:3000/`
-- 簡易入力画面: `http://127.0.0.1:3000/input`
-- 食べ物の描画画面: `http://127.0.0.1:3000/draw`
-- 管理画面: `http://127.0.0.1:3000/admin?token=設定した管理用トークン`
+デバッグ中は、次の情報を表示します。
 
-メイン画面では最初に「表示・音声を開始」を押します。メイン画面と簡易入力画面は認証なしで複数端末から利用できます。管理画面では運用状態の確認と中断、AI・音声設定の編集、TTSの話者一覧取得と試聴ができます。管理画面のURLは管理端末だけで使用します。
+- WebSocketの接続状態
+- 再生中のモーションファイル名と種別
+- 要求表情とVRMの対応状況
+- 食事動作の状態
+- 食事画像アンカーの座標軸と枠
 
-## ローカルネットワークからの接続
+通常運用では`?debug`を付けません。`character.food_prop`を変更した場合は、管理画面で設定を再読み込みしてからメイン画面を再読み込みしてください。
 
-サーバーPCとスマートフォンを同じWi-Fiへ接続し、Windowsでは`ipconfig`、Linuxでは`ip address`でサーバーPCのIPv4アドレスを確認します。IPv4アドレスが`192.168.1.20`の場合、スマートフォンから次のURLを開きます。
-
-- メイン画面: `http://192.168.1.20:3000/`
-- 簡易入力画面: `http://192.168.1.20:3000/input`
-- 食べ物の描画画面: `http://192.168.1.20:3000/draw`
-
-サーバーは`0.0.0.0:3000`で待ち受けます。OSのファイアウォールでは、会場で使用するネットワークに限りTCP 3000番への受信を許可してください。`0.0.0.0`は待受設定用のため、ブラウザのURLには使用しません。
-
-イベント公開時は、CloudflareのNamed Tunnelの接続先を`http://127.0.0.1:3000`に設定します。公開URLの`/`または`/input`を来場者へ案内します。
-
-## 確認
+## 開発
 
 ```powershell
 cargo test
@@ -79,18 +76,4 @@ cargo clippy --all-targets -- -D warnings
 node --test tests/*.test.cjs
 ```
 
-音声まで確認する場合は、TTS EngineとFFmpegを起動・配置した状態で質問を投稿してください。
-
-## リリース
-
-`v1.0.0`のようなバージョンタグをGitHubへpushすると、GitHub ActionsがWindows x64版とLinux x64版をビルドし、GitHub Releaseへ次のファイルを添付します。
-
-- `web-aituber-windows-x64.zip`
-- `web-aituber-linux-x64.tar.gz`
-
-```powershell
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
+`v1.0.0`のようなタグをpushすると、Windows版とLinux版のGitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
