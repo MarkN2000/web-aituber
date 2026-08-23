@@ -1759,6 +1759,9 @@ mod tests {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         config.admin_token = "test-token".to_owned();
+        config.event_identifier = "event-8k2m4q7x9p".to_owned();
+        config.character.background_music_volume = 0.3;
+        config.character.background_music_duck_ratio = 0.4;
         let (submissions, receiver) = mpsc::channel(1);
         let (events, _) = broadcast::channel(1);
         (

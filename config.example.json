@@ -6,6 +6,7 @@
   "llm": {
     "api_url": "https://api.openai.com/v1/responses",
     "api_key": "ここにAPIキーを設定",
+    "model": "gpt-5.6-luna",
     "system_prompt": "あなたはイベント会場の案内役です。各文の文頭に [neutral]、[happy]、[sad]、[angry]、[surprised] のいずれかを一つ付けて、日本語で簡潔に答えてください。",
     "food_reaction_prompt": "今回の画像は来場者があなたに食べてほしいものを表した絵です。食べ物とは限りません。\n画像からこの絵が表すものが何なのかを読み取り、「もぐもぐ、これは〇〇な〇〇の〇〇のようです」のように特徴とともに簡潔に説明してから、実際にひと口食べた直後の正直な感想を日本語で2～3文答えてください。味や食感は見た目から想像してください。\n描いてあるものが何かわからない場合は食べ物として回答し、食べ物で無い場合は頑張って食べてユーモアを含めた感想を述べてください。",
     "search_fillers": [
@@ -15,10 +16,10 @@
     ]
   },
   "tts": {
-    "engine_url": "http://192.168.1.11:10101",
+    "engine_url": "http://127.0.0.1:10101",
     "speaker_id": 1878365377
   },
-  "ffmpeg_path": "C:\\Users\\akaha\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0-full_build\\bin\\ffmpeg.exe",
+  "ffmpeg_path": "ffmpeg",
   "character": {
     "vrm_url": "/assets/model.vrm",
     "idle_motions": [

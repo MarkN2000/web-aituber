@@ -594,14 +594,11 @@ mod tests {
         let initial: AppConfig = serde_json::from_str(source).unwrap();
         let store = ConfigStore::new(&path, initial);
 
-        let replacement = source
-            .replacen("0.0.0.0:3000", "127.0.0.1:4000", 1)
-            .replacen("gpt-5.6-luna", "new-model", 1)
-            .replacen(
-                "毎回「おいしい」だけで終わらず、表現を変えてください。",
-                "設定再読み込み後の食事反応です。",
-                1,
-            );
+        let mut replacement: AppConfig = serde_json::from_str(source).unwrap();
+        replacement.bind = "127.0.0.1:4000".to_owned();
+        replacement.llm.model = "new-model".to_owned();
+        replacement.llm.food_reaction_prompt = "設定再読み込み後の食事反応です。".to_owned();
+        let replacement = serde_json::to_string_pretty(&replacement).unwrap();
         fs::write(&path, replacement).unwrap();
         let result = store.reload().unwrap();
         assert!(result.restart_required);
