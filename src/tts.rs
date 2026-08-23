@@ -168,7 +168,7 @@ fn apply_user_dict_preview_accent(
         .map(|mora| mora.get("text")?.as_str())
         .collect::<Option<String>>()
         .ok_or(UserDictPreviewError::InvalidInput)?;
-    if generated_pronunciation != pronunciation {
+    if !preview_pronunciations_match(&generated_pronunciation, pronunciation) {
         return Err(UserDictPreviewError::InvalidInput);
     }
     let accent = if accent_type == 0 {
@@ -185,6 +185,25 @@ fn apply_user_dict_preview_accent(
     merged_phrase["accent"] = Value::from(accent);
     audio_query["accent_phrases"] = Value::Array(vec![merged_phrase]);
     Ok(())
+}
+
+fn preview_pronunciations_match(generated: &str, input: &str) -> bool {
+    generated
+        .chars()
+        .map(normalize_preview_pronunciation_char)
+        .eq(input.chars().map(normalize_preview_pronunciation_char))
+}
+
+fn normalize_preview_pronunciation_char(character: char) -> char {
+    match character {
+        'ヂ' => 'ジ',
+        'ヅ' => 'ズ',
+        'ヲ' => 'オ',
+        'ヰ' => 'イ',
+        'ヱ' => 'エ',
+        'ヮ' => 'ワ',
+        _ => character,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -579,6 +598,63 @@ mod tests {
         apply_user_dict_preview_accent(&mut query, "テスト", 2).unwrap();
 
         assert_eq!(query["accent_phrases"][0]["accent"], 2);
+    }
+
+    #[test]
+    fn preview_accent_accepts_kana_spelling_normalized_by_engine() {
+        let mut query = serde_json::json!({
+            "accent_phrases": [{
+                "moras": [
+                    { "text": "カ" }, { "text": "イ" },
+                    { "text": "ズ" }, { "text": "カ" }
+                ],
+                "accent": 1
+            }]
+        });
+
+        apply_user_dict_preview_accent(&mut query, "カイヅカ", 3).unwrap();
+
+        assert_eq!(query["accent_phrases"][0]["accent"], 3);
+        assert_eq!(query["accent_phrases"][0]["moras"][2]["text"], "ズ");
+    }
+
+    #[test]
+    fn preview_accent_equivalence_is_limited_to_engine_normalization() {
+        for (input, generated) in [
+            ("ヂ", "ジ"),
+            ("ヅ", "ズ"),
+            ("ヲ", "オ"),
+            ("ヰ", "イ"),
+            ("ヱ", "エ"),
+            ("ヮ", "ワ"),
+        ] {
+            for (input, generated) in [(input, generated), (generated, input)] {
+                let mut query = serde_json::json!({
+                    "accent_phrases": [{
+                        "moras": [{ "text": generated }],
+                        "accent": 1
+                    }]
+                });
+
+                apply_user_dict_preview_accent(&mut query, input, 1).unwrap();
+
+                assert_eq!(query["accent_phrases"][0]["moras"][0]["text"], generated);
+            }
+        }
+
+        for (input, generated) in [("ヅ", "ジ"), ("ショウ", "シヨウ")] {
+            let mut query = serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [{ "text": generated }],
+                    "accent": 1
+                }]
+            });
+
+            assert!(matches!(
+                apply_user_dict_preview_accent(&mut query, input, 1),
+                Err(UserDictPreviewError::InvalidInput)
+            ));
+        }
     }
 
     #[test]
