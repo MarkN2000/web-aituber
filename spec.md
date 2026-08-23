@@ -309,6 +309,7 @@
 
 ## 9. 設定項目
 
+- `APP_CONFIG_FILE`を指定せずに起動し、`config.json`が存在しない場合は、同じディレクトリの`config.example.json`から`config.json`を生成する。生成時に管理用トークンとイベント識別子をランダム値へ置き換え、既存の`config.json`は上書きしない。
 - LLM Responses APIのURL、APIキー、モデル名、システムプロンプト、食事反応プロンプト、検索中フィラー文の一覧
 - TTSエンジン、APIのURL、話者ID
 - 管理用トークン
@@ -324,7 +325,7 @@
 
 - `v`で始まるバージョンタグをGitHubへpushした場合、GitHub ActionsでWindows x64版とLinux x64版をそれぞれビルドする。
 - 両OSでテストと静的解析が成功した場合だけ、実行ファイル、`web`、設定例、アセット配置説明をアーカイブし、GitHub Releaseへ添付する。
-- 配布物にはAPIキーを含む`config.json`、VRM・VRMA本体、FFmpeg、TTSエンジンを含めない。
+- 配布物にはAPIキーを含む`config.json`、VRM・VRMA本体、FFmpeg、TTSエンジンを含めない。初回起動時は同梱した`config.example.json`から設定を生成する。
 - 配布版の利用者はRustを導入せずに実行できる。
 
 ## 11. 対象外

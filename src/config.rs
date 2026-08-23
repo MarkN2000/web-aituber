@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     env, fs,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -222,8 +223,21 @@ impl AppConfig {
 
 impl ConfigStore {
     pub fn load() -> Result<Self> {
-        let path = env::var("APP_CONFIG_FILE").unwrap_or_else(|_| "config.json".to_owned());
+        if let Some(path) = env::var_os("APP_CONFIG_FILE") {
+            let path = PathBuf::from(path);
+            let config = AppConfig::load_from_path(&path)?;
+            return Ok(Self::new(path, config));
+        }
+
+        let path = PathBuf::from("config.json");
+        let generated = create_default_config(&path, Path::new("config.example.json"))?;
         let config = AppConfig::load_from_path(&path)?;
+        if generated {
+            tracing::warn!(
+                path = %path.display(),
+                "初回設定ファイルを生成しました。llm.api_keyなどを編集して再起動してください"
+            );
+        }
         Ok(Self::new(path, config))
     }
 
@@ -280,6 +294,51 @@ impl ConfigStore {
     }
 }
 
+fn create_default_config(path: &Path, example_path: &Path) -> Result<bool> {
+    if path.exists() {
+        return Ok(false);
+    }
+
+    let mut config = AppConfig::load_from_path(example_path).with_context(|| {
+        format!(
+            "初回設定の生成元を読み込めません: {}",
+            example_path.display()
+        )
+    })?;
+    config.admin_token = uuid::Uuid::new_v4().simple().to_string();
+    config.event_identifier = uuid::Uuid::new_v4().simple().to_string();
+    config.validate()?;
+    let serialized =
+        serde_json::to_vec_pretty(&config).context("初回設定をJSONへ変換できません")?;
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("初回設定ファイルを作成できません: {}", path.display()));
+        }
+    };
+    let result = (|| -> Result<()> {
+        file.write_all(&serialized)
+            .context("初回設定ファイルへ書き込めません")?;
+        file.write_all(b"\n")
+            .context("初回設定ファイルへ書き込めません")?;
+        file.sync_all()
+            .context("初回設定ファイルを同期できません")?;
+        Ok(())
+    })();
+    drop(file);
+    if let Err(error) = result {
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 fn write_config_atomically(path: &Path, config: &AppConfig) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let permissions = fs::metadata(path)
@@ -301,7 +360,6 @@ fn write_config_atomically(path: &Path, config: &AppConfig) -> Result<()> {
             })?;
         file.set_permissions(permissions)
             .context("一時設定ファイルへ現在のアクセス権を引き継げません")?;
-        use std::io::Write;
         file.write_all(&serialized)
             .context("一時設定ファイルへ書き込めません")?;
         file.write_all(b"\n")
@@ -446,6 +504,37 @@ mod tests {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn missing_default_config_is_generated_once_with_random_identifiers() {
+        let root = std::env::temp_dir().join(format!("web-aituber-config-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let example_path = root.join("config.example.json");
+        let config_path = root.join("config.json");
+        let source = include_str!("../config.example.json");
+        fs::write(&example_path, source).unwrap();
+        let example: AppConfig = serde_json::from_str(source).unwrap();
+
+        assert!(create_default_config(&config_path, &example_path).unwrap());
+        let generated = AppConfig::load_from_path(&config_path).unwrap();
+        assert_ne!(generated.admin_token, example.admin_token);
+        assert_ne!(generated.event_identifier, example.event_identifier);
+        assert_eq!(generated.admin_token.len(), 32);
+        assert_eq!(generated.event_identifier.len(), 32);
+
+        fs::write(
+            &config_path,
+            source.replace("gpt-5.6-luna", "keep-this-model"),
+        )
+        .unwrap();
+        assert!(!create_default_config(&config_path, &example_path).unwrap());
+        assert_eq!(
+            AppConfig::load_from_path(&config_path).unwrap().llm.model,
+            "keep-this-model"
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
