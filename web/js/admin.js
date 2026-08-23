@@ -10,6 +10,8 @@ const elements = {
   tabs: [...document.querySelectorAll('[role="tab"]')],
   status: document.querySelector("#admin-status"), skip: document.querySelector("#skip"), reload: document.querySelector("#reload-config"),
   operationStatus: document.querySelector("#operation-status"), operationError: document.querySelector("#operation-error"),
+  currentAppVersion: document.querySelector("#current-app-version"), checkUpdate: document.querySelector("#check-update"),
+  updateStatus: document.querySelector("#update-status"), updateError: document.querySelector("#update-error"),
   eventForm: document.querySelector("#event-access-form"), publicBaseUrl: document.querySelector("#public-base-url"), eventIdentifier: document.querySelector("#event-identifier"),
   randomizeEventIdentifier: document.querySelector("#randomize-event-identifier"), saveEventAccess: document.querySelector("#save-event-access"),
   eventMainUrl: document.querySelector("#event-main-url"), eventInputUrl: document.querySelector("#event-input-url"), eventDrawUrl: document.querySelector("#event-draw-url"),
@@ -71,6 +73,7 @@ let musicBusy = false;
 let currentEventIdentifier;
 let currentPublicBaseUrl;
 let eventQrImageUrl;
+let updateInProgress = false;
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -702,7 +705,12 @@ function connect() {
   socket = new WebSocket(`${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`); setStatus("サーバーへ接続中です");
   socket.addEventListener("open", () => setStatus(currentTurn ? "処理中" : "待機中"));
   socket.addEventListener("message", ({ data }) => { try { handleServerEvent(JSON.parse(data)); } catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, "状態を更新できませんでした。", true); } });
-  socket.addEventListener("close", () => { setStatus("再接続中"); elements.skip.disabled = true; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 2000); });
+  socket.addEventListener("close", () => {
+    elements.skip.disabled = true;
+    clearTimeout(reconnectTimer);
+    if (updateInProgress) { setStatus("アップデート後の再起動中"); return; }
+    setStatus("再接続中"); reconnectTimer = setTimeout(connect, 2000);
+  });
   socket.addEventListener("error", () => socket.close());
 }
 
@@ -812,6 +820,85 @@ async function reload() {
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
+async function fetchVersion() {
+  const response = await fetch(adminUrl("/api/admin/version"), { cache: "no-store" });
+  if (!response.ok) throw new Error(await readError(response, "バージョンを確認できませんでした。"));
+  return response.json();
+}
+async function loadVersion() {
+  try {
+    const result = await fetchVersion();
+    elements.currentAppVersion.textContent = `v${result.current_version}`;
+  } catch (error) {
+    console.error(error);
+    elements.currentAppVersion.textContent = "取得できません";
+    setMessage(elements.updateStatus, elements.updateError, error.message || "バージョンを確認できませんでした。", true);
+  }
+}
+async function waitForUpdatedServer(targetVersion) {
+  let disconnected = false;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      const result = await fetchVersion();
+      if (result.current_version === targetVersion) {
+        window.location.reload();
+        return;
+      }
+      if (disconnected) throw new Error("アップデートに失敗したため、以前のバージョンで再起動しました。");
+    } catch (error) {
+      if (error instanceof TypeError) { disconnected = true; continue; }
+      throw error;
+    }
+  }
+  throw new Error("再起動を確認できませんでした。ページを再読み込みして状態を確認してください。");
+}
+async function checkAndApplyUpdate() {
+  if (!token || updateInProgress) return;
+  elements.checkUpdate.disabled = true;
+  const original = elements.checkUpdate.textContent;
+  elements.checkUpdate.textContent = "確認中…";
+  setMessage(elements.updateStatus, elements.updateError);
+  try {
+    const checkResponse = await fetch(adminUrl("/api/admin/update"), { cache: "no-store" });
+    if (!checkResponse.ok) throw new Error(await readError(checkResponse, "アップデートを確認できませんでした。"));
+    const result = await checkResponse.json();
+    elements.currentAppVersion.textContent = `v${result.current_version}`;
+    if (!result.update_available) {
+      setMessage(elements.updateStatus, elements.updateError, `v${result.current_version}が最新です。`);
+      return;
+    }
+    if (!result.self_update_supported) {
+      setMessage(elements.updateStatus, elements.updateError, `v${result.latest_version}を利用できます。${result.unsupported_reason}`);
+      return;
+    }
+    if (!window.confirm(`v${result.latest_version}へアップデートして再起動しますか？\n処理中の投稿は中断されます。`)) {
+      setMessage(elements.updateStatus, elements.updateError, `v${result.latest_version}を利用できます。`);
+      return;
+    }
+
+    elements.checkUpdate.textContent = "準備中…";
+    const updateResponse = await fetch(adminUrl("/api/admin/update"), { method: "POST" });
+    if (!updateResponse.ok) throw new Error(await readError(updateResponse, "アップデートを開始できませんでした。"));
+    const prepared = await updateResponse.json();
+    updateInProgress = true;
+    clearTimeout(reconnectTimer);
+    socket?.close();
+    elements.checkUpdate.textContent = "再起動中…";
+    setMessage(elements.updateStatus, elements.updateError, `v${prepared.version}へアップデートして再起動しています。`);
+    await waitForUpdatedServer(prepared.version);
+  } catch (error) {
+    console.error(error);
+    updateInProgress = false;
+    setMessage(elements.updateStatus, elements.updateError, error.message || "アップデートできませんでした。", true);
+    if (!socket || socket.readyState === WebSocket.CLOSED) connect();
+  } finally {
+    if (!updateInProgress) {
+      elements.checkUpdate.disabled = false;
+      elements.checkUpdate.textContent = original;
+    }
+  }
+}
 function releasePreview() { previewAbortController?.abort(); previewAbortController = undefined; previewAudio?.pause(); previewAudio = undefined; if (previewAudioUrl) URL.revokeObjectURL(previewAudioUrl); previewAudioUrl = undefined; }
 async function previewTts() {
   if (!token || !validate(elements.ttsForm)) return;
@@ -832,6 +919,7 @@ for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements])
   });
 }
 elements.skip.addEventListener("click", skip); elements.reload.addEventListener("click", reload); elements.preview.addEventListener("click", previewTts);
+elements.checkUpdate.addEventListener("click", checkAndApplyUpdate);
 elements.clearHistory.addEventListener("click", clearConversationHistory);
 elements.eventForm.addEventListener("submit", saveEventAccess);
 elements.publicBaseUrl.addEventListener("input", renderEventUrls);
@@ -879,9 +967,10 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
 } else {
   connect();
+  loadVersion();
   loadConfig();
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });

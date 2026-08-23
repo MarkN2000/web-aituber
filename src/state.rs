@@ -3,11 +3,11 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -30,6 +30,8 @@ pub struct AppState {
     pub vrm_model_lock: Arc<Mutex<()>>,
     pub background_image_lock: Arc<Mutex<()>>,
     pub background_music_lock: Arc<Mutex<()>>,
+    pub update_in_progress: Arc<AtomicBool>,
+    pub shutdown: watch::Sender<bool>,
     pub search_filler_rotation: Arc<SearchFillerRotation>,
 }
 

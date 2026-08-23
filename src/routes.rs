@@ -16,6 +16,7 @@ use std::{
     fs,
     io::Write,
     path::{Component, Path as FilePath, PathBuf},
+    sync::atomic::Ordering,
     time::{Duration, UNIX_EPOCH},
 };
 use tokio::io::AsyncWriteExt;
@@ -30,7 +31,7 @@ use crate::{
     },
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
-    tts,
+    tts, update,
 };
 
 const MAX_TEXT_CHARS: usize = 2_000;
@@ -55,6 +56,8 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(clear_conversation_history),
         )
         .route("/api/admin/reload-config", post(reload_config))
+        .route("/api/admin/version", get(admin_version))
+        .route("/api/admin/update", get(check_update).post(apply_update))
         .route(
             "/api/admin/event-access",
             get(admin_event_access).put(update_admin_event_access),
@@ -1188,6 +1191,81 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
     }
 }
 
+async fn check_update(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    match update::check(&state.http).await {
+        Ok(result) => admin_no_store(Json(result).into_response()),
+        Err(error) => {
+            tracing::warn!(error = ?error, "アップデートを確認できませんでした");
+            admin_error_owned(
+                StatusCode::BAD_GATEWAY,
+                "アップデートを確認できませんでした。通信状態を確認してください。",
+            )
+        }
+    }
+}
+
+async fn admin_version(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let unsupported_reason = update::unsupported_reason();
+    admin_no_store(
+        Json(AdminVersionResponse {
+            current_version: env!("CARGO_PKG_VERSION"),
+            self_update_supported: unsupported_reason.is_none(),
+            unsupported_reason,
+        })
+        .into_response(),
+    )
+}
+
+async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if let Some(reason) = update::unsupported_reason() {
+        return admin_error_owned(StatusCode::CONFLICT, reason);
+    }
+    if state
+        .update_in_progress
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return admin_error_owned(StatusCode::CONFLICT, "別のアップデート処理が進行中です");
+    }
+
+    match update::prepare_and_launch(&state.http).await {
+        Ok(prepared) => {
+            let shutdown = state.shutdown.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(750)).await;
+                let _ = shutdown.send(true);
+            });
+            admin_no_store(
+                (
+                    StatusCode::ACCEPTED,
+                    Json(AdminUpdateResponse {
+                        version: prepared.version,
+                    }),
+                )
+                    .into_response(),
+            )
+        }
+        Err(error) => {
+            state.update_in_progress.store(false, Ordering::Release);
+            tracing::error!(error = ?error, "アップデートを準備できませんでした");
+            admin_error_owned(
+                StatusCode::BAD_GATEWAY,
+                "アップデートを準備できませんでした。現在のバージョンは変更されていません。",
+            )
+        }
+    }
+}
+
 async fn admin_event_access(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
@@ -1830,6 +1908,18 @@ struct AdminReloadResponse {
     restart_required: bool,
 }
 
+#[derive(Serialize)]
+struct AdminUpdateResponse {
+    version: String,
+}
+
+#[derive(Serialize)]
+struct AdminVersionResponse {
+    current_version: &'static str,
+    self_update_supported: bool,
+    unsupported_reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct AdminConfigDto {
     llm: AdminLlmConfigDto,
@@ -1927,6 +2017,10 @@ fn admin_error(status: StatusCode, message: &'static str) -> Response {
     admin_no_store((status, Json(serde_json::json!({ "error": message }))).into_response())
 }
 
+fn admin_error_owned(status: StatusCode, message: impl Into<String>) -> Response {
+    admin_no_store((status, Json(serde_json::json!({ "error": message.into() }))).into_response())
+}
+
 async fn add_admin_response_headers(response: Response) -> Response {
     admin_no_store(response)
 }
@@ -2008,6 +2102,8 @@ mod tests {
                 vrm_model_lock: Arc::new(Mutex::new(())),
                 background_image_lock: Arc::new(Mutex::new(())),
                 background_music_lock: Arc::new(Mutex::new(())),
+                update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                shutdown: tokio::sync::watch::channel(false).0,
                 search_filler_rotation: Arc::new(SearchFillerRotation::default()),
             },
             receiver,
@@ -2292,6 +2388,47 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn update_routes_require_admin_token_and_version_does_not_contact_github() {
+        let app = router(test_state());
+        let unauthorized_version = app
+            .clone()
+            .oneshot(
+                Request::get("/api/admin/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized_version.status(), StatusCode::UNAUTHORIZED);
+
+        let unauthorized_update = app
+            .clone()
+            .oneshot(
+                Request::get("/api/admin/update")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized_update.status(), StatusCode::UNAUTHORIZED);
+
+        let version = app
+            .oneshot(
+                Request::get("/api/admin/version?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(version.status(), StatusCode::OK);
+        assert_eq!(version.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(version.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["current_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(body["self_update_supported"], false);
     }
 
     #[tokio::test]

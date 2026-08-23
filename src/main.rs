@@ -3,11 +3,11 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result};
-use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 use web_aituber::{
@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
     let audio_dir = create_audio_directory().await?;
     let (submissions, submission_receiver) = mpsc::channel(SUBMISSION_QUEUE_SIZE);
     let (events, _) = broadcast::channel(DISPLAY_EVENT_BUFFER_SIZE);
+    let (shutdown, shutdown_receiver) = watch::channel(false);
 
     let state = AppState {
         config,
@@ -54,6 +55,8 @@ async fn main() -> Result<()> {
         vrm_model_lock: Arc::new(Mutex::new(())),
         background_image_lock: Arc::new(Mutex::new(())),
         background_music_lock: Arc::new(Mutex::new(())),
+        update_in_progress: Arc::new(AtomicBool::new(false)),
+        shutdown,
         search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };
 
@@ -62,7 +65,7 @@ async fn main() -> Result<()> {
     tracing::info!(address = %bind, "サーバーを開始しました");
 
     axum::serve(listener, routes::router(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_receiver))
         .await
         .context("HTTPサーバーが終了しました")?;
 
@@ -98,9 +101,48 @@ async fn remove_previous_audio_sessions(root: &Path) {
     }
 }
 
-async fn shutdown_signal() {
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::error!(error = ?error, "終了シグナルを待機できませんでした");
+#[cfg(windows)]
+async fn shutdown_signal(shutdown: watch::Receiver<bool>) {
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(error) = result {
+                tracing::error!(error = ?error, "終了シグナルを待機できませんでした");
+            }
+        }
+        _ = wait_for_requested_shutdown(shutdown) => {}
+    }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal(shutdown: watch::Receiver<bool>) {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate = match signal(SignalKind::terminate()) {
+        Ok(signal) => signal,
+        Err(error) => {
+            tracing::error!(error = ?error, "SIGTERMを待機できませんでした");
+            return wait_for_requested_shutdown(shutdown).await;
+        }
+    };
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(error) = result {
+                tracing::error!(error = ?error, "終了シグナルを待機できませんでした");
+            }
+        }
+        _ = terminate.recv() => {}
+        _ = wait_for_requested_shutdown(shutdown) => {}
+    }
+}
+
+async fn wait_for_requested_shutdown(mut shutdown: watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    while shutdown.changed().await.is_ok() {
+        if *shutdown.borrow_and_update() {
+            return;
+        }
     }
 }
 

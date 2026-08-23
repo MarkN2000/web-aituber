@@ -495,6 +495,19 @@ textarea::placeholder {
   font-size: 1.1rem;
 }
 
+.application-update-section {
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: #f8f8f6;
+}
+
+.application-update-section > h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
 .event-identifier-row,
 .event-url-row {
   display: grid;
@@ -840,6 +853,7 @@ textarea::placeholder {
 }
 
 .admin-card #operation-status,
+.admin-card #update-status,
 .admin-card #event-access-status,
 .admin-card #ai-config-status,
 .admin-card #tts-config-status,
@@ -851,6 +865,7 @@ textarea::placeholder {
 }
 
 .admin-card #operation-error,
+.admin-card #update-error,
 .admin-card #event-access-error,
 .admin-card #ai-config-error,
 .admin-card #tts-config-error,

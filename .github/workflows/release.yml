@@ -35,6 +35,15 @@ jobs:
       - name: Rustバージョンを確認
         run: rustc --version
 
+      - name: タグとアプリケーションバージョンを確認
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($metadata.packages | Where-Object name -eq "web-aituber").version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "タグ $env:GITHUB_REF_NAME とCargo.tomlのバージョン $version が一致しません"
+          }
+
       - name: テスト
         run: cargo test --release --locked
 
@@ -51,11 +60,14 @@ jobs:
           $packageRoot = "dist/web-aituber-windows-x64"
           New-Item -ItemType Directory -Path "$packageRoot/assets/motions" -Force | Out-Null
           Copy-Item -LiteralPath "target/release/web-aituber.exe" -Destination $packageRoot
+          Copy-Item -LiteralPath "target/release/web-aituber-updater.exe" -Destination $packageRoot
           Copy-Item -LiteralPath "web" -Destination $packageRoot -Recurse
           Copy-Item -LiteralPath "assets/README.md" -Destination "$packageRoot/assets"
           Copy-Item -LiteralPath "config.example.json" -Destination $packageRoot
           Copy-Item -LiteralPath "README.md" -Destination $packageRoot
           Compress-Archive -Path $packageRoot -DestinationPath "dist/web-aituber-windows-x64.zip"
+          $hash = (Get-FileHash -LiteralPath "dist/web-aituber-windows-x64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  web-aituber-windows-x64.zip" | Set-Content -LiteralPath "dist/web-aituber-windows-x64.zip.sha256" -Encoding utf8NoBOM -NoNewline
 
       - name: Linux版をパッケージ
         if: runner.os == 'Linux'
@@ -65,17 +77,23 @@ jobs:
           mkdir -p "$package_root/assets/motions"
           cp "target/release/web-aituber" "$package_root/"
           chmod +x "$package_root/web-aituber"
+          cp "target/release/web-aituber-updater" "$package_root/"
+          chmod +x "$package_root/web-aituber-updater"
           cp -R "web" "$package_root/"
           cp "assets/README.md" "$package_root/assets/"
           cp "config.example.json" "$package_root/"
           cp "README.md" "$package_root/"
           tar -C dist -czf "$GITHUB_WORKSPACE/dist/web-aituber-linux-x64.tar.gz" "web-aituber-linux-x64"
+          hash="$(sha256sum "dist/web-aituber-linux-x64.tar.gz" | cut -d ' ' -f1)"
+          printf '%s  %s\n' "$hash" "web-aituber-linux-x64.tar.gz" > "dist/web-aituber-linux-x64.tar.gz.sha256"
 
       - name: 配布物を保存
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.package_name }}
+          path: |
+            dist/${{ matrix.package_name }}
+            dist/${{ matrix.package_name }}.sha256
           if-no-files-found: error
 
   publish:

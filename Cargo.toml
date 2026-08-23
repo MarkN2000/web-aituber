@@ -12,8 +12,10 @@ futures-util = "=0.3.32"
 hound = "3.5"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
@@ -22,7 +24,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+flate2 = "1"
+libc = "0.2"
+tar = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

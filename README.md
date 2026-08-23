@@ -78,3 +78,15 @@ node --test tests/*.test.cjs
 ```
 
 `v1.0.0`のようなタグをpushすると、Windows版とLinux版のGitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
+
+## systemdで起動する場合
+
+systemdなどの外部プロセス管理下では、管理画面からの自己更新は利用できません。アプリケーションによる再起動とsystemdの自動再起動が競合するためです。更新時はサービスを停止し、`config.json`と`assets/`を残して新しい配布物へ置き換えてから起動してください。
+
+```bash
+sudo systemctl stop web-aituber
+# 実行ファイル、web/、web-aituber-updater、config.example.json、README.mdを新しい配布物へ置き換える
+sudo systemctl start web-aituber
+```
+
+systemdのユニットでは、配布物を展開したフォルダを`WorkingDirectory`、その中の`web-aituber`を`ExecStart`に指定してください。`systemctl stop`ではSIGTERMを受けて正常終了します。

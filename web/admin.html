@@ -55,6 +55,15 @@
       <p class="admin-help">外部で編集した設定ファイルを読み込み、次の投稿から反映します。</p>
       <p id="operation-status" class="status" role="status" aria-live="polite"></p>
       <p id="operation-error" class="status" role="alert"></p>
+      <section class="application-update-section" aria-labelledby="application-update-title">
+        <h3 id="application-update-title">アプリケーション更新</h3>
+        <p class="admin-help">現在のバージョン: <span id="current-app-version">確認中</span></p>
+        <div class="admin-actions">
+          <button id="check-update" class="secondary-button" type="button">アップデートを確認</button>
+        </div>
+        <p id="update-status" class="status" role="status" aria-live="polite"></p>
+        <p id="update-error" class="status" role="alert"></p>
+      </section>
     </section>
 
     <section id="panel-ai" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-ai" hidden>
