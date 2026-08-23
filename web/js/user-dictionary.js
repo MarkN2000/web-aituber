@@ -94,11 +94,11 @@ export class UserDictionaryEditor {
     this.elements.preview.addEventListener("click", () => this.preview());
     this.elements.form.addEventListener("submit", (event) => this.save(event));
     this.elements.pronunciation.addEventListener("input", (event) => {
-      if (!event.isComposing) {
-        this.elements.pronunciation.value = hiraganaToKatakana(this.elements.pronunciation.value);
-      }
-      this.renderAccentPicker();
+      if (event.isComposing) this.renderAccentPicker();
+      else this.normalizePronunciation();
     });
+    this.elements.pronunciation.addEventListener("compositionend", () => this.normalizePronunciation());
+    this.elements.pronunciation.addEventListener("blur", () => this.normalizePronunciation());
     this.elements.accentSlider.addEventListener("input", () => this.updateAccentFromSlider());
     this.elements.priority.addEventListener("input", () => this.updatePriorityLabel());
     for (const field of this.elements.form.elements) {
@@ -119,6 +119,11 @@ export class UserDictionaryEditor {
   updatePriorityLabel() {
     this.elements.priorityValue.value = this.elements.priority.value;
     this.elements.priorityValue.textContent = this.elements.priority.value;
+  }
+
+  normalizePronunciation() {
+    this.elements.pronunciation.value = hiraganaToKatakana(this.elements.pronunciation.value);
+    this.renderAccentPicker();
   }
 
   updateAccentFromSlider() {
@@ -325,6 +330,7 @@ export class UserDictionaryEditor {
   }
 
   async preview() {
+    this.normalizePronunciation();
     if (!this.elements.form.reportValidity() || !this.isCurrentEngine()) return;
     const speakerId = Number(this.elements.speakerList.value);
     if (!this.elements.speakerList.value || !Number.isInteger(speakerId) || speakerId < 0) {
@@ -388,6 +394,7 @@ export class UserDictionaryEditor {
 
   async save(event) {
     event.preventDefault();
+    this.normalizePronunciation();
     if (!this.elements.form.reportValidity() || !this.isCurrentEngine()) return;
     const editingUuid = this.editingUuid;
     const path = editingUuid

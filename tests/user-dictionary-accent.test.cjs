@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, "../web/js/user-dictionary.j
   .replace("export class ", "class ");
 const context = vm.createContext({});
 vm.runInContext(
-  `${source}\nthis.toKatakana = hiraganaToKatakana; this.splitMoras = splitPronunciationMoras; this.pitchLevels = accentPitchLevels; this.toSlider = accentTypeToSliderValue; this.toAccent = sliderValueToAccentType;`,
+  `${source}\nthis.Editor = UserDictionaryEditor; this.toKatakana = hiraganaToKatakana; this.splitMoras = splitPronunciationMoras; this.pitchLevels = accentPitchLevels; this.toSlider = accentTypeToSliderValue; this.toAccent = sliderValueToAccentType;`,
   context,
 );
 
@@ -17,6 +17,42 @@ test("ひらがなをカタカナへ変換する", () => {
   assert.equal(context.toKatakana("かいづか"), "カイヅカ");
   assert.equal(context.toKatakana("ゔぉーかる"), "ヴォーカル");
   assert.equal(context.toKatakana("カタカナ・漢字123"), "カタカナ・漢字123");
+});
+
+test("読みはIME確定時とフォーカス離脱時にカタカナへ変換する", () => {
+  const otherElement = {
+    value: "",
+    elements: [],
+    addEventListener() {},
+    querySelectorAll() { return []; },
+  };
+  const pronunciation = new EventTarget();
+  pronunciation.value = "";
+  context.document = {
+    querySelector: (selector) => (
+      selector === "#tts-user-dictionary-pronunciation" ? pronunciation : otherElement
+    ),
+  };
+  context.Editor.prototype.renderAccentPicker = function renderAccentPicker() {};
+  new context.Editor({
+    token: undefined,
+    engineUrl: otherElement,
+    adminUrl: () => "",
+    readError: () => "",
+    stopOtherPreview: () => {},
+  });
+
+  pronunciation.value = "かいづか";
+  const composingInput = new Event("input");
+  composingInput.isComposing = true;
+  pronunciation.dispatchEvent(composingInput);
+  assert.equal(pronunciation.value, "かいづか");
+  pronunciation.dispatchEvent(new Event("compositionend"));
+  assert.equal(pronunciation.value, "カイヅカ");
+
+  pronunciation.value = "ゔぉーかる";
+  pronunciation.dispatchEvent(new Event("blur"));
+  assert.equal(pronunciation.value, "ヴォーカル");
 });
 
 test("読みを小書きカタカナだけ直前へ連結してモーラに分ける", () => {
