@@ -7,15 +7,19 @@ const WORD_TYPE_LABELS = {
 };
 
 export class UserDictionaryEditor {
-  constructor({ token, engineUrl, adminUrl, readError }) {
+  constructor({ token, engineUrl, adminUrl, readError, stopOtherPreview }) {
     this.token = token;
     this.engineUrl = engineUrl;
     this.adminUrl = adminUrl;
     this.readError = readError;
+    this.stopOtherPreview = stopOtherPreview;
     this.loadedEngineUrl = undefined;
     this.words = new Map();
     this.editingUuid = undefined;
     this.busy = false;
+    this.previewAudio = undefined;
+    this.previewAudioUrl = undefined;
+    this.previewAbortController = undefined;
     this.elements = {
       load: document.querySelector("#load-tts-user-dictionary"),
       add: document.querySelector("#add-tts-user-dictionary-word"),
@@ -31,13 +35,16 @@ export class UserDictionaryEditor {
       priority: document.querySelector("#tts-user-dictionary-priority"),
       priorityValue: document.querySelector("#tts-user-dictionary-priority-value"),
       cancel: document.querySelector("#cancel-tts-user-dictionary-word"),
+      preview: document.querySelector("#preview-tts-user-dictionary-word"),
       save: document.querySelector("#save-tts-user-dictionary-word"),
+      speakerList: document.querySelector("#tts-speaker-list"),
       empty: document.querySelector("#tts-user-dictionary-empty"),
       list: document.querySelector("#tts-user-dictionary-list"),
     };
     this.elements.load.addEventListener("click", () => this.load());
     this.elements.add.addEventListener("click", () => this.openEditor());
     this.elements.cancel.addEventListener("click", () => this.closeEditor());
+    this.elements.preview.addEventListener("click", () => this.preview());
     this.elements.form.addEventListener("submit", (event) => this.save(event));
     this.elements.priority.addEventListener("input", () => this.updatePriorityLabel());
     for (const field of this.elements.form.elements) {
@@ -71,6 +78,7 @@ export class UserDictionaryEditor {
   invalidate(message = "エンジンURLを変更しました。辞書を読み直してください。") {
     this.loadedEngineUrl = undefined;
     this.words.clear();
+    this.releasePreview();
     this.closeEditor();
     this.elements.list.replaceChildren();
     this.elements.empty.hidden = false;
@@ -173,7 +181,68 @@ export class UserDictionaryEditor {
 
   closeEditor() {
     this.editingUuid = undefined;
+    this.releasePreview();
     this.elements.form.hidden = true;
+  }
+
+  releasePreview() {
+    this.previewAbortController?.abort();
+    this.previewAbortController = undefined;
+    this.previewAudio?.pause();
+    this.previewAudio = undefined;
+    if (this.previewAudioUrl) URL.revokeObjectURL(this.previewAudioUrl);
+    this.previewAudioUrl = undefined;
+  }
+
+  async preview() {
+    if (!this.elements.form.reportValidity() || !this.isCurrentEngine()) return;
+    const speakerId = Number(this.elements.speakerList.value);
+    if (!this.elements.speakerList.value || !Number.isInteger(speakerId) || speakerId < 0) {
+      this.setMessage("話者一覧を取得して、試聴する話者を選択してください。", true);
+      return;
+    }
+    this.busy = true;
+    this.elements.preview.textContent = "試聴を準備中…";
+    this.setMessage();
+    this.updateControls();
+    this.stopOtherPreview();
+    this.releasePreview();
+    const controller = new AbortController();
+    this.previewAbortController = controller;
+    try {
+      const response = await fetch(this.adminUrl("/api/admin/tts-user-dict-preview"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          tts: { engine_url: this.loadedEngineUrl, speaker_id: speakerId },
+          pronunciation: this.elements.pronunciation.value.trim(),
+          accent_type: Number(this.elements.accentType.value),
+        }),
+      });
+      if (!response.ok) throw new Error(await this.readError(response, "ユーザー辞書を試聴できませんでした。"));
+      const blob = await response.blob();
+      if (this.previewAbortController !== controller) return;
+      this.previewAudioUrl = URL.createObjectURL(blob);
+      this.previewAudio = new Audio(this.previewAudioUrl);
+      this.previewAudio.addEventListener("ended", () => this.releasePreview(), { once: true });
+      this.previewAudio.addEventListener("error", () => {
+        this.releasePreview();
+        this.setMessage("試聴音声を再生できませんでした。", true);
+      }, { once: true });
+      await this.previewAudio.play();
+      if (this.previewAbortController !== controller) return;
+      this.setMessage("入力中の読みとアクセントで試聴しています。辞書には保存されていません。");
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      console.error(error);
+      this.releasePreview();
+      this.setMessage(error.message || "ユーザー辞書を試聴できませんでした。", true);
+    } finally {
+      this.busy = false;
+      this.elements.preview.textContent = "この読みで試聴";
+      this.updateControls();
+    }
   }
 
   requestWord() {

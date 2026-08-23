@@ -43,6 +43,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/tts-preview", post(tts_preview))
         .route("/api/admin/tts-speakers", post(tts_speakers))
+        .route(
+            "/api/admin/tts-user-dict-preview",
+            post(tts_user_dict_preview),
+        )
         .route("/api/admin/tts-user-dict", post(tts_user_dict))
         .route(
             "/api/admin/tts-user-dict-word",
@@ -887,6 +891,60 @@ async fn tts_user_dict(
     }
 }
 
+async fn tts_user_dict_preview(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminTtsUserDictPreviewRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if validate_http_url("tts.engine_url", &request.tts.engine_url).is_err() {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "TTSの接続先はHTTP(S) URLにしてください",
+        );
+    }
+    if !is_user_dict_pronunciation(&request.pronunciation) {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "ユーザー辞書の読みはカタカナで入力してください",
+        );
+    }
+    let config = TtsConfig {
+        engine_url: request.tts.engine_url,
+        speaker_id: request.tts.speaker_id,
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        tts::synthesize_user_dict_preview(
+            &state.http,
+            &config,
+            &request.pronunciation,
+            request.accent_type,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(wav)) => admin_no_store(([(header::CONTENT_TYPE, "audio/wav")], wav).into_response()),
+        Ok(Err(tts::UserDictPreviewError::InvalidInput)) => admin_error(
+            StatusCode::BAD_REQUEST,
+            "単語の読みまたはアクセント位置を確認してください",
+        ),
+        Ok(Err(tts::UserDictPreviewError::Engine(error))) => {
+            tracing::warn!(error = ?error, "TTSのユーザー辞書試聴に失敗しました");
+            admin_error(
+                StatusCode::BAD_GATEWAY,
+                "TTSのユーザー辞書を試聴できませんでした",
+            )
+        }
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSのユーザー辞書試聴が時間切れになりました",
+        ),
+    }
+}
+
 async fn add_tts_user_dict_word(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
@@ -1021,19 +1079,20 @@ fn validate_tts_user_dict_request(
     if request.word.surface.trim().is_empty() {
         return Err("ユーザー辞書の単語を入力してください");
     }
-    if request.word.pronunciation.is_empty()
-        || !request
-            .word
-            .pronunciation
-            .chars()
-            .all(|character| ('ァ'..='ヴ').contains(&character) || character == 'ー')
-    {
+    if !is_user_dict_pronunciation(&request.word.pronunciation) {
         return Err("ユーザー辞書の読みはカタカナで入力してください");
     }
     if request.word.priority > 10 {
         return Err("ユーザー辞書の優先度は0から10にしてください");
     }
     Ok(())
+}
+
+fn is_user_dict_pronunciation(pronunciation: &str) -> bool {
+    !pronunciation.is_empty()
+        && pronunciation
+            .chars()
+            .all(|character| ('ァ'..='ヴ').contains(&character) || character == 'ー')
 }
 
 async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState) {
@@ -1177,6 +1236,13 @@ struct AdminTtsSpeakersResponse {
 #[derive(Deserialize)]
 struct AdminTtsEngineRequest {
     engine_url: String,
+}
+
+#[derive(Deserialize)]
+struct AdminTtsUserDictPreviewRequest {
+    tts: AdminTtsConfigDto,
+    pronunciation: String,
+    accent_type: u32,
 }
 
 #[derive(Deserialize)]
@@ -1708,6 +1774,137 @@ mod tests {
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
         assert_eq!(&wav[..], b"preview-wav");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_user_dict_preview_uses_unsaved_pronunciation_and_accent() {
+        async fn audio_query(
+            Query(query): Query<HashMap<String, String>>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(
+                query.get("text").map(String::as_str),
+                Some("エーアイチューバー")
+            );
+            assert_eq!(query.get("speaker").map(String::as_str), Some("7"));
+            Json(serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [
+                        { "text": "エ" }, { "text": "ー" }, { "text": "ア" },
+                        { "text": "イ" }, { "text": "チュ" }, { "text": "ー" },
+                        { "text": "バ" }, { "text": "ー" }
+                    ],
+                    "accent": 1
+                }],
+                "kana": "エーアイチューバー'",
+                "tempoDynamicsScale": 1.2
+            }))
+        }
+        async fn synthesis(Json(query): Json<serde_json::Value>) -> Response {
+            assert_eq!(query["accent_phrases"][0]["accent"], 4);
+            assert_eq!(query["kana"], "エーアイチューバー'");
+            assert_eq!(query["tempoDynamicsScale"], 1.2);
+            (
+                [(header::CONTENT_TYPE, "audio/wav")],
+                b"dictionary-preview-wav".to_vec(),
+            )
+                .into_response()
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/audio_query", post(audio_query))
+                    .route("/synthesis", post(synthesis)),
+            )
+            .await
+            .unwrap();
+        });
+        let body = serde_json::json!({
+            "tts": { "engine_url": format!("http://{address}"), "speaker_id": 7 },
+            "pronunciation": "エーアイチューバー",
+            "accent_type": 4
+        })
+        .to_string();
+        let app = router(test_state());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict-preview")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict-preview?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/wav");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(&wav[..], b"dictionary-preview-wav");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn tts_user_dict_preview_rejects_accent_beyond_mora_count() {
+        async fn audio_query() -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [{ "text": "テ" }, { "text": "ス" }, { "text": "ト" }],
+                    "accent": 1
+                }]
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/audio_query", post(audio_query)),
+            )
+            .await
+            .unwrap();
+        });
+        let body = serde_json::json!({
+            "tts": { "engine_url": format!("http://{address}"), "speaker_id": 7 },
+            "pronunciation": "テスト",
+            "accent_type": 4
+        });
+
+        let response = router(test_state())
+            .oneshot(
+                Request::post("/api/admin/tts-user-dict-preview?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert!(
+            String::from_utf8(body.to_vec())
+                .unwrap()
+                .contains("アクセント位置")
+        );
 
         server.abort();
     }

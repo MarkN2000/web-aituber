@@ -109,8 +109,10 @@
             <input id="tts-user-dictionary-priority" type="range" min="0" max="10" step="1" value="5">
             <output id="tts-user-dictionary-priority-value" for="tts-user-dictionary-priority">5</output>
           </div>
+          <p class="field-note admin-field-note">試し読みでは辞書を変更せず、入力中の読みとアクセントだけを確認します。</p>
           <div class="admin-form-actions">
             <button id="cancel-tts-user-dictionary-word" class="secondary-button" type="button">キャンセル</button>
+            <button id="preview-tts-user-dictionary-word" class="secondary-button" type="button">この読みで試聴</button>
             <button id="save-tts-user-dictionary-word" type="submit">辞書に追加</button>
           </div>
         </form>
@@ -188,6 +190,6 @@
       </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=13"></script>
+  <script type="module" src="/static/js/admin.js?v=14"></script>
 </body>
 </html>

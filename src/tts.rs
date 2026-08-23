@@ -7,11 +7,14 @@ use uuid::Uuid;
 use crate::config::TtsConfig;
 
 pub async fn synthesize(client: &Client, config: &TtsConfig, text: &str) -> Result<Vec<u8>> {
+    let audio_query = create_audio_query(client, config, text).await?;
+    synthesize_audio_query(client, config, &audio_query).await
+}
+
+async fn create_audio_query(client: &Client, config: &TtsConfig, text: &str) -> Result<Value> {
     let base_url = config.engine_url.trim_end_matches('/');
     let audio_query_url = format!("{base_url}/audio_query");
-    let synthesis_url = format!("{base_url}/synthesis");
-
-    let audio_query: Value = client
+    client
         .post(audio_query_url)
         .query(&[("text", text), ("speaker", &config.speaker_id.to_string())])
         .send()
@@ -21,8 +24,16 @@ pub async fn synthesize(client: &Client, config: &TtsConfig, text: &str) -> Resu
         .context("TTS の audio_query がエラーを返しました")?
         .json()
         .await
-        .context("TTS の audio_query 応答を解釈できません")?;
+        .context("TTS の audio_query 応答を解釈できません")
+}
 
+async fn synthesize_audio_query(
+    client: &Client,
+    config: &TtsConfig,
+    audio_query: &Value,
+) -> Result<Vec<u8>> {
+    let base_url = config.engine_url.trim_end_matches('/');
+    let synthesis_url = format!("{base_url}/synthesis");
     let wav = client
         .post(synthesis_url)
         .query(&[("speaker", config.speaker_id)])
@@ -36,6 +47,73 @@ pub async fn synthesize(client: &Client, config: &TtsConfig, text: &str) -> Resu
         .await
         .context("TTS の WAV 音声を読み取れません")?;
     Ok(wav.to_vec())
+}
+
+#[derive(Debug)]
+pub enum UserDictPreviewError {
+    InvalidInput,
+    Engine(anyhow::Error),
+}
+
+/// 入力中の読みとアクセント位置で、辞書を変更せずに試聴用WAVを生成する。
+pub async fn synthesize_user_dict_preview(
+    client: &Client,
+    config: &TtsConfig,
+    pronunciation: &str,
+    accent_type: u32,
+) -> std::result::Result<Vec<u8>, UserDictPreviewError> {
+    let mut audio_query = create_audio_query(client, config, pronunciation)
+        .await
+        .map_err(UserDictPreviewError::Engine)?;
+    apply_user_dict_preview_accent(&mut audio_query, pronunciation, accent_type)?;
+    synthesize_audio_query(client, config, &audio_query)
+        .await
+        .map_err(UserDictPreviewError::Engine)
+}
+
+fn apply_user_dict_preview_accent(
+    audio_query: &mut Value,
+    pronunciation: &str,
+    accent_type: u32,
+) -> std::result::Result<(), UserDictPreviewError> {
+    let accent_phrases = audio_query
+        .get_mut("accent_phrases")
+        .and_then(Value::as_array_mut)
+        .ok_or(UserDictPreviewError::InvalidInput)?;
+    if accent_phrases.len() != 1 {
+        return Err(UserDictPreviewError::InvalidInput);
+    }
+    let accent_phrase = &mut accent_phrases[0];
+    let mora_count = accent_phrase
+        .get("moras")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .ok_or(UserDictPreviewError::InvalidInput)?;
+    if mora_count == 0 {
+        return Err(UserDictPreviewError::InvalidInput);
+    }
+    let generated_pronunciation = accent_phrase["moras"]
+        .as_array()
+        .and_then(|moras| {
+            moras
+                .iter()
+                .map(|mora| mora.get("text")?.as_str())
+                .collect::<Option<String>>()
+        })
+        .ok_or(UserDictPreviewError::InvalidInput)?;
+    if generated_pronunciation != pronunciation {
+        return Err(UserDictPreviewError::InvalidInput);
+    }
+    let accent = if accent_type == 0 {
+        mora_count
+    } else {
+        usize::try_from(accent_type).map_err(|_| UserDictPreviewError::InvalidInput)?
+    };
+    if !(1..=mora_count).contains(&accent) {
+        return Err(UserDictPreviewError::InvalidInput);
+    }
+    accent_phrase["accent"] = Value::from(accent);
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -397,5 +475,69 @@ mod tests {
 
         assert!(dictionary.words.is_empty());
         assert!(dictionary.has_excluded_words);
+    }
+
+    #[test]
+    fn preview_accent_converts_flat_accent_and_preserves_engine_fields() {
+        let mut query = serde_json::json!({
+            "accent_phrases": [{
+                "moras": [{ "text": "キャ" }, { "text": "ラ" }],
+                "accent": 1,
+                "is_interrogative": false
+            }],
+            "kana": "キャラ'",
+            "tempoDynamicsScale": 1.25
+        });
+        let mut expected = query.clone();
+        expected["accent_phrases"][0]["accent"] = Value::from(2);
+
+        apply_user_dict_preview_accent(&mut query, "キャラ", 0).unwrap();
+
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn preview_accent_accepts_nonzero_position() {
+        let mut query = serde_json::json!({
+            "accent_phrases": [{
+                "moras": [{ "text": "テ" }, { "text": "ス" }, { "text": "ト" }],
+                "accent": 1
+            }]
+        });
+
+        apply_user_dict_preview_accent(&mut query, "テスト", 2).unwrap();
+
+        assert_eq!(query["accent_phrases"][0]["accent"], 2);
+    }
+
+    #[test]
+    fn preview_accent_rejects_ambiguous_or_out_of_range_query() {
+        for mut query in [
+            serde_json::json!({ "accent_phrases": [] }),
+            serde_json::json!({
+                "accent_phrases": [
+                    { "moras": [{ "text": "テ" }], "accent": 1 },
+                    { "moras": [{ "text": "スト" }], "accent": 1 }
+                ]
+            }),
+            serde_json::json!({ "accent_phrases": [{ "moras": [], "accent": 1 }] }),
+            serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [{ "text": "テ" }, { "text": "キ" }, { "text": "スト" }],
+                    "accent": 1
+                }]
+            }),
+            serde_json::json!({
+                "accent_phrases": [{
+                    "moras": [{ "text": "テ" }, { "text": "ス" }, { "text": "ト" }],
+                    "accent": 1
+                }]
+            }),
+        ] {
+            assert!(matches!(
+                apply_user_dict_preview_accent(&mut query, "テスト", 4),
+                Err(UserDictPreviewError::InvalidInput)
+            ));
+        }
     }
 }

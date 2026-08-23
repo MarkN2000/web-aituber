@@ -1,4 +1,4 @@
-import { UserDictionaryEditor } from "./user-dictionary.js?v=1";
+import { UserDictionaryEditor } from "./user-dictionary.js?v=2";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
@@ -35,6 +35,7 @@ let socket;
 let reconnectTimer;
 let previewAudio;
 let previewAudioUrl;
+let previewAbortController;
 let loadedConfig;
 let selectedSpeakerId;
 let selectedBackgroundBlob;
@@ -51,7 +52,7 @@ function setMessage(status, error, message = "", isError = false) { status.textC
 function setCurrentTurn(turn) { currentTurn = turn; elements.skip.disabled = !turn; }
 function turnStatusLabel(status) { return status === "generating" ? "回答生成中" : status === "eating" ? "食事演出中" : "発話中"; }
 function readError(response, fallback) { return response.json().catch(() => ({})).then((body) => body.error || fallback); }
-const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError });
+const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError, stopOtherPreview: releasePreview });
 
 function activateTab(tab, focus = false) {
   elements.tabs.forEach((candidate) => {
@@ -505,13 +506,14 @@ async function reload() {
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
-function releasePreview() { previewAudio?.pause(); previewAudio = undefined; if (previewAudioUrl) URL.revokeObjectURL(previewAudioUrl); previewAudioUrl = undefined; }
+function releasePreview() { previewAbortController?.abort(); previewAbortController = undefined; previewAudio?.pause(); previewAudio = undefined; if (previewAudioUrl) URL.revokeObjectURL(previewAudioUrl); previewAudioUrl = undefined; }
 async function previewTts() {
   if (!token || !validate(elements.ttsForm)) return;
   if (!hasSelectedSpeaker()) { setMessage(elements.ttsStatus, elements.ttsError, speakerSelectionError(), true); return; }
-  elements.preview.disabled = true; const original = elements.preview.textContent; elements.preview.textContent = "試聴を準備中…"; setMessage(elements.ttsStatus, elements.ttsError); releasePreview();
-  try { const response = await fetch(adminUrl("/api/admin/tts-preview"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tts: ttsConfig() }) }); if (!response.ok) throw new Error(await readError(response, "TTSへ接続できませんでした。")); previewAudioUrl = URL.createObjectURL(await response.blob()); previewAudio = new Audio(previewAudioUrl); previewAudio.addEventListener("ended", releasePreview, { once: true }); previewAudio.addEventListener("error", () => { releasePreview(); setMessage(elements.ttsStatus, elements.ttsError, "試聴音声を再生できませんでした。", true); }, { once: true }); await previewAudio.play(); setMessage(elements.ttsStatus, elements.ttsError, "試聴を再生しています。"); }
-  catch (error) { console.error(error); releasePreview(); setMessage(elements.ttsStatus, elements.ttsError, error.message || "TTSへ接続できませんでした。", true); }
+  elements.preview.disabled = true; const original = elements.preview.textContent; elements.preview.textContent = "試聴を準備中…"; setMessage(elements.ttsStatus, elements.ttsError); userDictionary.releasePreview(); releasePreview();
+  const controller = new AbortController(); previewAbortController = controller;
+  try { const response = await fetch(adminUrl("/api/admin/tts-preview"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tts: ttsConfig() }), signal: controller.signal }); if (!response.ok) throw new Error(await readError(response, "TTSへ接続できませんでした。")); const blob = await response.blob(); if (previewAbortController !== controller) return; previewAudioUrl = URL.createObjectURL(blob); previewAudio = new Audio(previewAudioUrl); previewAudio.addEventListener("ended", releasePreview, { once: true }); previewAudio.addEventListener("error", () => { releasePreview(); setMessage(elements.ttsStatus, elements.ttsError, "試聴音声を再生できませんでした。", true); }, { once: true }); await previewAudio.play(); if (previewAbortController !== controller) return; setMessage(elements.ttsStatus, elements.ttsError, "試聴を再生しています。"); }
+  catch (error) { if (error.name === "AbortError") return; console.error(error); releasePreview(); setMessage(elements.ttsStatus, elements.ttsError, error.message || "TTSへ接続できませんでした。", true); }
   finally { elements.preview.disabled = false; elements.preview.textContent = original; }
 }
 
@@ -560,4 +562,4 @@ if (!token) {
   loadConfig();
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); releaseSelectedBackground(); elements.currentMusic.pause(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); elements.currentMusic.pause(); });
