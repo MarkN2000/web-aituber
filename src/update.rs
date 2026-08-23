@@ -432,7 +432,11 @@ fn extract_tar_gz(archive_path: &Path, destination: &Path) -> Result<()> {
 }
 
 fn validate_relative_path(path: &Path) -> Result<()> {
-    if path.is_absolute()
+    let raw_path = path.as_os_str().to_string_lossy();
+    let has_windows_prefix = raw_path.as_bytes().get(1) == Some(&b':');
+    if raw_path.contains('\\')
+        || has_windows_prefix
+        || path.is_absolute()
         || path.components().any(|component| {
             matches!(
                 component,
@@ -542,6 +546,9 @@ mod tests {
         assert!(validate_relative_path(Path::new("package/web/admin.html")).is_ok());
         assert!(validate_relative_path(Path::new("../config.json")).is_err());
         assert!(validate_relative_path(Path::new("C:\\config.json")).is_err());
+        assert!(validate_relative_path(Path::new("C:/config.json")).is_err());
+        assert!(validate_relative_path(Path::new("..\\config.json")).is_err());
+        assert!(validate_relative_path(Path::new("\\\\server\\config.json")).is_err());
     }
 
     #[test]
