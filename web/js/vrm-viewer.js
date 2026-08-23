@@ -6,6 +6,8 @@ import { motionFileName } from './debug.js?v=2';
 import { isEmotion } from './motion.js';
 import { LipSyncAnalyzer } from './lip-sync.js?v=3';
 
+const MOTION_TRANSITION_SECONDS = 0.4;
+
 export class VrmViewer {
   constructor(canvas, report, { showFoodPropGizmo = false, onDebugStateChange } = {}) {
     this.canvas = canvas;
@@ -171,6 +173,7 @@ export class VrmViewer {
 
   resumeIdle() {
     if (!this.idleClips.length || !this.mixer) {
+      this.currentAction?.fadeOut(MOTION_TRANSITION_SECONDS);
       this.currentAction = undefined;
       this.currentMotion = undefined;
       this.reportDebugState();
@@ -190,11 +193,15 @@ export class VrmViewer {
     const next = this.mixer.clipAction(motion.clip);
     const previous = this.currentAction;
     if (previous === next && previous.isRunning()) return;
-    previous?.fadeOut(0.2);
     next.reset();
     next.setLoop(loop ? THREE.LoopOnce : THREE.LoopOnce, 1);
     next.clampWhenFinished = true;
-    next.setEffectiveWeight(1).fadeIn(0.2).play();
+    next.setEffectiveWeight(1).play();
+    if (previous && previous !== next) {
+      previous.crossFadeTo(next, MOTION_TRANSITION_SECONDS, false);
+    } else {
+      next.fadeIn(MOTION_TRANSITION_SECONDS);
+    }
     this.currentAction = next;
     this.currentMotion = { fileName: motion.fileName, kind };
     this.reportDebugState();
@@ -202,9 +209,6 @@ export class VrmViewer {
 
   onAnimationFinished(event) {
     if (event.action !== this.currentAction) return;
-    event.action.fadeOut(0.2);
-    this.currentAction = undefined;
-    this.currentMotion = undefined;
     this.resumeIdle();
   }
 

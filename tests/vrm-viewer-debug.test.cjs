@@ -68,11 +68,16 @@ function createAction() {
   return {
     clampWhenFinished: false,
     running: false,
-    fadeOut() { return this; },
+    transitions: [],
+    fadeOut(duration) { this.fadeOutDuration = duration; return this; },
     reset() { return this; },
     setLoop() { return this; },
     setEffectiveWeight() { return this; },
     fadeIn() { return this; },
+    crossFadeTo(next, duration, warp) {
+      this.transitions.push({ next, duration, warp });
+      return this;
+    },
     play() { this.running = true; return this; },
     isRunning() { return this.running; },
   };
@@ -185,6 +190,10 @@ test("感情モーション終了後は実際に選択した待機モーショ�
     motionFileName: "idle.vrma",
     motionKind: "idle",
   }));
+  assert.equal(emotionAction.transitions.length, 1);
+  assert.equal(emotionAction.transitions[0].next, viewer.currentAction);
+  assert.equal(emotionAction.transitions[0].duration, 0.4);
+  assert.equal(emotionAction.transitions[0].warp, false);
 });
 
 test("再生できる身体モーションがない場合はなしを通知する", () => {
@@ -195,6 +204,20 @@ test("再生できる身体モーションがない場合はなしを通知す�
   assert.deepEqual(viewer.debugStates, [
     debugState(),
   ]);
+});
+
+test("待機モーションがない場合も終了したモーションを滑らかに解除する", () => {
+  const viewer = createViewer();
+  const emotion = { clip: {}, fileName: "happy.vrma" };
+  viewer.emotionClips.set("happy", emotion);
+  viewer.playEmotionMotion("happy");
+  const emotionAction = viewer.currentAction;
+
+  viewer.onAnimationFinished({ action: emotionAction });
+
+  assert.equal(emotionAction.fadeOutDuration, 0.4);
+  assert.equal(viewer.currentAction, undefined);
+  assert.deepEqual(viewer.debugStates.at(-1), debugState());
 });
 
 test("不正な表情はneutralとして通知する", () => {
