@@ -14,7 +14,8 @@ const elements = {
   updateStatus: document.querySelector("#update-status"), updateError: document.querySelector("#update-error"),
   eventForm: document.querySelector("#event-access-form"), publicBaseUrl: document.querySelector("#public-base-url"), eventIdentifier: document.querySelector("#event-identifier"),
   randomizeEventIdentifier: document.querySelector("#randomize-event-identifier"), saveEventAccess: document.querySelector("#save-event-access"),
-  eventMainUrl: document.querySelector("#event-main-url"), eventInputUrl: document.querySelector("#event-input-url"), eventDrawUrl: document.querySelector("#event-draw-url"),
+  eventMainUrl: document.querySelector("#event-main-url"), eventDebugUrl: document.querySelector("#event-debug-url"),
+  eventInputUrl: document.querySelector("#event-input-url"), eventDrawUrl: document.querySelector("#event-draw-url"),
   eventCopyButtons: [...document.querySelectorAll("[data-copy-event-url]")], eventQrButtons: [...document.querySelectorAll("[data-qr-event-url]")],
   eventAccessStatus: document.querySelector("#event-access-status"), eventAccessError: document.querySelector("#event-access-error"),
   eventQrDialog: document.querySelector("#event-qr-dialog"), eventQrTitle: document.querySelector("#event-qr-title"),
@@ -86,12 +87,13 @@ const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.eng
 function eventUrls(identifier = elements.eventIdentifier.value.trim()) {
   const publicBaseUrl = elements.publicBaseUrl.value.trim().replace(/\/+$/, "");
   const base = publicBaseUrl && identifier ? `${publicBaseUrl}/event/${identifier}` : "";
-  return { main: base, input: base ? `${base}/input` : "", draw: base ? `${base}/draw` : "" };
+  return { main: base, debug: base ? `${base}?debug` : "", input: base ? `${base}/input` : "", draw: base ? `${base}/draw` : "" };
 }
 
 function renderEventUrls() {
   const urls = eventUrls();
   elements.eventMainUrl.value = urls.main;
+  elements.eventDebugUrl.value = urls.debug;
   elements.eventInputUrl.value = urls.input;
   elements.eventDrawUrl.value = urls.draw;
   for (const button of elements.eventCopyButtons) button.disabled = !urls[button.dataset.copyEventUrl];

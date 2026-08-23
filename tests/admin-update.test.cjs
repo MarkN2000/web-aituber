@@ -20,3 +20,10 @@ test("アップデートは確認後に同意を取り、再起動した版を�
   assert.match(script, /fetch\(adminUrl\("\/api\/admin\/update"\), \{ method: "POST" \}\)/);
   assert.match(script, /result\.current_version === targetVersion/);
 });
+
+test("管理画面にQRなしのデバッグ用メイン画面リンクを表示する", () => {
+  assert.match(html, /id="event-debug-url"/);
+  assert.match(html, /data-copy-event-url="debug"/);
+  assert.doesNotMatch(html, /data-qr-event-url="debug"/);
+  assert.match(script, /debug: base \? `\$\{base\}\?debug` : ""/);
+});
