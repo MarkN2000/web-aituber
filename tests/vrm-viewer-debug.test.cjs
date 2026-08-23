@@ -144,6 +144,10 @@ test("Canvasはリサイズ時の実DPRで描画する", () => {
   assert.equal(viewer.camera.aspect, 4 / 3);
 });
 
+test("WebGL Rendererへアンチエイリアス設定を渡す", () => {
+  assert.match(source, /new THREE\.WebGLRenderer\(\{ canvas, antialias, alpha: true \}\)/);
+});
+
 test("VRM描画を最大30fpsに制限する", () => {
   const viewer = Object.create(context.VrmViewer.prototype);
   let renders = 0;

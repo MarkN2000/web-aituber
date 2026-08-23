@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=20">
+  <link rel="stylesheet" href="/static/style.css?v=21">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -174,7 +174,7 @@
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
-      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデルと明るさは現在の処理が終わってから切り替わります。</p>
+      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデル、明るさ、アンチエイリアスは現在の処理が終わってから切り替わります。</p>
       <section class="display-setting-section" aria-labelledby="vrm-model-title">
         <h3 id="vrm-model-title">VRMモデル</h3>
         <form id="vrm-model-form" novalidate>
@@ -193,6 +193,16 @@
           </div>
           <div class="admin-form-actions">
             <button id="save-model-brightness" type="submit">明るさを保存</button>
+          </div>
+        </form>
+        <form id="model-antialias-form" class="model-antialias-form" novalidate>
+          <label class="checkbox-control" for="model-antialias">
+            <input id="model-antialias" type="checkbox" checked>
+            アンチエイリアス
+          </label>
+          <p class="field-note admin-field-note">輪郭を滑らかにします。OFFにするとGPU負荷を軽減できる場合があります。</p>
+          <div class="admin-form-actions">
+            <button id="save-model-antialias" type="submit">アンチエイリアスを保存</button>
           </div>
         </form>
         <form id="model-layout-form" class="model-layout-form" novalidate>
@@ -309,6 +319,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=32"></script>
+  <script type="module" src="/static/js/admin.js?v=33"></script>
 </body>
 </html>

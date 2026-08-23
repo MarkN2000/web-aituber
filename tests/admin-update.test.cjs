@@ -27,3 +27,10 @@ test("管理画面にQRなしのデバッグ用メイン画面リンクを表示
   assert.doesNotMatch(html, /data-qr-event-url="debug"/);
   assert.match(script, /debug: base \? `\$\{base\}\?debug` : ""/);
 });
+
+test("管理画面でアンチエイリアスをON・OFFして保存する", () => {
+  assert.match(html, /id="model-antialias" type="checkbox" checked/);
+  assert.match(html, /id="save-model-antialias"/);
+  assert.match(script, /fetch\(adminUrl\("\/api\/admin\/model-antialias"\)/);
+  assert.match(script, /antialias: elements\.antialias\.checked/);
+});

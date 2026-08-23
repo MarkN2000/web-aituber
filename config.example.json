@@ -22,6 +22,7 @@
   "ffmpeg_path": "ffmpeg",
   "character": {
     "vrm_url": "/assets/model.vrm",
+    "antialias": true,
     "idle_motions": [
       "/assets/motions/VRMA_01.vrma",
       "/assets/motions/VRMA_03.vrma"

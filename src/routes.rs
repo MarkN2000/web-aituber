@@ -69,6 +69,10 @@ pub fn router(state: AppState) -> Router {
             axum::routing::put(update_model_brightness),
         )
         .route(
+            "/api/admin/model-antialias",
+            axum::routing::put(update_model_antialias),
+        )
+        .route(
             "/api/admin/model-layout",
             axum::routing::put(update_model_layout),
         )
@@ -889,6 +893,32 @@ async fn update_model_brightness(
             admin_error(
                 StatusCode::BAD_REQUEST,
                 "モデルの明るさを保存できませんでした",
+            )
+        }
+    }
+}
+
+async fn update_model_antialias(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<ModelAntialiasRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.character.antialias = request.antialias;
+    }) {
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "アンチエイリアス設定を保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "アンチエイリアス設定を保存できませんでした",
             )
         }
     }
@@ -1893,6 +1923,11 @@ struct BackgroundMusicVolumeRequest {
 #[derive(Deserialize)]
 struct ModelBrightnessRequest {
     brightness: f32,
+}
+
+#[derive(Deserialize)]
+struct ModelAntialiasRequest {
+    antialias: bool,
 }
 
 #[derive(Deserialize)]
@@ -3312,6 +3347,7 @@ mod tests {
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
+        assert!(body.contains(r#""antialias":true"#));
     }
 
     #[test]
@@ -4194,6 +4230,51 @@ mod tests {
         assert_eq!(saved.character.light.intensity, 1.5);
         assert_eq!(saved.character.light.ambient_intensity, 0.8);
         assert_eq!(state.config.current().character.light.brightness, 1.25);
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_antialias_update_requires_token_and_preserves_other_settings() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let config = (*state.config.current()).clone();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/model-antialias")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"antialias":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let mut events = state.events.subscribe();
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/model-antialias?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"antialias":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert!(!saved.character.antialias);
+        assert_eq!(saved.character.light.brightness, 1.0);
+        assert!(!state.config.current().character.antialias);
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 

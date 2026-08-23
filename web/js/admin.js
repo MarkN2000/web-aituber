@@ -33,6 +33,8 @@ const elements = {
   selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
   brightnessForm: document.querySelector("#model-brightness-form"), brightness: document.querySelector("#model-brightness"),
   brightnessValue: document.querySelector("#model-brightness-value"), saveBrightness: document.querySelector("#save-model-brightness"),
+  antialiasForm: document.querySelector("#model-antialias-form"), antialias: document.querySelector("#model-antialias"),
+  saveAntialias: document.querySelector("#save-model-antialias"),
   layoutForm: document.querySelector("#model-layout-form"), saveLayout: document.querySelector("#save-model-layout"),
   cameraPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#camera-position-${axis}`)),
   foodPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-position-${axis}`)),
@@ -63,6 +65,7 @@ let selectedSpeakerId;
 let selectedVrmFile;
 let vrmBusy = false;
 let brightnessBusy = false;
+let antialiasBusy = false;
 let layoutBusy = false;
 let selectedBackgroundBlob;
 let selectedBackgroundUrl;
@@ -227,6 +230,10 @@ function updateVrmControls() {
 function updateBrightnessControls() {
   elements.brightness.disabled = brightnessBusy || !token;
   elements.saveBrightness.disabled = brightnessBusy || !token;
+}
+function updateAntialiasControls() {
+  elements.antialias.disabled = antialiasBusy || !token;
+  elements.saveAntialias.disabled = antialiasBusy || !token;
 }
 function updateLayoutControls() {
   [...elements.layoutForm.elements].forEach((element) => { element.disabled = layoutBusy || !token; });
@@ -406,7 +413,7 @@ function setVectorInputs(inputs, values) {
 function vectorValues(inputs) {
   return inputs.map((input) => Number(input.value));
 }
-async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true, layout = true } = {}) {
+async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true, antialias = true, layout = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
@@ -416,6 +423,7 @@ async function loadDisplayConfig({ background = true, music = true, volume = tru
     elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
     updateBrightnessLabel();
   }
+  if (antialias) elements.antialias.checked = config.antialias !== false;
   if (layout) {
     setVectorInputs(elements.cameraPosition, config.camera?.position);
     setVectorInputs(elements.foodPosition, config.food_prop?.position);
@@ -506,6 +514,31 @@ async function saveModelBrightness(event) {
     brightnessBusy = false;
     elements.saveBrightness.textContent = original;
     updateBrightnessControls();
+  }
+}
+async function saveModelAntialias(event) {
+  event.preventDefault();
+  if (!token || antialiasBusy) return;
+  antialiasBusy = true;
+  updateAntialiasControls();
+  const original = elements.saveAntialias.textContent;
+  elements.saveAntialias.textContent = "保存中…";
+  setMessage(elements.vrmStatus, elements.vrmError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/model-antialias"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ antialias: elements.antialias.checked }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "アンチエイリアス設定を保存できませんでした。"));
+    setMessage(elements.vrmStatus, elements.vrmError, "アンチエイリアス設定を保存しました。接続中のメイン画面は現在の処理後に反映します。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.vrmStatus, elements.vrmError, error.message || "アンチエイリアス設定を保存できませんでした。", true);
+  } finally {
+    antialiasBusy = false;
+    elements.saveAntialias.textContent = original;
+    updateAntialiasControls();
   }
 }
 async function saveModelLayout(event) {
@@ -937,6 +970,7 @@ elements.vrmInput.addEventListener("change", selectVrmModel);
 elements.vrmForm.addEventListener("submit", uploadVrmModel);
 elements.brightness.addEventListener("input", updateBrightnessLabel);
 elements.brightnessForm.addEventListener("submit", saveModelBrightness);
+elements.antialiasForm.addEventListener("submit", saveModelAntialias);
 elements.layoutForm.addEventListener("submit", saveModelLayout);
 updateLayoutControls();
 elements.backgroundInput.addEventListener("change", selectBackground);
@@ -969,7 +1003,7 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();

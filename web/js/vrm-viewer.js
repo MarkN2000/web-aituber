@@ -11,13 +11,13 @@ const FRAME_INTERVAL_MS = 1000 / 30;
 const FRAME_TOLERANCE_MS = 1;
 
 export class VrmViewer {
-  constructor(canvas, report, { showFoodPropGizmo = false, onDebugStateChange } = {}) {
+  constructor(canvas, report, { antialias = true, showFoodPropGizmo = false, onDebugStateChange } = {}) {
     this.canvas = canvas;
     this.report = report;
     this.clock = new THREE.Clock();
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias, alpha: true });
     this.loader = new GLTFLoader();
     this.loader.register((parser) => new VRMLoaderPlugin(parser));
     this.loader.register((parser) => new VRMAnimationLoaderPlugin(parser));

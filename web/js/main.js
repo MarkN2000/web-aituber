@@ -5,7 +5,7 @@ import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.j
 import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=12";
+import { VrmViewer } from "./vrm-viewer.js?v=13";
 
 const debugEnabled = isDebugEnabled(window.location.search);
 const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
@@ -89,6 +89,7 @@ function viewerConfigKey(config) {
     food_prop: config.food_prop,
     camera: config.camera,
     light: config.light,
+    antialias: config.antialias !== false,
   });
 }
 
@@ -110,6 +111,7 @@ async function applyPendingViewerConfig() {
   showViewerMessage("モデルを更新しています。");
   viewer?.dispose();
   const nextViewer = new VrmViewer(elements.canvas, showViewerMessage, {
+    antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,
     onDebugStateChange: debugEnabled
       ? updateDebugState
@@ -454,6 +456,7 @@ async function startMain() {
     );
 
     viewer = new VrmViewer(elements.canvas, showViewerMessage, {
+      antialias: config.antialias !== false,
       showFoodPropGizmo: debugEnabled,
       onDebugStateChange: debugEnabled
         ? updateDebugState

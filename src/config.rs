@@ -56,6 +56,8 @@ pub struct TtsConfig {
 pub struct CharacterConfig {
     #[serde(default = "default_vrm_url")]
     pub vrm_url: String,
+    #[serde(default = "default_antialias")]
+    pub antialias: bool,
     #[serde(default)]
     pub idle_motions: Vec<String>,
     #[serde(default)]
@@ -102,6 +104,7 @@ impl Default for CharacterConfig {
     fn default() -> Self {
         Self {
             vrm_url: default_vrm_url(),
+            antialias: default_antialias(),
             idle_motions: Vec::new(),
             emotion_motions: HashMap::new(),
             food_prop: FoodPropConfig::default(),
@@ -148,6 +151,10 @@ impl Default for LightConfig {
 
 fn default_vrm_url() -> String {
     "/assets/model.vrm".to_owned()
+}
+
+fn default_antialias() -> bool {
+    true
 }
 
 fn default_background_music_volume() -> f32 {
@@ -504,6 +511,7 @@ mod tests {
     fn character_defaults_are_available() {
         let character: CharacterConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(character.vrm_url, "/assets/model.vrm");
+        assert!(character.antialias);
         assert_eq!(character.food_prop.size, 0.2);
         assert_eq!(character.camera.fov, 30.0);
         assert_eq!(character.background_music_volume, 0.3);

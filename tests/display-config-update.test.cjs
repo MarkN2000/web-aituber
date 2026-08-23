@@ -17,6 +17,7 @@ const applySource = source.slice(
 function config(overrides = {}) {
   return {
     vrm_url: "/assets/model.vrm?v=1",
+    antialias: true,
     idle_motions: ["/assets/idle.vrma?v=1"],
     emotion_motions: {},
     food_prop: { position: [0, 0, 0], rotation_degrees: [0, 0, 0], size: 0.2 },
@@ -94,6 +95,16 @@ test("モデルの明るさが変わるとビューアーの再読み込みを�
 
   assert.equal(calls.viewerReloads, 1);
   assert.equal(context.pending().light.brightness, 1.5);
+});
+
+test("アンチエイリアスが変わるとビューアーの再読み込みを予約する", () => {
+  const initial = config();
+  const { context, calls } = loadContext(initial);
+
+  context.apply(config({ antialias: false }));
+
+  assert.equal(calls.viewerReloads, 1);
+  assert.equal(context.pending().antialias, false);
 });
 
 test("CameraとFood Propの配置が変わるとビューアーの再読み込みを予約する", () => {
