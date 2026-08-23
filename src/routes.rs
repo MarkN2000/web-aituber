@@ -2,8 +2,8 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{
-        DefaultBodyLimit, Multipart, Path, Query, State, WebSocketUpgrade, multipart::Field,
-        ws::Message,
+        DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State, WebSocketUpgrade,
+        multipart::Field, ws::Message,
     },
     http::{HeaderValue, StatusCode, header},
     middleware,
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::{
     background_music,
-    config::{CharacterConfig, TtsConfig, validate_http_url},
+    config::{CharacterConfig, TtsConfig, validate_event_identifier, validate_http_url},
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
     tts,
@@ -45,6 +45,11 @@ pub fn router(state: AppState) -> Router {
     let admin_api = Router::new()
         .route("/api/admin/skip", post(skip))
         .route("/api/admin/reload-config", post(reload_config))
+        .route(
+            "/api/admin/event-access",
+            get(admin_event_access).put(update_admin_event_access),
+        )
+        .route("/api/admin/display-config", get(admin_display_config))
         .route(
             "/api/admin/config",
             get(admin_config).put(update_admin_config),
@@ -82,22 +87,29 @@ pub fn router(state: AppState) -> Router {
         )
         .layer(middleware::map_response(add_admin_response_headers));
 
-    Router::new()
-        .route("/", get(main_page))
-        .route("/input", get(input_page))
-        .route("/draw", get(draw_page))
-        .route("/admin", get(admin_page))
+    let public_event = Router::new()
+        .route("/event/{event_identifier}", get(main_page))
+        .route("/event/{event_identifier}/input", get(input_page))
+        .route("/event/{event_identifier}/draw", get(draw_page))
         .route(
-            "/api/submissions",
+            "/event/{event_identifier}/api/submissions",
             post(submit).layer(DefaultBodyLimit::max(MAX_TEXT_REQUEST_BYTES)),
         )
         .route(
-            "/api/food-submissions",
+            "/event/{event_identifier}/api/food-submissions",
             post(submit_food).layer(DefaultBodyLimit::max(MAX_FOOD_REQUEST_BYTES)),
         )
-        .route("/api/display-config", get(display_config))
+        .route(
+            "/event/{event_identifier}/api/display-config",
+            get(event_display_config),
+        )
+        .route("/event/{event_identifier}/ws", get(event_websocket));
+
+    Router::new()
+        .route("/admin", get(admin_page))
+        .merge(public_event)
         .merge(admin_api)
-        .route("/ws", get(websocket))
+        .route("/ws", get(admin_websocket))
         .route("/food-images/{id}", get(food_image))
         .nest_service("/static", ServeDir::new("web"))
         .merge(asset_routes)
@@ -106,15 +118,33 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn main_page() -> Response {
+async fn main_page(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     html_file("web/main.html").await
 }
 
-async fn input_page() -> Response {
+async fn input_page(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     html_file("web/input.html").await
 }
 
-async fn draw_page() -> Response {
+async fn draw_page(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     html_file("web/draw.html").await
 }
 
@@ -136,9 +166,11 @@ async fn html_file(path: &str) -> Response {
 }
 
 async fn submit(
+    Path(event_identifier): Path<String>,
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
+    require_valid_event_identifier(&state, &event_identifier)?;
     let mut text = None;
     while let Some(field) = multipart
         .next_field()
@@ -168,6 +200,7 @@ async fn submit(
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(ApiError::bad_request("質問は2000文字以下にしてください"));
     }
+    require_valid_event_identifier(&state, &event_identifier)?;
 
     let id = Uuid::new_v4().to_string();
     state
@@ -183,9 +216,11 @@ async fn submit(
 }
 
 async fn submit_food(
+    Path(event_identifier): Path<String>,
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
+    require_valid_event_identifier(&state, &event_identifier)?;
     let mut vrm_image = None;
     let mut ai_image = None;
 
@@ -209,6 +244,7 @@ async fn submit_food(
         vrm_image.ok_or_else(|| ApiError::bad_request("VRM表示用の食事画像がありません"))?;
     let ai_image =
         ai_image.ok_or_else(|| ApiError::bad_request("AI入力用の食事画像がありません"))?;
+    require_valid_event_identifier(&state, &event_identifier)?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
@@ -266,7 +302,31 @@ fn notify_display_config_changed(state: &AppState) {
     let _ = state.events.send(ServerEvent::DisplayConfigChanged);
 }
 
-async fn display_config(State(state): State<AppState>) -> Response {
+fn notify_event_access_changed(state: &AppState) {
+    let _ = state.events.send(ServerEvent::EventAccessChanged);
+}
+
+async fn event_display_config(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return event_ended_response();
+    }
+    display_config_response(&state).await
+}
+
+async fn admin_display_config(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    admin_no_store(display_config_response(&state).await)
+}
+
+async fn display_config_response(state: &AppState) -> Response {
     let config = state.config.current();
     let background_image_path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
     let background_image_url = existing_versioned_asset_url(
@@ -791,8 +851,38 @@ async fn food_image(Path(id): Path<String>, State(state): State<AppState>) -> Re
     }
 }
 
-async fn websocket(websocket: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    websocket.on_upgrade(move |socket| handle_websocket(socket, state))
+async fn event_websocket(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let (mut parts, _) = request.into_parts();
+    let websocket = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(websocket) => websocket,
+        Err(rejection) => return rejection.into_response(),
+    };
+    websocket.on_upgrade(move |socket| {
+        handle_websocket(socket, state, WebsocketAudience::Public(event_identifier))
+    })
+}
+
+async fn admin_websocket(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    request: axum::extract::Request,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let (mut parts, _) = request.into_parts();
+    let websocket = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(websocket) => websocket,
+        Err(rejection) => return rejection.into_response(),
+    };
+    websocket.on_upgrade(move |socket| handle_websocket(socket, state, WebsocketAudience::Admin))
 }
 
 async fn skip(
@@ -819,8 +909,12 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
+    let previous_event_identifier = state.config.current().event_identifier.clone();
     match state.config.reload() {
         Ok(result) => {
+            if state.config.current().event_identifier != previous_event_identifier {
+                notify_event_access_changed(&state);
+            }
             notify_display_config_changed(&state);
             admin_no_store(
                 Json(AdminReloadResponse {
@@ -841,6 +935,60 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
                     .into_response(),
             )
         }
+    }
+}
+
+async fn admin_event_access(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    admin_no_store(
+        Json(AdminEventAccessDto {
+            event_identifier: state.config.current().event_identifier.clone(),
+        })
+        .into_response(),
+    )
+}
+
+async fn update_admin_event_access(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<AdminEventAccessDto>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if let Err(error) = validate_event_identifier(&request.event_identifier) {
+        return admin_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response(),
+        );
+    }
+    let previous_event_identifier = state.config.current().event_identifier.clone();
+    let next_event_identifier = request.event_identifier;
+    match state.config.update_and_save(move |config| {
+        config.event_identifier = next_event_identifier;
+    }) {
+        Ok(_) => {
+            let event_identifier = state.config.current().event_identifier.clone();
+            if event_identifier != previous_event_identifier {
+                notify_event_access_changed(&state);
+            }
+            admin_no_store(Json(AdminEventAccessDto { event_identifier }).into_response())
+        }
+        Err(error) => admin_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("公開URLを保存できません: {error}") })),
+            )
+                .into_response(),
+        ),
     }
 }
 
@@ -1222,9 +1370,24 @@ fn is_user_dict_pronunciation(pronunciation: &str) -> bool {
             .all(|character| ('ァ'..='ヴ').contains(&character) || character == 'ー')
 }
 
-async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState) {
+enum WebsocketAudience {
+    Public(String),
+    Admin,
+}
+
+async fn handle_websocket(
+    socket: axum::extract::ws::WebSocket,
+    state: AppState,
+    audience: WebsocketAudience,
+) {
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
+    if let WebsocketAudience::Public(event_identifier) = &audience
+        && !has_valid_event_identifier(&state, event_identifier)
+    {
+        let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
+        return;
+    }
     let current = state.current.read().await.clone();
     let history = state.history.lock().await.snapshot();
 
@@ -1246,11 +1409,24 @@ async fn handle_websocket(socket: axum::extract::ws::WebSocket, state: AppState)
             event = events.recv() => {
                 match event {
                     Ok(event) => {
+                        if matches!(event, ServerEvent::EventAccessChanged) {
+                            if matches!(&audience, WebsocketAudience::Public(_)) {
+                                let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
+                                break;
+                            }
+                            continue;
+                        }
                         if send_json(&mut sender, &event).await.is_err() {
                             break;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        if let WebsocketAudience::Public(event_identifier) = &audience
+                            && !has_valid_event_identifier(&state, event_identifier)
+                        {
+                            let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
+                            break;
+                        }
                         let current = state.current.read().await.clone();
                         let history = state.history.lock().await.snapshot();
                         if send_json(&mut sender, &ServerEvent::Snapshot { current, history }).await.is_err() {
@@ -1277,6 +1453,25 @@ fn has_valid_admin_token(state: &AppState, auth: &AdminAuth) -> bool {
     auth.token.as_deref() == Some(config.admin_token.as_str())
 }
 
+fn has_valid_event_identifier(state: &AppState, event_identifier: &str) -> bool {
+    state.config.current().event_identifier == event_identifier
+}
+
+fn require_valid_event_identifier(
+    state: &AppState,
+    event_identifier: &str,
+) -> Result<(), ApiError> {
+    if has_valid_event_identifier(state, event_identifier) {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("このイベントリンクは終了しました。"))
+    }
+}
+
+fn event_ended_response() -> Response {
+    ApiError::not_found("このイベントリンクは終了しました。").into_response()
+}
+
 #[derive(Deserialize)]
 struct AdminAuth {
     token: Option<String>,
@@ -1285,6 +1480,11 @@ struct AdminAuth {
 #[derive(Serialize)]
 struct SubmitResponse {
     id: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct AdminEventAccessDto {
+    event_identifier: String,
 }
 
 #[derive(Serialize)]
@@ -1423,6 +1623,13 @@ impl ApiError {
     fn unavailable(message: &'static str) -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
+            message,
+        }
+    }
+
+    fn not_found(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message,
         }
     }
@@ -1631,27 +1838,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_pages_are_available() {
+    async fn only_current_event_public_pages_are_available() {
         let app = router(test_state());
         let main = app
             .clone()
-            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(main.status(), StatusCode::OK);
 
         let input = app
             .clone()
-            .oneshot(Request::get("/input").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/input")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(input.status(), StatusCode::OK);
 
         let draw = app
-            .oneshot(Request::get("/draw").body(Body::empty()).unwrap())
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/draw")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(draw.status(), StatusCode::OK);
+
+        let old = app
+            .oneshot(
+                Request::get("/event/old-event-2026")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -1729,6 +1959,106 @@ mod tests {
         assert!(body.contains("engine_url"));
         assert!(!body.contains("api_key"));
         assert!(!body.contains("test-token"));
+    }
+
+    #[tokio::test]
+    async fn event_access_requires_token_persists_change_and_invalidates_old_routes() {
+        let path = std::env::temp_dir().join(format!("web-aituber-{}.json", Uuid::new_v4()));
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.admin_token = "test-token".to_owned();
+        std::fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+
+        let mut state = test_state();
+        state.config = ConfigStore::new(&path, config);
+        let mut events = state.events.subscribe();
+        let app = router(state.clone());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::get("/api/admin/event-access")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/event-access?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"event_identifier":"短い"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let changed = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/event-access?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"event_identifier":"next-event-7q9m2k4p"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed.status(), StatusCode::OK);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::EventAccessChanged
+        ));
+        assert_eq!(
+            AppConfig::load_from_path(&path).unwrap().event_identifier,
+            "next-event-7q9m2k4p"
+        );
+
+        let old = app
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old.status(), StatusCode::NOT_FOUND);
+        let current = app
+            .oneshot(
+                Request::get("/event/next-event-7q9m2k4p")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(current.status(), StatusCode::OK);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_routes_validate_their_access_keys() {
+        let app = router(test_state());
+        let admin = app
+            .clone()
+            .oneshot(Request::get("/ws").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(admin.status(), StatusCode::UNAUTHORIZED);
+
+        let old_event = app
+            .oneshot(
+                Request::get("/event/old-event-2026/ws")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old_event.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -2415,7 +2745,7 @@ mod tests {
     async fn display_config_is_public_and_does_not_expose_secrets() {
         let response = router(test_state())
             .oneshot(
-                Request::get("/api/display-config")
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2631,7 +2961,7 @@ mod tests {
         let missing = app
             .clone()
             .oneshot(
-                Request::get("/api/display-config")
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2651,7 +2981,7 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    Request::get("/api/display-config")
+                    Request::get("/event/event-8k2m4q7x9p/api/display-config")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -2672,7 +3002,7 @@ mod tests {
         .unwrap();
         let changed = app
             .oneshot(
-                Request::get("/api/display-config")
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2697,7 +3027,7 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    Request::get("/api/display-config")
+                    Request::get("/event/event-8k2m4q7x9p/api/display-config")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -3018,7 +3348,7 @@ mod tests {
         let missing = app
             .clone()
             .oneshot(
-                Request::get("/api/display-config")
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3036,7 +3366,7 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    Request::get("/api/display-config")
+                    Request::get("/event/event-8k2m4q7x9p/api/display-config")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -3057,7 +3387,7 @@ mod tests {
         .unwrap();
         let changed = app
             .oneshot(
-                Request::get("/api/display-config")
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3217,7 +3547,7 @@ mod tests {
 
         let response = router(state)
             .oneshot(
-                Request::post("/api/submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={boundary}"),
@@ -3250,7 +3580,7 @@ mod tests {
 
         let response = router(test_state())
             .oneshot(
-                Request::post("/api/submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={boundary}"),
@@ -3269,7 +3599,7 @@ mod tests {
         let missing_boundary = "missing-food-boundary";
         let missing = router(test_state())
             .oneshot(
-                Request::post("/api/food-submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={missing_boundary}"),
@@ -3291,7 +3621,7 @@ mod tests {
         );
         let vrm_only = router(test_state())
             .oneshot(
-                Request::post("/api/food-submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={vrm_only_boundary}"),
@@ -3313,7 +3643,7 @@ mod tests {
         );
         let ai_only = router(test_state())
             .oneshot(
-                Request::post("/api/food-submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={ai_only_boundary}"),
@@ -3341,7 +3671,7 @@ mod tests {
 
         let response = router(state)
             .oneshot(
-                Request::post("/api/food-submissions")
+                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
                     .header(
                         header::CONTENT_TYPE,
                         format!("multipart/form-data; boundary={boundary}"),

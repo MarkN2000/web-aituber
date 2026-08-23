@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -23,6 +23,29 @@
       <dl class="admin-details">
         <div><dt>状態</dt><dd id="admin-status" aria-live="polite">サーバーへ接続中です</dd></div>
       </dl>
+      <section class="event-access-section" aria-labelledby="event-access-title">
+        <h3 id="event-access-title">公開イベントリンク</h3>
+        <p class="admin-help">識別子を変更すると、以前の公開リンクは直ちに使えなくなります。英小文字・数字・ハイフンを8〜64文字で指定してください。</p>
+        <form id="event-access-form" novalidate>
+          <label for="event-identifier">イベント識別子</label>
+          <div class="event-identifier-row">
+            <input id="event-identifier" type="text" required minlength="8" maxlength="64" pattern="[a-z0-9](?:[a-z0-9-]{6,62}[a-z0-9])" autocomplete="off" spellcheck="false">
+            <button id="randomize-event-identifier" class="secondary-button" type="button">ランダム生成</button>
+          </div>
+          <p class="field-note admin-field-note">推測されにくいランダムな識別子を推奨します。</p>
+          <div class="event-url-list">
+            <label for="event-main-url">メイン画面</label>
+            <div class="event-url-row"><input id="event-main-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="main">コピー</button></div>
+            <label for="event-input-url">質問画面</label>
+            <div class="event-url-row"><input id="event-input-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="input">コピー</button></div>
+            <label for="event-draw-url">描画画面</label>
+            <div class="event-url-row"><input id="event-draw-url" type="url" readonly><button class="secondary-button" type="button" data-copy-event-url="draw">コピー</button></div>
+          </div>
+          <div class="admin-form-actions"><button id="save-event-access" type="submit">公開URLを変更</button></div>
+        </form>
+        <p id="event-access-status" class="status" role="status" aria-live="polite"></p>
+        <p id="event-access-error" class="status" role="alert"></p>
+      </section>
       <div class="admin-actions">
         <button id="skip" type="button" disabled>現在の処理を中断</button>
         <button id="reload-config" class="secondary-button" type="button">ファイルから再読み込み</button>
@@ -190,6 +213,6 @@
       </section>
     </section>
   </main>
-  <script type="module" src="/static/js/admin.js?v=15"></script>
+  <script type="module" src="/static/js/admin.js?v=16"></script>
 </body>
 </html>

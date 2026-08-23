@@ -9,6 +9,10 @@ const elements = {
   tabs: [...document.querySelectorAll('[role="tab"]')],
   status: document.querySelector("#admin-status"), skip: document.querySelector("#skip"), reload: document.querySelector("#reload-config"),
   operationStatus: document.querySelector("#operation-status"), operationError: document.querySelector("#operation-error"),
+  eventForm: document.querySelector("#event-access-form"), eventIdentifier: document.querySelector("#event-identifier"),
+  randomizeEventIdentifier: document.querySelector("#randomize-event-identifier"), saveEventAccess: document.querySelector("#save-event-access"),
+  eventMainUrl: document.querySelector("#event-main-url"), eventInputUrl: document.querySelector("#event-input-url"), eventDrawUrl: document.querySelector("#event-draw-url"),
+  eventCopyButtons: [...document.querySelectorAll("[data-copy-event-url]")], eventAccessStatus: document.querySelector("#event-access-status"), eventAccessError: document.querySelector("#event-access-error"),
   aiForm: document.querySelector("#ai-config-form"), ttsForm: document.querySelector("#tts-config-form"),
   aiStatus: document.querySelector("#ai-config-status"), aiError: document.querySelector("#ai-config-error"),
   ttsStatus: document.querySelector("#tts-config-status"), ttsError: document.querySelector("#tts-config-error"),
@@ -45,6 +49,7 @@ let backgroundBusy = false;
 let selectedMusicFile;
 let currentMusicExists = false;
 let musicBusy = false;
+let currentEventIdentifier;
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -53,6 +58,80 @@ function setCurrentTurn(turn) { currentTurn = turn; elements.skip.disabled = !tu
 function turnStatusLabel(status) { return status === "generating" ? "回答生成中" : status === "eating" ? "食事演出中" : "発話中"; }
 function readError(response, fallback) { return response.json().catch(() => ({})).then((body) => body.error || fallback); }
 const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError, stopOtherPreview: releasePreview });
+
+function eventUrls(identifier = elements.eventIdentifier.value.trim()) {
+  const base = identifier ? `${location.origin}/event/${identifier}` : "";
+  return { main: base, input: base ? `${base}/input` : "", draw: base ? `${base}/draw` : "" };
+}
+
+function renderEventUrls() {
+  const urls = eventUrls();
+  elements.eventMainUrl.value = urls.main;
+  elements.eventInputUrl.value = urls.input;
+  elements.eventDrawUrl.value = urls.draw;
+  for (const button of elements.eventCopyButtons) button.disabled = !urls[button.dataset.copyEventUrl];
+}
+
+function randomEventIdentifier() {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const values = crypto.getRandomValues(new Uint8Array(16));
+  return `event-${[...values].map((value) => alphabet[value % alphabet.length]).join("")}`;
+}
+
+async function loadEventAccess() {
+  const response = await fetch(adminUrl("/api/admin/event-access"), { cache: "no-store" });
+  if (!response.ok) throw new Error(await readError(response, "公開URLを読み込めませんでした。"));
+  const result = await response.json();
+  currentEventIdentifier = result.event_identifier;
+  elements.eventIdentifier.value = currentEventIdentifier;
+  renderEventUrls();
+}
+
+async function saveEventAccess(event) {
+  event.preventDefault();
+  if (!token || !elements.eventForm.reportValidity()) return;
+  const eventIdentifier = elements.eventIdentifier.value.trim();
+  if (eventIdentifier === currentEventIdentifier) {
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, "公開URLは変更されていません。");
+    return;
+  }
+  if (!window.confirm("以前の公開URLは直ちに使えなくなります。公開URLを変更しますか？")) return;
+  elements.saveEventAccess.disabled = true;
+  const original = elements.saveEventAccess.textContent;
+  elements.saveEventAccess.textContent = "変更中…";
+  setMessage(elements.eventAccessStatus, elements.eventAccessError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/event-access"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_identifier: eventIdentifier }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "公開URLを変更できませんでした。"));
+    const result = await response.json();
+    currentEventIdentifier = result.event_identifier;
+    elements.eventIdentifier.value = currentEventIdentifier;
+    renderEventUrls();
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, "公開URLを変更しました。以前のリンクは使用できません。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを変更できませんでした。", true);
+  } finally {
+    elements.saveEventAccess.disabled = false;
+    elements.saveEventAccess.textContent = original;
+  }
+}
+
+async function copyEventUrl(event) {
+  const url = eventUrls()[event.currentTarget.dataset.copyEventUrl];
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, "URLをコピーしました。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.eventAccessStatus, elements.eventAccessError, "URLをコピーできませんでした。欄から選択してコピーしてください。", true);
+  }
+}
 
 function activateTab(tab, focus = false) {
   elements.tabs.forEach((candidate) => {
@@ -214,7 +293,7 @@ async function convertBackground(file) {
   return blob;
 }
 async function loadDisplayConfig({ background = true, music = true, volume = true } = {}) {
-  const response = await fetch("/api/display-config", { cache: "no-store" });
+  const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
   if (music) showCurrentMusic(config.background_music_url);
@@ -411,7 +490,7 @@ function handleServerEvent(event) {
 }
 function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(`${scheme}//${location.host}/ws`); setStatus("サーバーへ接続中です");
+  socket = new WebSocket(`${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`); setStatus("サーバーへ接続中です");
   socket.addEventListener("open", () => setStatus(currentTurn ? "処理中" : "待機中"));
   socket.addEventListener("message", ({ data }) => { try { handleServerEvent(JSON.parse(data)); } catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, "状態を更新できませんでした。", true); } });
   socket.addEventListener("close", () => { setStatus("再接続中"); elements.skip.disabled = true; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 2000); });
@@ -502,7 +581,7 @@ async function skip() {
 async function reload() {
   if (!token) return;
   elements.reload.disabled = true; const original = elements.reload.textContent; elements.reload.textContent = "再読み込み中…"; setMessage(elements.operationStatus, elements.operationError);
-  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await loadConfig(); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
+  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await Promise.all([loadConfig(), loadEventAccess()]); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
@@ -526,6 +605,10 @@ for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements])
   });
 }
 elements.skip.addEventListener("click", skip); elements.reload.addEventListener("click", reload); elements.preview.addEventListener("click", previewTts);
+elements.eventForm.addEventListener("submit", saveEventAccess);
+elements.eventIdentifier.addEventListener("input", () => { elements.eventIdentifier.value = elements.eventIdentifier.value.toLowerCase(); renderEventUrls(); });
+elements.randomizeEventIdentifier.addEventListener("click", () => { elements.eventIdentifier.value = randomEventIdentifier(); renderEventUrls(); elements.eventIdentifier.focus(); });
+elements.eventCopyButtons.forEach((button) => button.addEventListener("click", copyEventUrl));
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
@@ -556,10 +639,11 @@ if (!token) {
   setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
   setMessage(elements.displayStatus, elements.displayError, "背景画像を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadConfig();
+  loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
 }
 window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); elements.currentMusic.pause(); });

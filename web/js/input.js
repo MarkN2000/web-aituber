@@ -4,9 +4,11 @@ const submitButton = document.querySelector("#submit-button");
 const status = document.querySelector("#submission-status");
 const textCount = document.querySelector("#text-count");
 const SUBMISSION_COOLDOWN_MS = 1000;
+const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
 
 let isSubmitting = false;
 let isCoolingDown = false;
+let eventEnded = false;
 
 function setStatus(message, kind = "") {
   status.textContent = message;
@@ -14,7 +16,8 @@ function setStatus(message, kind = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = isSubmitting || isCoolingDown || !text.value.trim();
+  submitButton.disabled = eventEnded || isSubmitting || isCoolingDown || !text.value.trim();
+  text.disabled = eventEnded;
   submitButton.dataset.loading = String(isSubmitting);
   if (submitButton.classList.contains("composer-send-button")) {
     const label = isSubmitting ? "質問を送信中" : "質問を送る";
@@ -55,13 +58,14 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const formData = new FormData(form);
-    const response = await fetch("/api/submissions", {
+    const response = await fetch(`${eventBasePath}/api/submissions`, {
       method: "POST",
       body: formData,
     });
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
+      if (response.status === 404) eventEnded = true;
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 

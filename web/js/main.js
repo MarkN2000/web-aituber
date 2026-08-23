@@ -7,6 +7,7 @@ import { createSourceButton, SourceDialog } from "./sources.js";
 import { VrmViewer } from "./vrm-viewer.js?v=10";
 
 const debugEnabled = isDebugEnabled(window.location.search);
+const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
 
 const elements = {
   startScreen: document.querySelector("#start-screen"),
@@ -68,6 +69,7 @@ let displayConfig;
 let appliedViewerConfigKey;
 let pendingViewerConfig;
 let viewerReloading = false;
+let eventEnded = false;
 
 function applyBackground(config) {
   elements.stage.style.backgroundColor = config.background_color || "#202632";
@@ -90,7 +92,11 @@ function viewerConfigKey(config) {
 }
 
 async function fetchDisplayConfig() {
-  const response = await fetch("/api/display-config", { cache: "no-store" });
+  const response = await fetch(`${eventBasePath}/api/display-config`, { cache: "no-store" });
+  if (response.status === 404) {
+    eventEnded = true;
+    throw new Error("このイベントリンクは終了しました。");
+  }
   if (!response.ok) throw new Error(`表示設定を取得できませんでした (${response.status})`);
   return response.json();
 }
@@ -246,7 +252,7 @@ function connect(connectionState = "connecting") {
   if (!started) return;
   updateDebugState({ connection: connectionState });
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(`${scheme}//${window.location.host}/ws`);
+  socket = new WebSocket(`${scheme}//${window.location.host}${eventBasePath}/ws`);
   socket.addEventListener("open", () => {
     updateDebugState({ connection: "connected" });
     void refreshDisplayConfig();
@@ -290,6 +296,9 @@ function handleServerEvent(event) {
       break;
     case "display_config_changed":
       void refreshDisplayConfig();
+      break;
+    case "event_ended":
+      endEventAccess();
       break;
     case "state":
       if (currentTurn?.turn_id !== event.turn.turn_id) {
@@ -336,6 +345,30 @@ function handleServerEvent(event) {
     default:
       console.warn("未対応の表示イベントです", event);
   }
+}
+
+function endEventAccess() {
+  eventEnded = true;
+  started = false;
+  window.clearTimeout(reconnectTimer);
+  socket?.close();
+  queue?.dispose();
+  queue = undefined;
+  backgroundMusic?.dispose();
+  backgroundMusic = undefined;
+  viewer?.dispose();
+  viewer = undefined;
+  elements.panel.hidden = true;
+  elements.history.hidden = true;
+  elements.startScreen.hidden = false;
+  elements.start.disabled = true;
+  elements.startError.textContent = "このイベントリンクは終了しました。";
+  const form = document.querySelector("#submission-form");
+  const text = document.querySelector("#text");
+  const submit = document.querySelector("#submit-button");
+  if (form) form.setAttribute("aria-disabled", "true");
+  if (text) text.disabled = true;
+  if (submit) submit.disabled = true;
 }
 
 function receiveSegment(segment) {
@@ -443,7 +476,7 @@ async function startMain() {
   } catch (error) {
     console.error(error);
     elements.startError.textContent = error.message || "表示を開始できませんでした。";
-    elements.start.disabled = false;
+    elements.start.disabled = eventEnded;
     queue?.dispose();
     queue = undefined;
     backgroundMusic?.dispose();

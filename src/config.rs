@@ -24,6 +24,7 @@ pub struct ConfigReloadResult {
 pub struct AppConfig {
     pub bind: String,
     pub admin_token: String,
+    pub event_identifier: String,
     pub llm: LlmConfig,
     pub tts: TtsConfig,
     pub ffmpeg_path: String,
@@ -171,6 +172,7 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         required("bind", &self.bind)?;
         required("admin_token", &self.admin_token)?;
+        validate_event_identifier(&self.event_identifier)?;
         required("llm.api_url", &self.llm.api_url)?;
         validate_http_url("llm.api_url", &self.llm.api_url)?;
         required("llm.api_key", &self.llm.api_key)?;
@@ -362,6 +364,21 @@ pub fn validate_http_url(name: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_event_identifier(value: &str) -> Result<()> {
+    if !(8..=64).contains(&value.len()) {
+        bail!("設定項目 event_identifier は8文字から64文字にしてください");
+    }
+    if !value.bytes().all(|character| {
+        character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'-'
+    }) {
+        bail!("設定項目 event_identifier は英小文字、数字、ハイフンだけにしてください");
+    }
+    if value.starts_with('-') || value.ends_with('-') {
+        bail!("設定項目 event_identifier の先頭と末尾にハイフンは使用できません");
+    }
+    Ok(())
+}
+
 fn default_search_fillers() -> Vec<String> {
     vec!["少し調べてみますね。".to_owned()]
 }
@@ -377,6 +394,19 @@ fn required(name: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn event_identifier_accepts_public_url_safe_value() {
+        assert!(validate_event_identifier("summer-2026-8k2m").is_ok());
+    }
+
+    #[test]
+    fn event_identifier_rejects_short_uppercase_and_edge_hyphen() {
+        assert!(validate_event_identifier("short").is_err());
+        assert!(validate_event_identifier("Event-2026").is_err());
+        assert!(validate_event_identifier("-event-2026").is_err());
+        assert!(validate_event_identifier("event-2026-").is_err());
+    }
 
     #[test]
     fn character_defaults_are_available() {

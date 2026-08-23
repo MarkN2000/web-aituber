@@ -481,6 +481,48 @@ textarea::placeholder {
   gap: 10px;
 }
 
+.event-access-section {
+  margin-bottom: 24px;
+  padding: 20px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: #f8f8f6;
+}
+
+.event-access-section > h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.event-identifier-row,
+.event-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.event-url-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.event-url-list label:not(:first-child) {
+  margin-top: 6px;
+}
+
+.event-url-row input {
+  font-size: .85rem;
+}
+
+.event-identifier-row button,
+.event-url-row button {
+  min-height: 44px;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
 .admin-form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -641,6 +683,7 @@ textarea::placeholder {
 }
 
 .admin-card #operation-status,
+.admin-card #event-access-status,
 .admin-card #ai-config-status,
 .admin-card #tts-config-status,
 .admin-card #tts-user-dictionary-status,
@@ -651,6 +694,7 @@ textarea::placeholder {
 }
 
 .admin-card #operation-error,
+.admin-card #event-access-error,
 .admin-card #ai-config-error,
 .admin-card #tts-config-error,
 .admin-card #tts-user-dictionary-error,
@@ -812,6 +856,11 @@ textarea::placeholder {
   }
 
   .tts-speaker-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .event-identifier-row,
+  .event-url-row {
     grid-template-columns: 1fr;
   }
 

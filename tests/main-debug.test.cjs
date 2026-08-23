@@ -60,6 +60,7 @@ function loadDebugContext() {
     let reconnectTimer;
     let displayConfigRefreshes = 0;
     let started = true;
+    const eventBasePath = "/event/test-event-2026";
     const elements = { debugOverlay: {} };
     const rendered = this.rendered;
     function renderDebugState(_element, state) { rendered.push({ ...state }); }
@@ -80,6 +81,7 @@ test("接続状態は接続中・接続済み・再接続中へ遷移する", ()
   const { context, rendered, sockets, timers } = loadDebugContext();
 
   context.connect();
+  assert.equal(sockets[0].url, "ws://localhost:3000/event/test-event-2026/ws");
   sockets[0].emit("open");
   assert.equal(context.displayConfigRefreshes(), 1);
   sockets[0].emit("close");

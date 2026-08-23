@@ -13,6 +13,7 @@ const HUE_RING_RADIUS = (HUE_RING_OUTER_RADIUS + HUE_RING_INNER_RADIUS) / 2;
 const SV_FIELD_SIZE = 124;
 const SV_FIELD_START = (COLOR_PICKER_SIZE - SV_FIELD_SIZE) / 2;
 const SUBMISSION_COOLDOWN_MS = 1000;
+const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
 
 const canvas = document.querySelector("#food-canvas");
 const context = canvas.getContext("2d");
@@ -41,6 +42,7 @@ let colorPickerRegion;
 let hasDrawing = false;
 let isSubmitting = false;
 let isCoolingDown = false;
+let eventEnded = false;
 const undoHistory = [];
 
 function clamp01(value) {
@@ -474,7 +476,7 @@ function setStatus(message, kind = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = isSubmitting || isCoolingDown || !hasDrawing;
+  submitButton.disabled = eventEnded || isSubmitting || isCoolingDown || !hasDrawing;
   submitButton.textContent = isSubmitting ? "送信中…" : "キャラクターに食べてもらう";
   updateUndoState();
 }
@@ -633,12 +635,13 @@ async function submitFood() {
     const formData = new FormData();
     formData.set("vrm_image", vrmImage, "food-vrm.webp");
     formData.set("ai_image", aiImage, "food-ai.webp");
-    const response = await fetch("/api/food-submissions", {
+    const response = await fetch(`${eventBasePath}/api/food-submissions`, {
       method: "POST",
       body: formData,
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
+      if (response.status === 404) eventEnded = true;
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 

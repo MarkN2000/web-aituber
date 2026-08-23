@@ -124,6 +124,8 @@ pub enum ServerEvent {
         turns: Vec<ConversationTurn>,
     },
     DisplayConfigChanged,
+    EventAccessChanged,
+    EventEnded,
     State {
         turn: TurnState,
     },
@@ -185,6 +187,18 @@ mod tests {
     fn display_config_change_uses_expected_name() {
         let value = serde_json::to_value(ServerEvent::DisplayConfigChanged).unwrap();
         assert_eq!(value["type"], "display_config_changed");
+    }
+
+    #[test]
+    fn event_access_events_use_expected_names() {
+        assert_eq!(
+            serde_json::to_value(ServerEvent::EventAccessChanged).unwrap()["type"],
+            "event_access_changed"
+        );
+        assert_eq!(
+            serde_json::to_value(ServerEvent::EventEnded).unwrap()["type"],
+            "event_ended"
+        );
     }
 
     #[test]
