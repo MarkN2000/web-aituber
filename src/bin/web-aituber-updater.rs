@@ -49,6 +49,9 @@ fn main() {
 
 fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
     let args = parse_args(values)?;
+    let backup_root = args.work_root.join("backup");
+    fs::create_dir(&backup_root).context("バックアップ用フォルダを作成できません")?;
+
     append_update_log(
         log_path,
         &format!("サーバープロセス {} の終了を待ちます", args.parent_pid),
@@ -56,8 +59,6 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
     wait_for_parent(args.parent_pid, PARENT_EXIT_TIMEOUT)?;
     append_update_log(log_path, "サーバープロセスの終了を確認しました");
 
-    let backup_root = args.work_root.join("backup");
-    fs::create_dir(&backup_root).context("バックアップ用フォルダを作成できません")?;
     let items = [
         args.executable_name.as_str(),
         updater_file_name(),
@@ -79,7 +80,7 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
             rollback(&args.install_root, &backup_root, &swapped)
                 .context("更新失敗後に旧ファイルへ戻せませんでした")?;
             append_update_log(log_path, "旧ファイルへ戻しました");
-            restart_server(&args.install_root, &args.executable_name)
+            restart_previous_server(&args.install_root, &args.executable_name, log_path)
                 .context("旧バージョンも再起動できませんでした")?;
             return Err(error);
         }
@@ -92,7 +93,7 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
         Err(error) => {
             append_update_log(log_path, "起動に失敗したため旧ファイルへ戻します");
             rollback(&args.install_root, &backup_root, &swapped)?;
-            restart_server(&args.install_root, &args.executable_name)
+            restart_previous_server(&args.install_root, &args.executable_name, log_path)
                 .context("旧バージョンも再起動できませんでした")?;
             return Err(error);
         }
@@ -105,7 +106,7 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
                 &format!("新しいサーバーが起動直後に終了しました: {status}"),
             );
             rollback(&args.install_root, &backup_root, &swapped)?;
-            restart_server(&args.install_root, &args.executable_name)
+            restart_previous_server(&args.install_root, &args.executable_name, log_path)
                 .context("旧バージョンも再起動できませんでした")?;
             bail!("新しいサーバーが起動直後に終了したため旧バージョンへ戻しました");
         }
@@ -118,7 +119,7 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
             let _ = server.kill();
             let _ = server.wait();
             rollback(&args.install_root, &backup_root, &swapped)?;
-            restart_server(&args.install_root, &args.executable_name)
+            restart_previous_server(&args.install_root, &args.executable_name, log_path)
                 .context("旧バージョンも再起動できませんでした")?;
             return Err(error);
         }
@@ -242,12 +243,24 @@ fn restart_server(install_root: &Path, executable_name: &str) -> Result<Child> {
     command.spawn().context("サーバーを再起動できません")
 }
 
+fn restart_previous_server(
+    install_root: &Path,
+    executable_name: &str,
+    log_path: Option<&Path>,
+) -> Result<()> {
+    append_update_log(log_path, "旧バージョンを再起動します");
+    let mut server = restart_server(install_root, executable_name)?;
+    if let Some(status) = wait_for_early_exit(&mut server, STARTUP_CONFIRMATION_TIME)? {
+        bail!("旧バージョンが起動直後に終了しました: {status}");
+    }
+    append_update_log(log_path, "旧バージョンの起動を確認しました");
+    Ok(())
+}
+
 fn wait_for_early_exit(child: &mut Child, duration: Duration) -> Result<Option<ExitStatus>> {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
-        if let Some(status) = child
-            .try_wait()
-            .context("新しいサーバーの状態を確認できません")?
+        if let Some(status) = child.try_wait().context("サーバーの状態を確認できません")?
         {
             return Ok(Some(status));
         }
