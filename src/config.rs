@@ -30,7 +30,15 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub tts: TtsConfig,
     pub ffmpeg_path: String,
+    #[serde(default)]
+    pub drawing: DrawingConfig,
     pub character: CharacterConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DrawingConfig {
+    #[serde(default = "default_drawing_stabilization")]
+    pub stabilization: u8,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -138,6 +146,14 @@ impl Default for CharacterConfig {
     }
 }
 
+impl Default for DrawingConfig {
+    fn default() -> Self {
+        Self {
+            stabilization: default_drawing_stabilization(),
+        }
+    }
+}
+
 impl Default for ScreenOverlayConfig {
     fn default() -> Self {
         Self {
@@ -202,6 +218,10 @@ fn default_light_brightness() -> f32 {
     1.0
 }
 
+fn default_drawing_stabilization() -> u8 {
+    3
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let path = env::var("APP_CONFIG_FILE").unwrap_or_else(|_| "config.json".to_owned());
@@ -238,6 +258,9 @@ impl AppConfig {
         required("tts.engine_url", &self.tts.engine_url)?;
         validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
+        if self.drawing.stabilization > 10 {
+            bail!("設定項目 drawing.stabilization は0から10の整数にしてください");
+        }
         required("character.vrm_url", &self.character.vrm_url)?;
         if !self.character.light.brightness.is_finite()
             || !(0.0..=2.0).contains(&self.character.light.brightness)
@@ -583,6 +606,18 @@ mod tests {
     }
 
     #[test]
+    fn previous_config_without_drawing_uses_default_stabilization() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value.as_object_mut().unwrap().remove("drawing");
+
+        let config: AppConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.drawing.stabilization, 3);
+        config.validate().unwrap();
+    }
+
+    #[test]
     fn example_config_is_valid() {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
@@ -598,6 +633,19 @@ mod tests {
         assert!(config.validate().is_ok());
 
         config.character.screen_overlays.top_right.scale = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn drawing_stabilization_must_be_between_zero_and_ten() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        for valid in [0, 3, 10] {
+            config.drawing.stabilization = valid;
+            assert!(config.validate().is_ok());
+        }
+
+        config.drawing.stabilization = 11;
         assert!(config.validate().is_err());
     }
 

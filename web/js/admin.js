@@ -31,6 +31,9 @@ const elements = {
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
   engineUrl: document.querySelector("#tts-engine-url"),
+  drawingForm: document.querySelector("#drawing-stabilization-form"), drawingStabilization: document.querySelector("#drawing-stabilization"),
+  drawingStabilizationValue: document.querySelector("#drawing-stabilization-value"), saveDrawingStabilization: document.querySelector("#save-drawing-stabilization"),
+  drawingStatus: document.querySelector("#drawing-stabilization-status"), drawingError: document.querySelector("#drawing-stabilization-error"),
   vrmForm: document.querySelector("#vrm-model-form"), vrmInput: document.querySelector("#vrm-model"),
   selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
   brightnessForm: document.querySelector("#model-brightness-form"), brightness: document.querySelector("#model-brightness"),
@@ -89,6 +92,7 @@ let previewAbortController;
 let loadedConfig;
 let selectedSpeakerId;
 let selectedVrmFile;
+let drawingBusy = false;
 let vrmBusy = false;
 let brightnessBusy = false;
 let antialiasBusy = false;
@@ -252,6 +256,15 @@ function tabKeydown(event) {
 function updateVrmControls() {
   elements.vrmInput.disabled = vrmBusy || !token;
   elements.uploadVrm.disabled = vrmBusy || !selectedVrmFile || !token;
+}
+function updateDrawingControls() {
+  elements.drawingStabilization.disabled = drawingBusy || !token;
+  elements.saveDrawingStabilization.disabled = drawingBusy || !token;
+}
+function updateDrawingStabilizationLabel() {
+  const label = `${elements.drawingStabilization.value} / 10`;
+  elements.drawingStabilizationValue.value = label;
+  elements.drawingStabilizationValue.textContent = label;
 }
 function updateBrightnessControls() {
   elements.brightness.disabled = brightnessBusy || !token;
@@ -505,11 +518,16 @@ function setVectorInputs(inputs, values) {
 function vectorValues(inputs) {
   return inputs.map((input) => Number(input.value));
 }
-async function loadDisplayConfig({ background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, brightness = true, antialias = true, layout = true } = {}) {
+async function loadDisplayConfig({ background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, drawing = true, brightness = true, antialias = true, layout = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
   if (music) showCurrentMusic(config.background_music_url);
+  if (drawing) {
+    const stabilization = Number(config.drawing?.stabilization);
+    elements.drawingStabilization.value = String(Number.isInteger(stabilization) ? stabilization : 3);
+    updateDrawingStabilizationLabel();
+  }
   if (brightness) {
     const configuredBrightness = Number(config.light?.brightness);
     elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
@@ -715,6 +733,31 @@ async function saveModelBrightness(event) {
     brightnessBusy = false;
     elements.saveBrightness.textContent = original;
     updateBrightnessControls();
+  }
+}
+async function saveDrawingStabilization(event) {
+  event.preventDefault();
+  if (!token || drawingBusy) return;
+  drawingBusy = true;
+  updateDrawingControls();
+  const original = elements.saveDrawingStabilization.textContent;
+  elements.saveDrawingStabilization.textContent = "保存中…";
+  setMessage(elements.drawingStatus, elements.drawingError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/drawing-stabilization"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stabilization: Number(elements.drawingStabilization.value) }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "手ブレ補正を保存できませんでした。"));
+    setMessage(elements.drawingStatus, elements.drawingError, "手ブレ補正を保存しました。描画画面を再読み込みすると反映されます。");
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.drawingStatus, elements.drawingError, error.message || "手ブレ補正を保存できませんでした。", true);
+  } finally {
+    drawingBusy = false;
+    elements.saveDrawingStabilization.textContent = original;
+    updateDrawingControls();
   }
 }
 async function saveModelAntialias(event) {
@@ -1172,6 +1215,9 @@ elements.eventQrDialog.addEventListener("close", releaseEventQrImage);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
 elements.vrmInput.addEventListener("change", selectVrmModel);
 elements.vrmForm.addEventListener("submit", uploadVrmModel);
+elements.drawingStabilization.addEventListener("input", updateDrawingStabilizationLabel);
+elements.drawingForm.addEventListener("submit", saveDrawingStabilization);
+updateDrawingControls();
 elements.brightness.addEventListener("input", updateBrightnessLabel);
 elements.brightnessForm.addEventListener("submit", saveModelBrightness);
 elements.antialiasForm.addEventListener("submit", saveModelAntialias);
@@ -1214,10 +1260,11 @@ elements.aiForm.addEventListener("submit", (event) => { event.preventDefault(); 
 elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("tts", elements.ttsForm, elements.saveTts, elements.ttsStatus, elements.ttsError); });
 if (!token) {
   setMessage(elements.operationStatus, elements.operationError, "管理用トークンが指定されていません。", true);
+  setMessage(elements.drawingStatus, elements.drawingError, "手ブレ補正を変更するには管理用トークンが必要です。", true);
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();

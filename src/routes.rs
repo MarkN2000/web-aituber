@@ -76,6 +76,10 @@ pub fn router(state: AppState) -> Router {
             axum::routing::put(update_model_antialias),
         )
         .route(
+            "/api/admin/drawing-stabilization",
+            axum::routing::put(update_drawing_stabilization),
+        )
+        .route(
             "/api/admin/model-layout",
             axum::routing::put(update_model_layout),
         )
@@ -400,6 +404,7 @@ async fn display_config_response(state: &AppState) -> Response {
         version_character_asset_urls(config.character.clone(), state.assets_dir.as_ref()).await;
     let response = DisplayConfigDto {
         screen_overlays: screen_overlays_display_config(state, &character).await,
+        drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
         background_image_url,
         background_music_url,
@@ -1142,6 +1147,32 @@ async fn update_model_antialias(
                 StatusCode::BAD_REQUEST,
                 "アンチエイリアス設定を保存できませんでした",
             )
+        }
+    }
+}
+
+async fn update_drawing_stabilization(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<DrawingStabilizationRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if request.stabilization > 10 {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "手ブレ補正は0から10の整数で指定してください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.drawing.stabilization = request.stabilization;
+    }) {
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => {
+            tracing::warn!(error = ?error, "手ブレ補正を保存できませんでした");
+            admin_error(StatusCode::BAD_REQUEST, "手ブレ補正を保存できませんでした")
         }
     }
 }
@@ -2143,6 +2174,7 @@ struct DisplayConfigDto {
     background_image_url: Option<String>,
     background_music_url: Option<String>,
     screen_overlays: ScreenOverlaysDisplayConfigDto,
+    drawing: crate::config::DrawingConfig,
 }
 
 #[derive(Serialize)]
@@ -2242,6 +2274,11 @@ struct ModelBrightnessRequest {
 #[derive(Deserialize)]
 struct ModelAntialiasRequest {
     antialias: bool,
+}
+
+#[derive(Deserialize)]
+struct DrawingStabilizationRequest {
+    stabilization: u8,
 }
 
 #[derive(Deserialize)]
@@ -3663,6 +3700,7 @@ mod tests {
         assert!(!body.contains("test-token"));
         assert!(body.contains("vrm_url"));
         assert!(body.contains(r#""antialias":true"#));
+        assert!(body.contains(r#""drawing":{"stabilization":3}"#));
     }
 
     #[test]
@@ -4724,6 +4762,59 @@ mod tests {
         assert!(!saved.character.antialias);
         assert_eq!(saved.character.light.brightness, 1.0);
         assert!(!state.config.current().character.antialias);
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn drawing_stabilization_update_requires_token_validates_and_preserves_other_settings() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let config = (*state.config.current()).clone();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/drawing-stabilization")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"stabilization":7}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/drawing-stabilization?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"stabilization":11}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.config.current().drawing.stabilization, 3);
+
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/drawing-stabilization?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"stabilization":7}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.drawing.stabilization, 7);
+        assert_eq!(saved.character.light.brightness, 1.0);
+        assert_eq!(state.config.current().drawing.stabilization, 7);
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
 

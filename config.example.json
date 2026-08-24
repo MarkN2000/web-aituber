@@ -20,6 +20,9 @@
     "speaker_id": 1878365377
   },
   "ffmpeg_path": "ffmpeg",
+  "drawing": {
+    "stabilization": 3
+  },
   "character": {
     "vrm_url": "/assets/model.vrm",
     "antialias": true,

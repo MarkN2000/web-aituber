@@ -15,6 +15,8 @@ const HUE_RING_RADIUS = (HUE_RING_OUTER_RADIUS + HUE_RING_INNER_RADIUS) / 2;
 const SV_FIELD_SIZE = 124;
 const SV_FIELD_START = (COLOR_PICKER_SIZE - SV_FIELD_SIZE) / 2;
 const SUBMISSION_COOLDOWN_MS = 1000;
+const DEFAULT_DRAWING_STABILIZATION = 3;
+const STABILIZATION_TIME_CONSTANT_MS = 8;
 const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
 
 const canvas = document.querySelector("#food-canvas");
@@ -33,6 +35,7 @@ const drawingSurface = document.querySelector(".drawing-surface");
 
 let activePointer;
 let previousPoint;
+let previousInputTime;
 let activeTool = "pen";
 let brushSize = 20;
 let selectedColor = "#e85d3f";
@@ -45,7 +48,25 @@ let hasDrawing = false;
 let isSubmitting = false;
 let isCoolingDown = false;
 let eventEnded = false;
+let drawingStabilization = DEFAULT_DRAWING_STABILIZATION;
+let pendingDrawingStabilization;
 const undoHistory = [];
+
+async function loadDrawingConfig() {
+  const response = await fetch(`${eventBasePath}/api/display-config`, { cache: "no-store" });
+  if (response.status === 404) {
+    eventEnded = true;
+    showInvalidEventScreen();
+    return;
+  }
+  if (!response.ok) throw new Error(`描画設定を取得できませんでした (${response.status})`);
+  const config = await response.json();
+  const stabilization = Number(config.drawing?.stabilization);
+  if (!Number.isInteger(stabilization) || stabilization < 0 || stabilization > 10) {
+    throw new Error("手ブレ補正の設定値が不正です。");
+  }
+  return stabilization;
+}
 
 function clamp01(value) {
   return Math.min(Math.max(value, 0), 1);
@@ -294,6 +315,16 @@ function canvasPoint(event) {
   };
 }
 
+function stabilizePoint(previous, next, elapsedMs, stabilization) {
+  if (stabilization <= 0) return next;
+  const timeConstant = stabilization * STABILIZATION_TIME_CONSTANT_MS;
+  const ratio = 1 - Math.exp(-Math.max(1, elapsedMs) / timeConstant);
+  return {
+    x: previous.x + ((next.x - previous.x) * ratio),
+    y: previous.y + ((next.y - previous.y) * ratio),
+  };
+}
+
 function drawLine(from, to) {
   context.save();
   context.beginPath();
@@ -322,23 +353,45 @@ function startDrawing(event) {
   rememberCanvas();
   activePointer = event.pointerId;
   previousPoint = point;
+  previousInputTime = event.timeStamp;
   canvas.setPointerCapture(event.pointerId);
   drawLine(previousPoint, { x: previousPoint.x + 0.01, y: previousPoint.y });
+}
+
+function drawPointerSamples(event) {
+  const coalesced = event.getCoalescedEvents?.() || [];
+  const samples = coalesced.length > 0 ? coalesced : [event];
+  for (const sample of samples) {
+    const point = canvasPoint(sample);
+    const stabilized = stabilizePoint(
+      previousPoint,
+      point,
+      sample.timeStamp - previousInputTime,
+      drawingStabilization,
+    );
+    drawLine(previousPoint, stabilized);
+    previousPoint = stabilized;
+    previousInputTime = sample.timeStamp;
+  }
 }
 
 function continueDrawing(event) {
   if (event.pointerId !== activePointer) return;
   event.preventDefault();
-  const point = canvasPoint(event);
-  drawLine(previousPoint, point);
-  previousPoint = point;
+  drawPointerSamples(event);
 }
 
 function stopDrawing(event) {
   if (event.pointerId !== activePointer) return;
+  if (event.type === "pointerup") drawPointerSamples(event);
   if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   activePointer = undefined;
   previousPoint = undefined;
+  previousInputTime = undefined;
+  if (pendingDrawingStabilization !== undefined) {
+    drawingStabilization = pendingDrawingStabilization;
+    pendingDrawingStabilization = undefined;
+  }
 }
 
 function setTool(tool) {
@@ -715,3 +768,13 @@ selectHexColor(selectedColor);
 setTool("pen");
 setBrushSize(brushSize);
 clearCanvas();
+void loadDrawingConfig()
+  .then((stabilization) => {
+    if (stabilization === undefined) return;
+    if (activePointer === undefined) drawingStabilization = stabilization;
+    else pendingDrawingStabilization = stabilization;
+  })
+  .catch((error) => {
+    console.error(error);
+    setStatus("描画設定を読み込めなかったため、標準の手ブレ補正を使用します。", "error");
+  });

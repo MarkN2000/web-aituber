@@ -174,7 +174,23 @@
 
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
-      <p class="admin-help">変更は接続中のメイン画面へ通知されます。VRMモデル、明るさ、アンチエイリアスは現在の処理が終わってから切り替わります。</p>
+      <p class="admin-help">メイン画面の変更は接続中の画面へ通知されます。VRMモデル、明るさ、アンチエイリアスは現在の処理が終わってから切り替わります。</p>
+      <section class="display-setting-section" aria-labelledby="drawing-settings-title">
+        <h3 id="drawing-settings-title">描画画面</h3>
+        <form id="drawing-stabilization-form" novalidate>
+          <label for="drawing-stabilization">手ブレ補正</label>
+          <div class="volume-control">
+            <input id="drawing-stabilization" type="range" min="0" max="10" step="1" value="3">
+            <output id="drawing-stabilization-value" for="drawing-stabilization">3 / 10</output>
+          </div>
+          <p class="field-note admin-field-note">0は補正なしです。値を大きくすると線が滑らかになる代わりに、ペン先の追従が遅くなります。</p>
+          <div class="admin-form-actions">
+            <button id="save-drawing-stabilization" type="submit">手ブレ補正を保存</button>
+          </div>
+        </form>
+        <p id="drawing-stabilization-status" class="status" role="status" aria-live="polite"></p>
+        <p id="drawing-stabilization-error" class="status" role="alert"></p>
+      </section>
       <section class="display-setting-section" aria-labelledby="vrm-model-title">
         <h3 id="vrm-model-title">VRMモデル</h3>
         <form id="vrm-model-form" novalidate>
@@ -377,6 +393,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=34"></script>
+  <script type="module" src="/static/js/admin.js?v=35"></script>
 </body>
 </html>
