@@ -47,5 +47,5 @@ test("回答終了処理は表情を直接解除せず待機状態へ移る", ()
 });
 
 test("メイン画面は更新したVRMビューアーを読み込む", () => {
-  assert.match(source, /import\("\.\/vrm-viewer\.js\?v=17"\)/);
+  assert.match(source, /import\("\.\/vrm-viewer\.js\?v=18"\)/);
 });

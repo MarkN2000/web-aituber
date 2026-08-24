@@ -155,7 +155,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=17");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=18");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,

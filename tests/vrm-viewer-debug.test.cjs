@@ -145,7 +145,49 @@ test("Canvasはリサイズ時の実DPRで描画する", () => {
 });
 
 test("WebGL Rendererへアンチエイリアス設定を渡す", () => {
+  assert.match(source, /this\.antialias = antialias;/);
   assert.match(source, /new THREE\.WebGLRenderer\(\{ canvas, antialias, alpha: true \}\)/);
+});
+
+test("アンチエイリアスONではカットアウトマテリアルへalphaToCoverageを適用する", () => {
+  const viewer = createViewer();
+  const cutout = { alphaTest: 0.5, alphaToCoverage: false };
+  const opaque = { alphaTest: 0, alphaToCoverage: false };
+  viewer.antialias = true;
+  viewer.vrm = {
+    scene: {
+      traverse(callback) {
+        callback({ material: [cutout, opaque] });
+        callback({});
+      },
+    },
+  };
+
+  viewer.configureMaterialAntialiasing();
+
+  assert.equal(cutout.alphaToCoverage, true);
+  assert.equal(opaque.alphaToCoverage, false);
+});
+
+test("アンチエイリアスOFFではカットアウトマテリアルを変更しない", () => {
+  const viewer = createViewer();
+  const cutout = { alphaTest: 0.5, alphaToCoverage: false };
+  viewer.antialias = false;
+  viewer.vrm = {
+    scene: {
+      traverse(callback) {
+        callback({ material: cutout });
+      },
+    },
+  };
+
+  viewer.configureMaterialAntialiasing();
+
+  assert.equal(cutout.alphaToCoverage, false);
+});
+
+test("モデルをシーンへ追加する前にカットアウト用アンチエイリアスを設定する", () => {
+  assert.match(source, /this\.configureMaterialAntialiasing\(\);[\s\S]*?this\.scene\.add\(this\.vrm\.scene\);/);
 });
 
 test("VRM描画を最大30fpsに制限する", () => {

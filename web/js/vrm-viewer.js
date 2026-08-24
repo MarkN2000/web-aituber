@@ -17,6 +17,7 @@ export class VrmViewer {
     this.clock = new THREE.Clock();
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+    this.antialias = antialias;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias, alpha: true });
     this.loader = new GLTFLoader();
     this.loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -59,6 +60,7 @@ export class VrmViewer {
     VRMUtils.removeUnnecessaryVertices(this.vrm.scene);
     VRMUtils.combineSkeletons(this.vrm.scene);
     this.vrm.scene.traverse((object) => { object.frustumCulled = false; });
+    this.configureMaterialAntialiasing();
     if (this.vrm.meta?.metaVersion === '0') VRMUtils.rotateVRM0(this.vrm);
     if (this.vrm.lookAt) {
       const proxy = new VRMLookAtQuaternionProxy(this.vrm.lookAt);
@@ -72,6 +74,16 @@ export class VrmViewer {
     await this.loadMotions(config);
     this.setIdleExpression();
     this.resumeIdle();
+  }
+
+  configureMaterialAntialiasing() {
+    if (!this.antialias) return;
+    this.vrm.scene.traverse((object) => {
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (material?.alphaTest > 0) material.alphaToCoverage = true;
+      }
+    });
   }
 
   configureScene(config) {
