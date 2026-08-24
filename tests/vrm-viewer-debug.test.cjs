@@ -165,23 +165,11 @@ test("VRM描画を最大30fpsに制限する", () => {
   assert.equal(renders, 4);
 });
 
-test("表示状態に応じて描画ループを開始・停止する", () => {
-  const viewer = Object.create(context.VrmViewer.prototype);
-  const loops = [];
-  let clockResets = 0;
-  viewer.renderingEnabled = false;
-  viewer.lastFrameTime = 100;
-  viewer.frame = () => {};
-  viewer.clock = { getDelta: () => { clockResets += 1; } };
-  viewer.renderer = { setAnimationLoop: (callback) => loops.push(callback) };
-
-  viewer.setRenderingEnabled(true);
-  viewer.setRenderingEnabled(true);
-  viewer.setRenderingEnabled(false);
-
-  assert.deepEqual(loops, [viewer.frame, null]);
-  assert.equal(clockResets, 2);
-  assert.equal(viewer.lastFrameTime, undefined);
+test("描画ループは画面の表示状態では解除せず破棄時だけ停止する", () => {
+  assert.match(source, /this\.renderer\.setAnimationLoop\(this\.frame\)/);
+  assert.match(source, /dispose\(\) \{[\s\S]*this\.renderer\.setAnimationLoop\(null\)/);
+  assert.doesNotMatch(source, /document\.visibilityState/);
+  assert.doesNotMatch(source, /setRenderingEnabled/);
 });
 
 test("音声停止中は口の表情を毎フレーム更新しない", () => {

@@ -37,7 +37,6 @@ export class VrmViewer {
     this.onDebugStateChange = onDebugStateChange;
     this.lastDebugStateKey = undefined;
     this.lastFrameTime = undefined;
-    this.renderingEnabled = false;
     this.frame = this.frame.bind(this);
     this.onResize = this.onResize.bind(this);
   }
@@ -47,7 +46,7 @@ export class VrmViewer {
     this.configureScene(config);
     this.onResize();
     window.addEventListener('resize', this.onResize);
-    this.setRenderingEnabled(document.visibilityState === 'visible');
+    this.renderer.setAnimationLoop(this.frame);
 
     let gltf;
     try {
@@ -403,14 +402,6 @@ export class VrmViewer {
     this.renderer.render(this.scene, this.camera);
   }
 
-  setRenderingEnabled(enabled) {
-    if (this.renderingEnabled === enabled) return;
-    this.renderingEnabled = enabled;
-    this.lastFrameTime = undefined;
-    this.clock.getDelta();
-    this.renderer.setAnimationLoop(enabled ? this.frame : null);
-  }
-
   onResize() {
     const width = this.canvas.clientWidth || window.innerWidth;
     const height = this.canvas.clientHeight || window.innerHeight;
@@ -422,7 +413,7 @@ export class VrmViewer {
 
   dispose() {
     window.removeEventListener('resize', this.onResize);
-    this.setRenderingEnabled(false);
+    this.renderer.setAnimationLoop(null);
     this.clearFoodProp();
     this.disposeFoodPropGizmo();
     this.mixer?.stopAllAction();

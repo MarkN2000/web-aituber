@@ -5,7 +5,7 @@ import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.j
 import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=13";
+import { VrmViewer } from "./vrm-viewer.js?v=14";
 
 const debugEnabled = isDebugEnabled(window.location.search);
 const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
@@ -231,7 +231,6 @@ function handleVisibilityChange() {
   const visible = document.visibilityState === "visible";
   if (pageVisible === visible) return;
   pageVisible = visible;
-  viewer?.setRenderingEnabled(visible);
   if (visible) {
     resumePlayback();
   } else {
