@@ -46,6 +46,8 @@ const MAX_VRM_MODEL_REQUEST_BYTES: usize = MAX_VRM_MODEL_BYTES + 128 * 1024;
 const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_BYTES + 128 * 1024;
 const VRM_MODEL_FILE_NAME: &str = "model.vrm";
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
+const UPDATE_SHUTDOWN_DELAY: Duration = Duration::from_millis(750);
+const UPDATE_FORCE_EXIT_DELAY: Duration = Duration::from_secs(10);
 
 pub fn router(state: AppState) -> Router {
     let asset_routes = Router::new()
@@ -1493,8 +1495,11 @@ async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAut
         Ok(prepared) => {
             let shutdown = state.shutdown.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(750)).await;
+                tokio::time::sleep(UPDATE_SHUTDOWN_DELAY).await;
                 let _ = shutdown.send(true);
+                tokio::time::sleep(UPDATE_FORCE_EXIT_DELAY).await;
+                tracing::warn!("自己更新の終了猶予を超えたためプロセスを終了します");
+                std::process::exit(0);
             });
             admin_no_store(
                 (
@@ -2016,6 +2021,7 @@ async fn handle_websocket(
 ) {
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
+    let mut shutdown = state.shutdown.subscribe();
     if let WebsocketAudience::Public(event_identifier) = &audience
         && !has_valid_event_identifier(&state, event_identifier)
     {
@@ -2034,6 +2040,13 @@ async fn handle_websocket(
 
     loop {
         tokio::select! {
+            changed = shutdown.changed() => {
+                let should_close = changed.is_err() || *shutdown.borrow_and_update();
+                if should_close {
+                    let _ = sender.send(Message::Close(None)).await;
+                    break;
+                }
+            }
             incoming = receiver.next() => {
                 match incoming {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,

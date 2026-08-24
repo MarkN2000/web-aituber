@@ -79,6 +79,8 @@ node --test tests/*.test.cjs
 
 `v1.0.0`のようなタグをpushすると、Windows版とLinux版のGitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
 
+管理画面からの自己更新に失敗した場合は、配布フォルダの`update.log`を確認してください。
+
 ## systemdで起動する場合
 
 systemdなどの外部プロセス管理下では、管理画面からの自己更新は利用できません。アプリケーションによる再起動とsystemdの自動再起動が競合するためです。更新時はサービスを停止し、`config.json`と`assets/`を残して新しい配布物へ置き換えてから起動してください。

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    io::ErrorKind,
+    fs::OpenOptions,
+    io::{ErrorKind, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -18,9 +19,19 @@ use web_aituber::{
 
 const SUBMISSION_QUEUE_SIZE: usize = 100;
 const DISPLAY_EVENT_BUFFER_SIZE: usize = 128;
+const UPDATE_LOG_ENV: &str = "WEB_AITUBER_UPDATE_LOG";
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(error) = run().await {
+        let message = format!("サーバーを起動できませんでした: {error:#}");
+        append_update_error(&message);
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -74,6 +85,21 @@ async fn main() -> Result<()> {
         tracing::warn!(path = %audio_dir.display(), error = ?error, "一時音声ディレクトリを削除できませんでした");
     }
     Ok(())
+}
+
+fn append_update_error(message: &str) {
+    let Some(path) = std::env::var_os(UPDATE_LOG_ENV) else {
+        return;
+    };
+    append_update_error_to(Path::new(&path), message);
+}
+
+fn append_update_error_to(path: &Path, message: &str) {
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{message}");
+    let _ = file.flush();
 }
 
 async fn create_audio_directory() -> Result<PathBuf> {
@@ -167,5 +193,17 @@ mod tests {
         assert_eq!(current.parent(), Some(root.as_path()));
 
         tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[test]
+    fn startup_error_is_appended_to_update_log() {
+        let root = std::env::temp_dir().join(format!("web-aituber-log-test-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("update.log");
+
+        append_update_error_to(&path, "起動エラー");
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "起動エラー\n");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -6,6 +6,8 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web", "admin.html"), "utf8");
 const script = fs.readFileSync(path.join(root, "web", "js", "admin.js"), "utf8");
+const routes = fs.readFileSync(path.join(root, "src", "routes.rs"), "utf8");
+const updater = fs.readFileSync(path.join(root, "src", "bin", "web-aituber-updater.rs"), "utf8");
 
 test("管理画面にはバージョンとアップデート確認操作を表示する", () => {
   assert.match(html, /id="current-app-version"/);
@@ -14,11 +16,21 @@ test("管理画面にはバージョンとアップデート確認操作を表�
   assert.match(html, /id="update-error"[^>]*role="alert"/);
 });
 
+test("自己更新は接続を閉じて終了期限を設け、進行状況をログへ残す", () => {
+  assert.match(routes, /state\.shutdown\.subscribe\(\)/);
+  assert.match(routes, /sender\.send\(Message::Close\(None\)\)/);
+  assert.match(routes, /UPDATE_FORCE_EXIT_DELAY: Duration = Duration::from_secs\(10\)/);
+  assert.match(updater, /UPDATE_LOG_FILE_NAME: &str = "update\.log"/);
+  assert.match(updater, /append_update_log\(log_path/);
+});
+
 test("アップデートは確認後に同意を取り、再起動した版を確認する", () => {
   assert.match(script, /fetch\(adminUrl\("\/api\/admin\/update"\), \{ cache: "no-store" \}\)/);
   assert.match(script, /window\.confirm\(`v\$\{result\.latest_version\}へアップデートして再起動しますか/);
   assert.match(script, /fetch\(adminUrl\("\/api\/admin\/update"\), \{ method: "POST" \}\)/);
   assert.match(script, /result\.current_version === targetVersion/);
+  assert.match(script, /AbortSignal\.timeout\(timeoutMs\)/);
+  assert.match(script, /UPDATE_RECONNECT_TOTAL_TIMEOUT_MS = 120_000/);
 });
 
 test("管理画面にQRなしのデバッグ用メイン画面リンクを表示する", () => {

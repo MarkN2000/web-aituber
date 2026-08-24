@@ -78,7 +78,7 @@ pub struct CharacterConfig {
     pub light: LightConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ScreenOverlaysConfig {
     #[serde(default)]
     pub top_left: ScreenOverlayConfig,
@@ -134,17 +134,6 @@ impl Default for CharacterConfig {
             background_music_duck_ratio: default_background_music_duck_ratio(),
             screen_overlays: ScreenOverlaysConfig::default(),
             light: LightConfig::default(),
-        }
-    }
-}
-
-impl Default for ScreenOverlaysConfig {
-    fn default() -> Self {
-        Self {
-            top_left: ScreenOverlayConfig::default(),
-            top_right: ScreenOverlayConfig::default(),
-            bottom_left: ScreenOverlayConfig::default(),
-            bottom_right: ScreenOverlayConfig::default(),
         }
     }
 }
@@ -576,6 +565,21 @@ mod tests {
         assert_eq!(character.screen_overlays.bottom_right.scale, 100);
         assert_eq!(character.light.ambient_intensity, 0.8);
         assert_eq!(character.light.brightness, 1.0);
+    }
+
+    #[test]
+    fn previous_config_without_antialias_uses_default() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]
+            .as_object_mut()
+            .unwrap()
+            .remove("antialias");
+
+        let config: AppConfig = serde_json::from_value(value).unwrap();
+
+        assert!(config.character.antialias);
+        config.validate().unwrap();
     }
 
     #[test]

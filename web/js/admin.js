@@ -6,6 +6,8 @@ const MAX_VRM_MODEL_BYTES = 100 * 1024 * 1024;
 const MAX_BACKGROUND_MUSIC_BYTES = 100 * 1024 * 1024;
 const MAX_BACKGROUND_DIMENSION = 1920;
 const BACKGROUND_WEBP_QUALITY = 0.85;
+const UPDATE_RECONNECT_REQUEST_TIMEOUT_MS = 3_000;
+const UPDATE_RECONNECT_TOTAL_TIMEOUT_MS = 120_000;
 const elements = {
   tabs: [...document.querySelectorAll('[role="tab"]')],
   status: document.querySelector("#admin-status"), skip: document.querySelector("#skip"), reload: document.querySelector("#reload-config"),
@@ -1054,8 +1056,9 @@ async function reload() {
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
-async function fetchVersion() {
-  const response = await fetch(adminUrl("/api/admin/version"), { cache: "no-store" });
+async function fetchVersion(timeoutMs) {
+  const signal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+  const response = await fetch(adminUrl("/api/admin/version"), { cache: "no-store", signal });
   if (!response.ok) throw new Error(await readError(response, "バージョンを確認できませんでした。"));
   return response.json();
 }
@@ -1071,19 +1074,21 @@ async function loadVersion() {
 }
 async function waitForUpdatedServer(targetVersion) {
   let disconnected = false;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  const deadline = Date.now() + UPDATE_RECONNECT_TOTAL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
+    let result;
     try {
-      const result = await fetchVersion();
-      if (result.current_version === targetVersion) {
-        window.location.reload();
-        return;
-      }
-      if (disconnected) throw new Error("アップデートに失敗したため、以前のバージョンで再起動しました。");
-    } catch (error) {
-      if (error instanceof TypeError) { disconnected = true; continue; }
-      throw error;
+      result = await fetchVersion(UPDATE_RECONNECT_REQUEST_TIMEOUT_MS);
+    } catch {
+      disconnected = true;
+      continue;
     }
+    if (result.current_version === targetVersion) {
+      window.location.reload();
+      return;
+    }
+    if (disconnected) throw new Error("アップデートに失敗したため、以前のバージョンで再起動しました。");
   }
   throw new Error("再起動を確認できませんでした。ページを再読み込みして状態を確認してください。");
 }

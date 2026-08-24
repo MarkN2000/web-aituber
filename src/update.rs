@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::File,
-    io::{self},
+    io::{self, Write},
     path::{Component, Path, PathBuf},
     process::{self, Command, Stdio},
     time::Duration,
@@ -20,6 +20,7 @@ const USER_AGENT: &str = "web-aituber-updater";
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 4 * 1024;
+const UPDATE_LOG_FILE_NAME: &str = "update.log";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const RELEASE_ASSET_NAME: Option<&str> = Some("web-aituber-windows-x64.zip");
@@ -72,7 +73,6 @@ struct ReleaseInfo {
 struct InstallLayout {
     root: PathBuf,
     executable_name: String,
-    updater: PathBuf,
 }
 
 pub async fn check(http: &reqwest::Client) -> Result<UpdateCheck> {
@@ -136,7 +136,7 @@ pub async fn prepare_and_launch(http: &reqwest::Client) -> Result<PreparedUpdate
 
         let package_root = extracted_root.join(package_root_name());
         validate_package(&package_root)?;
-        launch_updater(&layout, &package_root, &work_root)?;
+        launch_updater(&layout, &package_root, &work_root, &release.version)?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -229,15 +229,12 @@ fn install_layout() -> Result<InstallLayout> {
         .and_then(|name| name.to_str())
         .context("実行ファイル名を取得できません")?
         .to_owned();
-    let updater = root.join(updater_file_name());
-    if !updater.is_file() {
-        bail!("外部アップデーターがないため、管理画面からは更新できません");
+    if executable_name != executable_file_name() {
+        bail!("正式な実行ファイル名ではないため、管理画面からは更新できません");
     }
-
     Ok(InstallLayout {
         root,
         executable_name,
-        updater,
     })
 }
 
@@ -476,14 +473,24 @@ fn validate_package(package_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn launch_updater(layout: &InstallLayout, package_root: &Path, work_root: &Path) -> Result<()> {
+fn launch_updater(
+    layout: &InstallLayout,
+    package_root: &Path,
+    work_root: &Path,
+    version: &Version,
+) -> Result<()> {
+    let mut log =
+        File::create(layout.root.join(UPDATE_LOG_FILE_NAME)).context("更新ログを作成できません")?;
+    writeln!(log, "v{version}への自己更新を開始します").context("更新ログへ書き込めません")?;
     let temporary_updater = env::temp_dir().join(format!(
         "web-aituber-updater-{}{}",
         Uuid::new_v4().simple(),
         env::consts::EXE_SUFFIX
     ));
-    std::fs::copy(&layout.updater, &temporary_updater)
-        .context("外部アップデーターを準備できません")?;
+    if let Err(error) = std::fs::copy(package_root.join(updater_file_name()), &temporary_updater) {
+        let _ = writeln!(log, "外部アップデーターを準備できません: {error}");
+        return Err(error).context("外部アップデーターを準備できません");
+    }
 
     let mut command = Command::new(&temporary_updater);
     command
@@ -495,9 +502,12 @@ fn launch_updater(layout: &InstallLayout, package_root: &Path, work_root: &Path)
         .current_dir(&layout.root)
         .stdin(Stdio::null());
     configure_hidden_process(&mut command);
-    command
-        .spawn()
-        .context("外部アップデーターを起動できません")?;
+    if let Err(error) = command.spawn() {
+        let _ = writeln!(log, "外部アップデーターを起動できません: {error}");
+        return Err(error).context("外部アップデーターを起動できません");
+    }
+    let _ = writeln!(log, "外部アップデーターを起動しました");
+    let _ = log.flush();
     Ok(())
 }
 

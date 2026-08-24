@@ -1,9 +1,10 @@
 use std::{
     env,
     ffi::OsString,
-    fs, io,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, ExitStatus},
     thread,
     time::{Duration, Instant},
 };
@@ -13,6 +14,8 @@ use anyhow::{Context, Result, bail};
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
 const STARTUP_CONFIRMATION_TIME: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const UPDATE_LOG_FILE_NAME: &str = "update.log";
+const UPDATE_LOG_ENV: &str = "WEB_AITUBER_UPDATE_LOG";
 
 struct Args {
     parent_pid: u32,
@@ -28,15 +31,30 @@ struct SwappedItem {
 }
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("アップデートに失敗しました: {error:#}");
+    let values: Vec<OsString> = env::args_os().skip(1).collect();
+    let log_path = values
+        .get(1)
+        .map(PathBuf::from)
+        .map(|root| root.join(UPDATE_LOG_FILE_NAME));
+    append_update_log(log_path.as_deref(), "外部アップデーターを開始しました");
+    if let Err(error) = run(values, log_path.as_deref()) {
+        let message = format!("アップデートに失敗しました: {error:#}");
+        append_update_log(log_path.as_deref(), &message);
+        eprintln!("{message}");
+    } else {
+        append_update_log(log_path.as_deref(), "アップデートが完了しました");
     }
     schedule_self_delete();
 }
 
-fn run() -> Result<()> {
-    let args = parse_args(env::args_os().skip(1).collect())?;
+fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
+    let args = parse_args(values)?;
+    append_update_log(
+        log_path,
+        &format!("サーバープロセス {} の終了を待ちます", args.parent_pid),
+    );
     wait_for_parent(args.parent_pid, PARENT_EXIT_TIMEOUT)?;
+    append_update_log(log_path, "サーバープロセスの終了を確認しました");
 
     let backup_root = args.work_root.join("backup");
     fs::create_dir(&backup_root).context("バックアップ用フォルダを作成できません")?;
@@ -49,6 +67,7 @@ fn run() -> Result<()> {
     ];
     let mut swapped = Vec::new();
     for name in items {
+        append_update_log(log_path, &format!("{name}を置き換えます"));
         if let Err(error) = swap_item(
             name,
             &args.package_root,
@@ -56,17 +75,22 @@ fn run() -> Result<()> {
             &backup_root,
             &mut swapped,
         ) {
-            let rollback_result = rollback(&args.install_root, &backup_root, &swapped);
+            append_update_log(log_path, "置き換えに失敗したため旧ファイルへ戻します");
+            rollback(&args.install_root, &backup_root, &swapped)
+                .context("更新失敗後に旧ファイルへ戻せませんでした")?;
+            append_update_log(log_path, "旧ファイルへ戻しました");
             restart_server(&args.install_root, &args.executable_name)
                 .context("旧バージョンも再起動できませんでした")?;
-            rollback_result.context("更新失敗後に旧ファイルへ戻せませんでした")?;
             return Err(error);
         }
+        append_update_log(log_path, &format!("{name}を置き換えました"));
     }
 
+    append_update_log(log_path, "新しいサーバーを起動します");
     let mut server = match restart_server(&args.install_root, &args.executable_name) {
         Ok(server) => server,
         Err(error) => {
+            append_update_log(log_path, "起動に失敗したため旧ファイルへ戻します");
             rollback(&args.install_root, &backup_root, &swapped)?;
             restart_server(&args.install_root, &args.executable_name)
                 .context("旧バージョンも再起動できませんでした")?;
@@ -74,17 +98,51 @@ fn run() -> Result<()> {
         }
     };
 
-    if wait_for_early_exit(&mut server, STARTUP_CONFIRMATION_TIME)?.is_some() {
-        rollback(&args.install_root, &backup_root, &swapped)?;
-        restart_server(&args.install_root, &args.executable_name)
-            .context("旧バージョンも再起動できませんでした")?;
-        bail!("新しいサーバーが起動直後に終了したため旧バージョンへ戻しました");
+    match wait_for_early_exit(&mut server, STARTUP_CONFIRMATION_TIME) {
+        Ok(Some(status)) => {
+            append_update_log(
+                log_path,
+                &format!("新しいサーバーが起動直後に終了しました: {status}"),
+            );
+            rollback(&args.install_root, &backup_root, &swapped)?;
+            restart_server(&args.install_root, &args.executable_name)
+                .context("旧バージョンも再起動できませんでした")?;
+            bail!("新しいサーバーが起動直後に終了したため旧バージョンへ戻しました");
+        }
+        Ok(None) => append_update_log(log_path, "新しいサーバーの起動を確認しました"),
+        Err(error) => {
+            append_update_log(
+                log_path,
+                "新しいサーバーの確認に失敗したため旧ファイルへ戻します",
+            );
+            let _ = server.kill();
+            let _ = server.wait();
+            rollback(&args.install_root, &backup_root, &swapped)?;
+            restart_server(&args.install_root, &args.executable_name)
+                .context("旧バージョンも再起動できませんでした")?;
+            return Err(error);
+        }
     }
 
     if let Err(error) = fs::remove_dir_all(&args.work_root) {
+        append_update_log(
+            log_path,
+            &format!("更新用フォルダを削除できませんでした: {error}"),
+        );
         eprintln!("更新用フォルダを削除できませんでした: {error}");
     }
     Ok(())
+}
+
+fn append_update_log(path: Option<&Path>, message: &str) {
+    let Some(path) = path else {
+        return;
+    };
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{message}");
+    let _ = file.flush();
 }
 
 fn parse_args(values: Vec<OsString>) -> Result<Args> {
@@ -177,20 +235,21 @@ fn remove_path(path: &Path) -> io::Result<()> {
 
 fn restart_server(install_root: &Path, executable_name: &str) -> Result<Child> {
     let mut command = Command::new(install_root.join(executable_name));
-    command.current_dir(install_root);
+    command
+        .current_dir(install_root)
+        .env(UPDATE_LOG_ENV, install_root.join(UPDATE_LOG_FILE_NAME));
     configure_hidden_process(&mut command);
     command.spawn().context("サーバーを再起動できません")
 }
 
-fn wait_for_early_exit(child: &mut Child, duration: Duration) -> Result<Option<()>> {
+fn wait_for_early_exit(child: &mut Child, duration: Duration) -> Result<Option<ExitStatus>> {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
-        if child
+        if let Some(status) = child
             .try_wait()
             .context("新しいサーバーの状態を確認できません")?
-            .is_some()
         {
-            return Ok(Some(()));
+            return Ok(Some(status));
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -319,6 +378,20 @@ mod tests {
 
         rollback(&install, &backup, &swapped).unwrap();
         assert_eq!(fs::read(install.join("README.md")).unwrap(), b"old");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn update_log_appends_progress() {
+        let root =
+            env::temp_dir().join(format!("web-aituber-updater-log-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join(UPDATE_LOG_FILE_NAME);
+
+        append_update_log(Some(&path), "開始");
+        append_update_log(Some(&path), "完了");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "開始\n完了\n");
         fs::remove_dir_all(root).unwrap();
     }
 }
