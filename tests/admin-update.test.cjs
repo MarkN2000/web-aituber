@@ -56,3 +56,10 @@ test("管理画面でアンチエイリアスをON・OFFして保存する", () 
   assert.match(script, /fetch\(adminUrl\("\/api\/admin\/model-antialias"\)/);
   assert.match(script, /antialias: elements\.antialias\.checked/);
 });
+
+test("準備中画像がなくても準備中モードを保存できる", () => {
+  assert.match(html, /画像がない場合は黒画面になります。/);
+  assert.match(html, /\/static\/js\/admin\.js\?v=37/);
+  assert.doesNotMatch(script, /missingImage/);
+  assert.doesNotMatch(script, /if \(enabled && !preparationImageAsset\.currentExists\) return;/);
+});

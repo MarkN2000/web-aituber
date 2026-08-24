@@ -305,14 +305,11 @@ function updateBrightnessLabel() {
 function updateImageAssetControls(asset) {
   asset.input.disabled = asset.busy || !token;
   asset.upload.disabled = asset.busy || !asset.selectedBlob || !token;
-  asset.remove.disabled = asset.busy || !asset.currentExists || !token
-    || (asset.preparation && preparationModeEnabled);
+  asset.remove.disabled = asset.busy || !asset.currentExists || !token;
 }
 function updatePreparationModeControls() {
-  const missingImage = !preparationImageAsset.currentExists && !preparationModeEnabled;
-  elements.preparationMode.disabled = preparationModeBusy || !token || missingImage;
-  elements.savePreparationMode.disabled = preparationModeBusy || !token
-    || (elements.preparationMode.checked && !preparationImageAsset.currentExists);
+  elements.preparationMode.disabled = preparationModeBusy || !token;
+  elements.savePreparationMode.disabled = preparationModeBusy || !token;
   updateImageAssetControls(preparationImageAsset);
 }
 function updateScreenOverlayControls(overlay) {
@@ -925,7 +922,6 @@ async function savePreparationMode(event) {
   event.preventDefault();
   if (!token || preparationModeBusy) return;
   const enabled = elements.preparationMode.checked;
-  if (enabled && !preparationImageAsset.currentExists) return;
   preparationModeBusy = true;
   updatePreparationModeControls();
   const original = elements.savePreparationMode.textContent;

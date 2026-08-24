@@ -740,12 +740,6 @@ async fn delete_preparation_image(
     }
 
     let _guard = state.preparation_image_lock.lock().await;
-    if state.config.current().character.preparation_mode {
-        return admin_error(
-            StatusCode::CONFLICT,
-            "準備中モードをOFFにしてから画像を削除してください",
-        );
-    }
     let path = state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME);
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {
@@ -1209,17 +1203,6 @@ async fn update_preparation_mode(
 ) -> Response {
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
-    let _guard = state.preparation_image_lock.lock().await;
-    let has_image = tokio::fs::metadata(state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME))
-        .await
-        .is_ok_and(|metadata| metadata.is_file());
-    if request.enabled && !has_image {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "準備中画像をアップロードしてから有効にしてください",
-        );
     }
 
     match state.config.update_and_save(move |config| {
@@ -4104,13 +4087,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preparation_mode_requires_image_cancels_active_turn_and_rejects_submissions() {
+    async fn preparation_mode_allows_without_image_and_rejects_submissions() {
         let (mut state, assets_dir) = state_with_temporary_assets();
         let config_path = assets_dir.join("config.json");
         let config = state.config.current().as_ref().clone();
         std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
         state.config = ConfigStore::new(&config_path, config);
         let app = router(state.clone());
+        let cancel = CancellationToken::new();
+        *state.active.lock().await = Some(crate::state::ActiveTurn {
+            turn_id: "active-turn".to_owned(),
+            cancel: cancel.clone(),
+        });
 
         let without_image = app
             .clone()
@@ -4122,7 +4110,36 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(without_image.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(without_image.status(), StatusCode::NO_CONTENT);
+        assert!(cancel.is_cancelled());
+        assert!(state.config.current().character.preparation_mode);
+        assert!(
+            AppConfig::load_from_path(&config_path)
+                .unwrap()
+                .character
+                .preparation_mode
+        );
+
+        let display_without_image = app
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let display_without_image_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(display_without_image.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(display_without_image_json["preparation_mode"], true);
+        assert_eq!(
+            display_without_image_json["preparation_image_url"],
+            serde_json::Value::Null
+        );
 
         let boundary = "preparation-upload-boundary";
         let image = webp_container(b"preparation-image");
@@ -4147,31 +4164,6 @@ mod tests {
         assert_eq!(
             std::fs::read(assets_dir.join(PREPARATION_IMAGE_FILE_NAME)).unwrap(),
             image
-        );
-
-        let cancel = CancellationToken::new();
-        *state.active.lock().await = Some(crate::state::ActiveTurn {
-            turn_id: "active-turn".to_owned(),
-            cancel: cancel.clone(),
-        });
-        let enabled = app
-            .clone()
-            .oneshot(
-                Request::put("/api/admin/preparation-mode?token=test-token")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"enabled":true}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(enabled.status(), StatusCode::NO_CONTENT);
-        assert!(cancel.is_cancelled());
-        assert!(state.config.current().character.preparation_mode);
-        assert!(
-            AppConfig::load_from_path(&config_path)
-                .unwrap()
-                .character
-                .preparation_mode
         );
 
         let display = app
@@ -4221,7 +4213,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(delete_while_enabled.status(), StatusCode::CONFLICT);
+        assert_eq!(delete_while_enabled.status(), StatusCode::NO_CONTENT);
+        assert!(!assets_dir.join(PREPARATION_IMAGE_FILE_NAME).exists());
 
         let disabled = app
             .clone()
