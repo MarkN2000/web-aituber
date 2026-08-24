@@ -74,10 +74,10 @@ let viewerReloading = false;
 let eventEnded = false;
 
 const SCREEN_OVERLAY_SLOTS = [
-  ["top_left", "top left"],
-  ["top_right", "top right"],
-  ["bottom_left", "bottom left"],
-  ["bottom_right", "bottom right"],
+  ["top_left", "top", "left"],
+  ["top_right", "top", "right"],
+  ["bottom_left", "bottom", "left"],
+  ["bottom_right", "bottom", "right"],
 ];
 
 function applyBackground(config) {
@@ -87,22 +87,57 @@ function applyBackground(config) {
     : "none";
 }
 
+function calculateScreenOverlayCoverSize(viewportWidth, viewportHeight, imageWidth, imageHeight) {
+  const coverScale = Math.max(viewportWidth / imageWidth, viewportHeight / imageHeight);
+  return {
+    width: imageWidth * coverScale,
+    height: imageHeight * coverScale,
+  };
+}
+
+function fitScreenOverlay(image) {
+  if (!image.naturalWidth || !image.naturalHeight) return;
+  const { clientWidth, clientHeight } = elements.screenOverlays;
+  if (!clientWidth || !clientHeight) return;
+  const size = calculateScreenOverlayCoverSize(
+    clientWidth,
+    clientHeight,
+    image.naturalWidth,
+    image.naturalHeight,
+  );
+  image.style.width = `${size.width}px`;
+  image.style.height = `${size.height}px`;
+}
+
+function fitScreenOverlays() {
+  for (const image of elements.screenOverlays.querySelectorAll(".screen-overlay")) {
+    fitScreenOverlay(image);
+  }
+}
+
 function applyScreenOverlays(config) {
   const overlays = config.screen_overlays || {};
   const fragment = document.createDocumentFragment();
-  for (const [slot, origin] of SCREEN_OVERLAY_SLOTS) {
+  const images = [];
+  for (const [slot, vertical, horizontal] of SCREEN_OVERLAY_SLOTS) {
     const overlay = overlays[slot];
     if (!overlay?.image_url) continue;
     const image = document.createElement("img");
     image.className = "screen-overlay";
-    image.src = overlay.image_url;
     image.alt = "";
-    image.style.objectPosition = origin;
-    image.style.transformOrigin = origin;
+    image.style[vertical] = "0";
+    image.style[horizontal] = "0";
+    image.style.transformOrigin = `${vertical} ${horizontal}`;
     image.style.transform = `scale(${Math.min(100, Math.max(1, Number(overlay.scale) || 100)) / 100})`;
+    image.addEventListener("load", () => fitScreenOverlay(image), { once: true });
+    image.src = overlay.image_url;
     fragment.append(image);
+    images.push(image);
   }
   elements.screenOverlays.replaceChildren(fragment);
+  for (const image of images) {
+    if (image.complete) fitScreenOverlay(image);
+  }
 }
 
 function viewerConfigKey(config) {
@@ -511,6 +546,7 @@ async function startMain() {
 
 elements.start.addEventListener("click", startMain);
 document.addEventListener("visibilitychange", handleVisibilityChange);
+window.addEventListener("resize", fitScreenOverlays);
 window.addEventListener("beforeunload", () => {
   window.clearTimeout(reconnectTimer);
   queue?.dispose();
