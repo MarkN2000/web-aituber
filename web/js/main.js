@@ -155,7 +155,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=14");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=15");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,
@@ -326,6 +326,8 @@ function setTurn(turn) {
   const isNewTurn = turn?.turn_id !== currentTurn?.turn_id;
   currentTurn = turn;
   if (!turn) {
+    viewer?.setIdleExpression();
+    viewer?.resumeIdle();
     clearAnswer();
     elements.answer.hidden = true;
     elements.loader.hidden = true;
@@ -351,9 +353,7 @@ function cleanTurn(turnId) {
   receivedTurns.delete(turnId);
   if (currentTurn?.turn_id !== turnId) return;
   backgroundMusic?.setDucked(false);
-  setEmotion("neutral");
   viewer?.clearFoodProp();
-  viewer?.resumeIdle();
   setTurn(undefined);
 }
 

@@ -70,7 +70,7 @@ export class VrmViewer {
     this.mixer = new THREE.AnimationMixer(this.vrm.scene);
     this.mixer.addEventListener('finished', (event) => this.onAnimationFinished(event));
     await this.loadMotions(config);
-    this.setEmotion('neutral');
+    this.setIdleExpression();
     this.resumeIdle();
   }
 
@@ -216,6 +216,15 @@ export class VrmViewer {
 
   setEmotion(emotion) {
     const value = isEmotion(emotion) ? emotion : 'neutral';
+    this.setExpression(value);
+  }
+
+  setIdleExpression() {
+    const value = this.expressionSupport('natural') === 'supported' ? 'natural' : 'neutral';
+    this.setExpression(value);
+  }
+
+  setExpression(value) {
     if (this.vrm?.expressionManager) this.setExpressionValue(this.currentExpression, 0);
     this.currentExpression = value;
     this.currentExpressionSupport = this.expressionSupport(value);
@@ -374,7 +383,7 @@ export class VrmViewer {
   }
 
   updateBlink(delta) {
-    if (this.currentExpression !== 'neutral') {
+    if (this.currentExpression !== 'neutral' && this.currentExpression !== 'natural') {
       if (this.blinkTime > 0) this.setExpressionValue('blink', 0);
       this.blinkTime = 0;
       return;

@@ -185,7 +185,7 @@ test("音声停止中は口の表情を毎フレーム更新しない", () => {
   assert.deepEqual(applied, [{ aa: 0.5 }]);
 });
 
-test("neutral以外の表情中は進行中の瞬きを解除して停止する", () => {
+test("neutralとnatural以外の表情中は進行中の瞬きを解除して停止する", () => {
   const viewer = createViewer();
   const applied = [];
   viewer.setExpressionValue = (name, value) => applied.push([name, value]);
@@ -204,6 +204,13 @@ test("neutral以外の表情中は進行中の瞬きを解除して停止する"
   viewer.updateBlink(0.08);
 
   assert.deepEqual(applied, [["blink", 0], ["blink", 1]]);
+
+  viewer.blinkTime = 0;
+  viewer.blinkTimer = 0;
+  viewer.currentExpression = "natural";
+  viewer.updateBlink(0.08);
+
+  assert.deepEqual(applied, [["blink", 0], ["blink", 1], ["blink", 1]]);
 });
 
 function debugState(overrides = {}) {
@@ -329,6 +336,49 @@ test("要求表情に対するVRMの対応状況を通知する", () => {
     "unsupported",
     "base",
   ]);
+});
+
+test("待機中はモデルのNatural表情へ切り替える", () => {
+  const viewer = createViewer();
+  const applied = [];
+  viewer.vrm = {
+    expressionManager: {
+      expressions: [{ expressionName: "Happy" }, { expressionName: "Natural" }],
+      getExpression: (name) => ["Happy", "Natural"].includes(name) ? {} : undefined,
+      setValue: (name, value) => applied.push([name, value]),
+    },
+  };
+
+  viewer.setEmotion("happy");
+  viewer.setIdleExpression();
+
+  assert.deepEqual(applied, [["Happy", 1], ["Happy", 0], ["Natural", 1]]);
+  assert.deepEqual(viewer.debugStates.at(-1), debugState({
+    expression: "natural",
+    expressionSupport: "supported",
+  }));
+});
+
+test("Natural表情がないモデルの待機中はneutralへ戻す", () => {
+  const viewer = createViewer();
+  const applied = [];
+  viewer.vrm = {
+    expressionManager: {
+      expressions: [{ expressionName: "Happy" }],
+      getExpression: (name) => name === "Happy" ? {} : undefined,
+      setValue: (name, value) => applied.push([name, value]),
+    },
+  };
+
+  viewer.setEmotion("happy");
+  viewer.setIdleExpression();
+
+  assert.deepEqual(applied, [["Happy", 1], ["Happy", 0]]);
+  assert.deepEqual(viewer.debugStates.at(-1), debugState());
+});
+
+test("モデル読込後は待機用表情を適用する", () => {
+  assert.match(source, /this\.setIdleExpression\(\);\s+this\.resumeIdle\(\);/);
 });
 
 test("食事動作は画像読込中・表示中・消費中・なしへ遷移する", async () => {
