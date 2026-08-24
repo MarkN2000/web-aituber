@@ -9,6 +9,10 @@ const undoHistorySource = drawSource.slice(
   drawSource.indexOf("function addUndoState"),
   drawSource.indexOf("function updateUndoState"),
 );
+const undoShortcutSource = drawSource.slice(
+  drawSource.indexOf("function isUndoShortcut"),
+  drawSource.indexOf("function addUndoState"),
+);
 const bucketSource = drawSource.slice(
   drawSource.indexOf("function rgbaFromHex"),
   drawSource.indexOf("function fillAt"),
@@ -41,6 +45,8 @@ vm.runInContext(
 );
 const undoHistoryContext = vm.createContext({});
 vm.runInContext(`${undoHistorySource}; this.add = addUndoState;`, undoHistoryContext);
+const undoShortcutContext = vm.createContext({});
+vm.runInContext(`${undoShortcutSource}; this.matches = isUndoShortcut;`, undoShortcutContext);
 const colorContext = vm.createContext({});
 vm.runInContext(
   `${colorConversionSource}; this.hsvToRgb = hsvToRgb; this.rgbToHsv = rgbToHsv; this.rgbToHex = rgbToHex;`,
@@ -89,6 +95,48 @@ test("取り消し履歴は最新10件だけを保持する", () => {
   assert.deepEqual(history.map((state) => state.index), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.equal(history.pop().index, 11);
   assert.equal(history.pop().index, 10);
+});
+
+test("CtrlまたはCommandとZで取り消しショートカットになる", () => {
+  const base = {
+    key: "z",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    defaultPrevented: false,
+    isComposing: false,
+    repeat: false,
+    target: null,
+  };
+
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true }), true);
+  assert.equal(undoShortcutContext.matches({ ...base, metaKey: true }), true);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, key: "Z" }), true);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, shiftKey: true }), false);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, altKey: true }), false);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, key: "x" }), false);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, defaultPrevented: true }), false);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, isComposing: true }), false);
+  assert.equal(undoShortcutContext.matches({ ...base, ctrlKey: true, repeat: true }), false);
+});
+
+test("文字入力中は取り消しショートカットをキャンバスへ適用しない", () => {
+  const input = { isContentEditable: false, closest: () => ({}) };
+  const editable = { isContentEditable: true, closest: () => null };
+  const event = { key: "z", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false };
+
+  assert.equal(undoShortcutContext.matches({ ...event, target: input }), false);
+  assert.equal(undoShortcutContext.matches({ ...event, target: editable }), false);
+});
+
+test("draw画面は取り消しショートカットを登録する", () => {
+  assert.match(drawSource, /document\.addEventListener\("keydown", handleUndoShortcut\)/);
+  assert.match(
+    drawSource,
+    /if \(!isUndoShortcut\(event\) \|\| activePointer !== undefined \|\| eventEnded \|\| undoButton\.disabled\) return;/,
+  );
+  assert.match(drawSource, /event\.preventDefault\(\);\s+undoCanvas\(\);/);
 });
 
 test("HSVとRGBの変換で基本色を維持する", () => {

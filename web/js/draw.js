@@ -241,6 +241,22 @@ function handleColorPickerKey(event) {
   updateSelectedColor();
 }
 
+function isUndoShortcut(event) {
+  const target = event.target;
+  if (event.defaultPrevented || event.isComposing || event.repeat) return false;
+  if (target?.isContentEditable || target?.closest?.("input, textarea, select")) return false;
+  return (event.ctrlKey || event.metaKey)
+    && !event.altKey
+    && !event.shiftKey
+    && event.key.toLowerCase() === "z";
+}
+
+function handleUndoShortcut(event) {
+  if (!isUndoShortcut(event) || activePointer !== undefined || eventEnded || undoButton.disabled) return;
+  event.preventDefault();
+  undoCanvas();
+}
+
 function addUndoState(history, state, limit) {
   history.push(state);
   if (history.length > limit) history.shift();
@@ -675,6 +691,7 @@ colorPicker.addEventListener("pointermove", continueColorPicking);
 colorPicker.addEventListener("pointerup", stopColorPicking);
 colorPicker.addEventListener("pointercancel", stopColorPicking);
 colorPicker.addEventListener("keydown", handleColorPickerKey);
+document.addEventListener("keydown", handleUndoShortcut);
 for (const button of colorButtons) {
   button.addEventListener("click", () => selectHexColor(button.dataset.drawColor));
 }
