@@ -16,6 +16,7 @@ const elements = {
   startError: document.querySelector("#start-error"),
   stage: document.querySelector("#stage"),
   canvas: document.querySelector("#vrm-canvas"),
+  screenOverlays: document.querySelector("#screen-overlays"),
   viewerMessage: document.querySelector("#viewer-message"),
   debugOverlay: document.querySelector("#debug-overlay"),
   panel: document.querySelector("#panel"),
@@ -72,11 +73,36 @@ let pendingViewerConfig;
 let viewerReloading = false;
 let eventEnded = false;
 
+const SCREEN_OVERLAY_SLOTS = [
+  ["top_left", "top left"],
+  ["top_right", "top right"],
+  ["bottom_left", "bottom left"],
+  ["bottom_right", "bottom right"],
+];
+
 function applyBackground(config) {
   elements.stage.style.backgroundColor = config.background_color || "#202632";
   elements.stage.style.backgroundImage = config.background_image_url
     ? `url(${JSON.stringify(config.background_image_url)})`
     : "none";
+}
+
+function applyScreenOverlays(config) {
+  const overlays = config.screen_overlays || {};
+  const fragment = document.createDocumentFragment();
+  for (const [slot, origin] of SCREEN_OVERLAY_SLOTS) {
+    const overlay = overlays[slot];
+    if (!overlay?.image_url) continue;
+    const image = document.createElement("img");
+    image.className = "screen-overlay";
+    image.src = overlay.image_url;
+    image.alt = "";
+    image.style.objectPosition = origin;
+    image.style.transformOrigin = origin;
+    image.style.transform = `scale(${Math.min(100, Math.max(1, Number(overlay.scale) || 100)) / 100})`;
+    fragment.append(image);
+  }
+  elements.screenOverlays.replaceChildren(fragment);
 }
 
 function viewerConfigKey(config) {
@@ -137,6 +163,7 @@ function applyUpdatedDisplayConfig(config) {
   const previous = displayConfig;
   displayConfig = config;
   applyBackground(config);
+  applyScreenOverlays(config);
   backgroundMusic?.setLevels(
     config.background_music_volume,
     config.background_music_duck_ratio,
@@ -449,6 +476,7 @@ async function startMain() {
 
     const config = await fetchDisplayConfig();
     applyBackground(config);
+    applyScreenOverlays(config);
     void backgroundMusic?.play(
       config.background_music_url,
       config.background_music_volume,

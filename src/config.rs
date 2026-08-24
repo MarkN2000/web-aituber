@@ -73,7 +73,27 @@ pub struct CharacterConfig {
     #[serde(default = "default_background_music_duck_ratio")]
     pub background_music_duck_ratio: f32,
     #[serde(default)]
+    pub screen_overlays: ScreenOverlaysConfig,
+    #[serde(default)]
     pub light: LightConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ScreenOverlaysConfig {
+    #[serde(default)]
+    pub top_left: ScreenOverlayConfig,
+    #[serde(default)]
+    pub top_right: ScreenOverlayConfig,
+    #[serde(default)]
+    pub bottom_left: ScreenOverlayConfig,
+    #[serde(default)]
+    pub bottom_right: ScreenOverlayConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ScreenOverlayConfig {
+    #[serde(default = "default_screen_overlay_scale")]
+    pub scale: u8,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -112,7 +132,27 @@ impl Default for CharacterConfig {
             background_color: "#1b1b22".to_owned(),
             background_music_volume: default_background_music_volume(),
             background_music_duck_ratio: default_background_music_duck_ratio(),
+            screen_overlays: ScreenOverlaysConfig::default(),
             light: LightConfig::default(),
+        }
+    }
+}
+
+impl Default for ScreenOverlaysConfig {
+    fn default() -> Self {
+        Self {
+            top_left: ScreenOverlayConfig::default(),
+            top_right: ScreenOverlayConfig::default(),
+            bottom_left: ScreenOverlayConfig::default(),
+            bottom_right: ScreenOverlayConfig::default(),
+        }
+    }
+}
+
+impl Default for ScreenOverlayConfig {
+    fn default() -> Self {
+        Self {
+            scale: default_screen_overlay_scale(),
         }
     }
 }
@@ -163,6 +203,10 @@ fn default_background_music_volume() -> f32 {
 
 fn default_background_music_duck_ratio() -> f32 {
     0.4
+}
+
+fn default_screen_overlay_scale() -> u8 {
+    100
 }
 
 fn default_light_brightness() -> f32 {
@@ -222,6 +266,18 @@ impl AppConfig {
             bail!(
                 "設定項目 character.background_music_duck_ratio は0.0から1.0の有限値にしてください"
             );
+        }
+        for (slot, overlay) in [
+            ("top_left", &self.character.screen_overlays.top_left),
+            ("top_right", &self.character.screen_overlays.top_right),
+            ("bottom_left", &self.character.screen_overlays.bottom_left),
+            ("bottom_right", &self.character.screen_overlays.bottom_right),
+        ] {
+            if !(1..=100).contains(&overlay.scale) {
+                bail!(
+                    "設定項目 character.screen_overlays.{slot}.scale は1から100の整数にしてください"
+                );
+            }
         }
         if !self.character.food_prop.size.is_finite() || self.character.food_prop.size <= 0.0 {
             bail!("設定項目 character.food_prop.size は0より大きい有限値にしてください");
@@ -516,6 +572,8 @@ mod tests {
         assert_eq!(character.camera.fov, 30.0);
         assert_eq!(character.background_music_volume, 0.3);
         assert_eq!(character.background_music_duck_ratio, 0.4);
+        assert_eq!(character.screen_overlays.top_left.scale, 100);
+        assert_eq!(character.screen_overlays.bottom_right.scale, 100);
         assert_eq!(character.light.ambient_intensity, 0.8);
         assert_eq!(character.light.brightness, 1.0);
     }
@@ -525,6 +583,18 @@ mod tests {
         let config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn screen_overlay_scales_must_be_between_one_and_one_hundred() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.character.screen_overlays.top_left.scale = 1;
+        config.character.screen_overlays.bottom_right.scale = 100;
+        assert!(config.validate().is_ok());
+
+        config.character.screen_overlays.top_right.scale = 0;
+        assert!(config.validate().is_err());
     }
 
     #[test]

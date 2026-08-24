@@ -29,6 +29,7 @@ pub struct AppState {
     pub assets_dir: Arc<PathBuf>,
     pub vrm_model_lock: Arc<Mutex<()>>,
     pub background_image_lock: Arc<Mutex<()>>,
+    pub screen_overlay_lock: Arc<Mutex<()>>,
     pub background_music_lock: Arc<Mutex<()>>,
     pub update_in_progress: Arc<AtomicBool>,
     pub shutdown: watch::Sender<bool>,

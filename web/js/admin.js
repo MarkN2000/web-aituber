@@ -54,6 +54,30 @@ const elements = {
   musicStatus: document.querySelector("#background-music-status"), musicError: document.querySelector("#background-music-error"),
   displayStatus: document.querySelector("#display-config-status"), displayError: document.querySelector("#display-config-error"),
 };
+const screenOverlays = new Map([...document.querySelectorAll(".screen-overlay-form")].map((form) => {
+  const slot = form.dataset.screenOverlaySlot;
+  const scaleForm = document.querySelector(`.screen-overlay-scale-form[data-screen-overlay-slot="${slot}"]`);
+  return [slot, {
+    slot,
+    key: slot.replace("-", "_"),
+    form,
+    scaleForm,
+    input: form.querySelector("[data-screen-overlay-input]"),
+    upload: form.querySelector("[data-screen-overlay-upload]"),
+    remove: form.querySelector("[data-screen-overlay-delete]"),
+    currentPreview: form.parentElement.querySelector("[data-screen-overlay-current]"),
+    currentEmpty: form.parentElement.querySelector("[data-screen-overlay-current-empty]"),
+    selectedPreview: form.parentElement.querySelector("[data-screen-overlay-selected]"),
+    selectedEmpty: form.parentElement.querySelector("[data-screen-overlay-selected-empty]"),
+    scale: scaleForm.querySelector("[data-screen-overlay-scale]"),
+    scaleNumber: scaleForm.querySelector("[data-screen-overlay-scale-number]"),
+    saveScale: scaleForm.querySelector("[data-screen-overlay-save-scale]"),
+    selectedBlob: undefined,
+    selectedUrl: undefined,
+    currentExists: false,
+    busy: false,
+  }];
+}));
 let currentTurn;
 let socket;
 let reconnectTimer;
@@ -247,6 +271,72 @@ function updateBackgroundControls() {
   elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
   elements.deleteBackground.disabled = backgroundBusy || !currentBackgroundExists || !token;
 }
+function updateScreenOverlayControls(overlay) {
+  overlay.input.disabled = overlay.busy || !token;
+  overlay.upload.disabled = overlay.busy || !overlay.selectedBlob || !token;
+  overlay.remove.disabled = overlay.busy || !overlay.currentExists || !token;
+  overlay.scale.disabled = overlay.busy || !token;
+  overlay.scaleNumber.disabled = overlay.busy || !token;
+  overlay.saveScale.disabled = overlay.busy || !token;
+}
+function syncScreenOverlayScaleFromRange(overlay) {
+  overlay.scaleNumber.value = overlay.scale.value;
+}
+function syncScreenOverlayScaleFromNumber(overlay) {
+  const scale = Number(overlay.scaleNumber.value);
+  if (!Number.isInteger(scale) || scale < 1 || scale > 100) return;
+  overlay.scale.value = String(scale);
+}
+function releaseSelectedScreenOverlay(overlay) {
+  if (overlay.selectedUrl) URL.revokeObjectURL(overlay.selectedUrl);
+  overlay.selectedUrl = undefined;
+  overlay.selectedBlob = undefined;
+  overlay.selectedPreview.removeAttribute("src");
+  overlay.selectedPreview.hidden = true;
+  overlay.selectedEmpty.hidden = false;
+  updateScreenOverlayControls(overlay);
+}
+function showSelectedScreenOverlay(overlay, blob) {
+  releaseSelectedScreenOverlay(overlay);
+  overlay.selectedBlob = blob;
+  overlay.selectedUrl = URL.createObjectURL(blob);
+  overlay.selectedPreview.src = overlay.selectedUrl;
+  overlay.selectedPreview.hidden = false;
+  overlay.selectedEmpty.hidden = true;
+  updateScreenOverlayControls(overlay);
+}
+async function showCurrentScreenOverlay(overlay, value) {
+  const url = value?.image_url;
+  overlay.currentExists = Boolean(url);
+  overlay.currentPreview.hidden = true;
+  overlay.currentPreview.removeAttribute("src");
+  overlay.currentEmpty.hidden = false;
+  overlay.currentEmpty.textContent = url ? "現在の画像を読み込み中です…" : "画像は設定されていません。";
+  overlay.scale.value = String(Math.min(100, Math.max(1, Number(value?.scale) || 100)));
+  syncScreenOverlayScaleFromRange(overlay);
+  updateScreenOverlayControls(overlay);
+  if (!url) return;
+  try {
+    await new Promise((resolve, reject) => {
+      overlay.currentPreview.onload = resolve;
+      overlay.currentPreview.onerror = () => reject(new Error(`${slotLabel(overlay)}の現在の画像を読み込めませんでした。`));
+      overlay.currentPreview.src = url;
+    });
+  } catch (error) {
+    overlay.currentPreview.removeAttribute("src");
+    overlay.currentEmpty.textContent = "現在の画像を読み込めませんでした。";
+    throw error;
+  } finally {
+    overlay.currentPreview.onload = null;
+    overlay.currentPreview.onerror = null;
+  }
+  overlay.currentPreview.hidden = false;
+  overlay.currentEmpty.hidden = true;
+  updateScreenOverlayControls(overlay);
+}
+function slotLabel(overlay) {
+  return { "top-left": "左上", "top-right": "右上", "bottom-left": "左下", "bottom-right": "右下" }[overlay.slot];
+}
 function updateMusicControls() {
   elements.musicInput.disabled = musicBusy || !token;
   elements.uploadMusic.disabled = musicBusy || !selectedMusicFile || !token;
@@ -413,7 +503,7 @@ function setVectorInputs(inputs, values) {
 function vectorValues(inputs) {
   return inputs.map((input) => Number(input.value));
 }
-async function loadDisplayConfig({ background = true, music = true, volume = true, brightness = true, antialias = true, layout = true } = {}) {
+async function loadDisplayConfig({ background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, brightness = true, antialias = true, layout = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
@@ -438,6 +528,7 @@ async function loadDisplayConfig({ background = true, music = true, volume = tru
     updateMusicVolumeLabels();
   }
   if (background) await showCurrentBackground(config.background_image_url);
+  if (loadScreenOverlays) await Promise.all([...screenOverlays.values()].map((overlay) => showCurrentScreenOverlay(overlay, config.screen_overlays?.[overlay.key])));
 }
 async function selectBackground() {
   if (backgroundBusy) return;
@@ -463,6 +554,114 @@ async function selectBackground() {
     backgroundBusy = false;
     elements.selectedBackgroundEmpty.textContent = "画像を選択してください。";
     updateBackgroundControls();
+  }
+}
+async function selectScreenOverlay(overlay) {
+  if (overlay.busy) return;
+  overlay.busy = true;
+  releaseSelectedScreenOverlay(overlay);
+  updateScreenOverlayControls(overlay);
+  setMessage(elements.displayStatus, elements.displayError);
+  const [file] = overlay.input.files;
+  if (!file) {
+    overlay.busy = false;
+    updateScreenOverlayControls(overlay);
+    return;
+  }
+  overlay.selectedEmpty.textContent = "画像を変換中です…";
+  try {
+    showSelectedScreenOverlay(overlay, await convertBackground(file));
+    setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の画像をWebPへ変換しました。アップロードすると現在の画像を上書きします。`);
+  } catch (error) {
+    console.error(error);
+    overlay.input.value = "";
+    setMessage(elements.displayStatus, elements.displayError, error.message || "画像を変換できませんでした。", true);
+  } finally {
+    overlay.busy = false;
+    overlay.selectedEmpty.textContent = "画像を選択してください。";
+    updateScreenOverlayControls(overlay);
+  }
+}
+async function uploadScreenOverlay(event, overlay) {
+  event.preventDefault();
+  if (!token || !overlay.selectedBlob || overlay.busy) return;
+  overlay.busy = true;
+  updateScreenOverlayControls(overlay);
+  const original = overlay.upload.textContent;
+  overlay.upload.textContent = "アップロード中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const body = new FormData();
+    body.append("image", overlay.selectedBlob, `screen-overlay-${overlay.slot}.webp`);
+    const response = await fetch(adminUrl(`/api/admin/screen-overlays/${overlay.slot}`), { method: "POST", body });
+    if (!response.ok) throw new Error(await readError(response, "画面オーバーレイをアップロードできませんでした。"));
+    releaseSelectedScreenOverlay(overlay);
+    overlay.input.value = "";
+    try {
+      await loadDisplayConfig({ background: false, music: false, volume: false, brightness: false, antialias: false, layout: false });
+      setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の画面オーバーレイを更新しました。接続中のメイン画面へ反映されます。`);
+    } catch (error) {
+      console.error(error);
+      setMessage(elements.displayStatus, elements.displayError, "画面オーバーレイは更新されましたが、現在のプレビューを更新できませんでした。", true);
+    }
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "画面オーバーレイをアップロードできませんでした。", true);
+  } finally {
+    overlay.busy = false;
+    overlay.upload.textContent = original;
+    updateScreenOverlayControls(overlay);
+  }
+}
+async function deleteScreenOverlay(overlay) {
+  if (!token || overlay.busy || !window.confirm(`${slotLabel(overlay)}の画面オーバーレイを削除しますか？`)) return;
+  overlay.busy = true;
+  updateScreenOverlayControls(overlay);
+  const original = overlay.remove.textContent;
+  overlay.remove.textContent = "削除中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const response = await fetch(adminUrl(`/api/admin/screen-overlays/${overlay.slot}`), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, "画面オーバーレイを削除できませんでした。"));
+    await showCurrentScreenOverlay(overlay, { scale: Number(overlay.scale.value) });
+    setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の画面オーバーレイを削除しました。接続中のメイン画面へ反映されます。`);
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "画面オーバーレイを削除できませんでした。", true);
+  } finally {
+    overlay.busy = false;
+    overlay.remove.textContent = original;
+    updateScreenOverlayControls(overlay);
+  }
+}
+async function saveScreenOverlayScale(event, overlay) {
+  event.preventDefault();
+  if (!token || overlay.busy) return;
+  const scale = Number(overlay.scaleNumber.value);
+  if (!Number.isInteger(scale) || scale < 1 || scale > 100) {
+    setMessage(elements.displayStatus, elements.displayError, "表示倍率は1〜100%の整数で指定してください。", true);
+    return;
+  }
+  overlay.busy = true;
+  updateScreenOverlayControls(overlay);
+  const original = overlay.saveScale.textContent;
+  overlay.saveScale.textContent = "保存中…";
+  setMessage(elements.displayStatus, elements.displayError);
+  try {
+    const response = await fetch(adminUrl(`/api/admin/screen-overlays/${overlay.slot}/scale`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scale }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "表示倍率を保存できませんでした。"));
+    setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の表示倍率を保存しました。接続中のメイン画面へ反映されます。`);
+  } catch (error) {
+    console.error(error);
+    setMessage(elements.displayStatus, elements.displayError, error.message || "表示倍率を保存できませんでした。", true);
+  } finally {
+    overlay.busy = false;
+    overlay.saveScale.textContent = original;
+    updateScreenOverlayControls(overlay);
   }
 }
 async function uploadVrmModel(event) {
@@ -976,6 +1175,16 @@ updateLayoutControls();
 elements.backgroundInput.addEventListener("change", selectBackground);
 elements.backgroundForm.addEventListener("submit", uploadBackground);
 elements.deleteBackground.addEventListener("click", deleteBackground);
+for (const overlay of screenOverlays.values()) {
+  overlay.input.addEventListener("change", () => { void selectScreenOverlay(overlay); });
+  overlay.form.addEventListener("submit", (event) => { void uploadScreenOverlay(event, overlay); });
+  overlay.remove.addEventListener("click", () => { void deleteScreenOverlay(overlay); });
+  overlay.scale.addEventListener("input", () => syncScreenOverlayScaleFromRange(overlay));
+  overlay.scaleNumber.addEventListener("input", () => syncScreenOverlayScaleFromNumber(overlay));
+  overlay.scaleForm.addEventListener("submit", (event) => { void saveScreenOverlayScale(event, overlay); });
+  syncScreenOverlayScaleFromRange(overlay);
+  updateScreenOverlayControls(overlay);
+}
 elements.musicInput.addEventListener("change", selectMusic);
 elements.musicForm.addEventListener("submit", uploadMusic);
 elements.deleteMusic.addEventListener("click", deleteMusic);
@@ -1003,7 +1212,7 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();
@@ -1011,4 +1220,4 @@ if (!token) {
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); releaseEventQrImage(); elements.currentMusic.pause(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); for (const overlay of screenOverlays.values()) releaseSelectedScreenOverlay(overlay); releaseEventQrImage(); elements.currentMusic.pause(); });

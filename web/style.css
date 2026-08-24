@@ -152,9 +152,27 @@ textarea::placeholder {
 }
 
 #vrm-canvas {
+  position: relative;
+  z-index: 0;
   display: block;
   width: 100%;
   height: 100%;
+}
+
+#screen-overlays {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.screen-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 #debug-overlay {
@@ -371,6 +389,7 @@ textarea::placeholder {
 
 #viewer-message {
   position: fixed;
+  z-index: 2;
   inset: 50% auto auto 50%;
   max-width: min(90vw, 540px);
   margin: 0;
@@ -883,6 +902,46 @@ textarea::placeholder {
   margin-bottom: 18px;
 }
 
+.screen-overlay-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 18px;
+}
+
+.screen-overlay-slot {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #dededb;
+  border-radius: 10px;
+  background: #f8f8f6;
+}
+
+.screen-overlay-slot h4 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+}
+
+.screen-overlay-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.screen-overlay-previews .background-preview figcaption {
+  font-size: .85rem;
+}
+
+.screen-overlay-scale-form {
+  margin-top: 18px;
+}
+
+.screen-overlay-scale-control input[type="number"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .background-preview {
   min-width: 0;
   margin: 0;
@@ -1113,6 +1172,10 @@ textarea::placeholder {
   }
 
   .background-previews {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-overlay-grid {
     grid-template-columns: 1fr;
   }
 }

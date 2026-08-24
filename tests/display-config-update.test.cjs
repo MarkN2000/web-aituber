@@ -25,6 +25,12 @@ function config(overrides = {}) {
     light: { color: "#fff", intensity: 1, position: [1, 2, 3], ambient_intensity: 1, brightness: 1 },
     background_color: "#000",
     background_image_url: null,
+    screen_overlays: {
+      top_left: { image_url: null, scale: 100 },
+      top_right: { image_url: null, scale: 100 },
+      bottom_left: { image_url: null, scale: 100 },
+      bottom_right: { image_url: null, scale: 100 },
+    },
     background_music_url: "/assets/background-music.webm?v=1",
     background_music_volume: 0.3,
     background_music_duck_ratio: 0.4,
@@ -33,7 +39,7 @@ function config(overrides = {}) {
 }
 
 function loadContext(initialConfig) {
-  const calls = { backgrounds: [], levels: [], tracks: [], viewerReloads: 0 };
+  const calls = { backgrounds: [], overlays: [], levels: [], tracks: [], viewerReloads: 0 };
   const context = vm.createContext({ JSON, calls });
   vm.runInContext(`
     ${keySource}
@@ -46,6 +52,7 @@ function loadContext(initialConfig) {
       play(url, volume, ratio) { calls.tracks.push([url, volume, ratio]); },
     };
     function applyBackground(value) { calls.backgrounds.push(value); }
+    function applyScreenOverlays(value) { calls.overlays.push(value); }
     function applyPendingViewerConfig() { calls.viewerReloads += 1; }
     ${applySource}
     this.apply = applyUpdatedDisplayConfig;
@@ -62,6 +69,7 @@ test("BGM音量と背景だけの変更ではモデルを再読み込みしな�
 
   assert.deepEqual(JSON.parse(JSON.stringify(calls.levels)), [[0.6, 0.4]]);
   assert.deepEqual(calls.tracks, []);
+  assert.equal(calls.overlays.length, 1);
   assert.equal(calls.viewerReloads, 0);
   assert.equal(context.pending(), undefined);
 });

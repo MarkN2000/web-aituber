@@ -13,6 +13,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Component, Path as FilePath, PathBuf},
@@ -40,6 +41,7 @@ const MAX_VRM_MODEL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_TEXT_REQUEST_BYTES: usize = 128 * 1024;
 const MAX_FOOD_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 const MAX_BACKGROUND_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
+const MAX_SCREEN_OVERLAY_REQUEST_BYTES: usize = MAX_IMAGE_BYTES + 128 * 1024;
 const MAX_VRM_MODEL_REQUEST_BYTES: usize = MAX_VRM_MODEL_BYTES + 128 * 1024;
 const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_BYTES + 128 * 1024;
 const VRM_MODEL_FILE_NAME: &str = "model.vrm";
@@ -104,6 +106,16 @@ pub fn router(state: AppState) -> Router {
             post(upload_background_image)
                 .delete(delete_background_image)
                 .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
+        )
+        .route(
+            "/api/admin/screen-overlays/{slot}",
+            post(upload_screen_overlay)
+                .delete(delete_screen_overlay)
+                .layer(DefaultBodyLimit::max(MAX_SCREEN_OVERLAY_REQUEST_BYTES)),
+        )
+        .route(
+            "/api/admin/screen-overlays/{slot}/scale",
+            axum::routing::put(update_screen_overlay_scale),
         )
         .route(
             "/api/admin/background-music",
@@ -383,16 +395,62 @@ async fn display_config_response(state: &AppState) -> Response {
         "BGM",
     )
     .await;
+    let character =
+        version_character_asset_urls(config.character.clone(), state.assets_dir.as_ref()).await;
     let response = DisplayConfigDto {
-        character: version_character_asset_urls(
-            config.character.clone(),
-            state.assets_dir.as_ref(),
-        )
-        .await,
+        screen_overlays: screen_overlays_display_config(state, &character).await,
+        character: DisplayCharacterConfig::from(character),
         background_image_url,
         background_music_url,
     };
     no_store(Json(response).into_response())
+}
+
+async fn screen_overlays_display_config(
+    state: &AppState,
+    character: &CharacterConfig,
+) -> ScreenOverlaysDisplayConfigDto {
+    async fn slot(
+        state: &AppState,
+        slot: ScreenOverlaySlot,
+        scale: u8,
+    ) -> ScreenOverlayDisplayConfigDto {
+        let file_name = slot.file_name();
+        let image_url = existing_versioned_asset_url(
+            &state.assets_dir.join(file_name),
+            &format!("/assets/{file_name}"),
+            "画面オーバーレイ",
+        )
+        .await;
+        ScreenOverlayDisplayConfigDto { image_url, scale }
+    }
+
+    ScreenOverlaysDisplayConfigDto {
+        top_left: slot(
+            state,
+            ScreenOverlaySlot::TopLeft,
+            character.screen_overlays.top_left.scale,
+        )
+        .await,
+        top_right: slot(
+            state,
+            ScreenOverlaySlot::TopRight,
+            character.screen_overlays.top_right.scale,
+        )
+        .await,
+        bottom_left: slot(
+            state,
+            ScreenOverlaySlot::BottomLeft,
+            character.screen_overlays.bottom_left.scale,
+        )
+        .await,
+        bottom_right: slot(
+            state,
+            ScreenOverlaySlot::BottomRight,
+            character.screen_overlays.bottom_right.scale,
+        )
+        .await,
+    }
 }
 
 async fn add_asset_cache_headers(
@@ -660,6 +718,169 @@ async fn delete_background_image(
             admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "背景画像を削除できませんでした",
+            )
+        }
+    }
+}
+
+async fn upload_screen_overlay(
+    Path(slot): Path<String>,
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    mut multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
+    };
+
+    let mut image = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(_) => {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "画面オーバーレイを読み取れませんでした",
+            );
+        }
+    } {
+        if field.name() != Some("image") || image.is_some() {
+            continue;
+        }
+        if field.content_type() != Some("image/webp") {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "画面オーバーレイはWebP形式で送信してください",
+            );
+        }
+        let bytes = match field.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    "画面オーバーレイを読み取れませんでした",
+                );
+            }
+        };
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "画面オーバーレイは10MiB以下にしてください",
+            );
+        }
+        if !has_valid_webp_container(&bytes) {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "画面オーバーレイのWebP形式が不正です",
+            );
+        }
+        image = Some(bytes);
+    }
+
+    let Some(image) = image else {
+        return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイがありません");
+    };
+    let _guard = state.screen_overlay_lock.lock().await;
+    let path = state.assets_dir.join(slot.file_name());
+    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
+        Ok(Ok(())) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Ok(Err(error)) => {
+            tracing::error!(error = ?error, "画面オーバーレイを保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "画面オーバーレイを保存できませんでした",
+            )
+        }
+        Err(error) => {
+            tracing::error!(error = ?error, "画面オーバーレイの保存処理を実行できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "画面オーバーレイを保存できませんでした",
+            )
+        }
+    }
+}
+
+async fn delete_screen_overlay(
+    Path(slot): Path<String>,
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
+    };
+
+    let _guard = state.screen_overlay_lock.lock().await;
+    let path = state.assets_dir.join(slot.file_name());
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), error = ?error, "画面オーバーレイを削除できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "画面オーバーレイを削除できませんでした",
+            )
+        }
+    }
+}
+
+async fn update_screen_overlay_scale(
+    Path(slot): Path<String>,
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<ScreenOverlayScaleRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
+    };
+    if !(1..=100).contains(&request.scale) {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "画面オーバーレイの表示倍率は1から100の整数で指定してください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| match slot {
+        ScreenOverlaySlot::TopLeft => {
+            config.character.screen_overlays.top_left.scale = request.scale
+        }
+        ScreenOverlaySlot::TopRight => {
+            config.character.screen_overlays.top_right.scale = request.scale
+        }
+        ScreenOverlaySlot::BottomLeft => {
+            config.character.screen_overlays.bottom_left.scale = request.scale
+        }
+        ScreenOverlaySlot::BottomRight => {
+            config.character.screen_overlays.bottom_right.scale = request.scale
+        }
+    }) {
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "画面オーバーレイの表示倍率を保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "画面オーバーレイの表示倍率を保存できませんでした",
             )
         }
     }
@@ -1909,15 +2130,99 @@ struct AdminQrCodeRequest {
 #[derive(Serialize)]
 struct DisplayConfigDto {
     #[serde(flatten)]
-    character: crate::config::CharacterConfig,
+    character: DisplayCharacterConfig,
     background_image_url: Option<String>,
     background_music_url: Option<String>,
+    screen_overlays: ScreenOverlaysDisplayConfigDto,
+}
+
+#[derive(Serialize)]
+struct DisplayCharacterConfig {
+    vrm_url: String,
+    antialias: bool,
+    idle_motions: Vec<String>,
+    emotion_motions: HashMap<String, String>,
+    food_prop: crate::config::FoodPropConfig,
+    camera: crate::config::CameraConfig,
+    background_color: String,
+    background_music_volume: f32,
+    background_music_duck_ratio: f32,
+    light: crate::config::LightConfig,
+}
+
+impl From<CharacterConfig> for DisplayCharacterConfig {
+    fn from(character: CharacterConfig) -> Self {
+        Self {
+            vrm_url: character.vrm_url,
+            antialias: character.antialias,
+            idle_motions: character.idle_motions,
+            emotion_motions: character.emotion_motions,
+            food_prop: character.food_prop,
+            camera: character.camera,
+            background_color: character.background_color,
+            background_music_volume: character.background_music_volume,
+            background_music_duck_ratio: character.background_music_duck_ratio,
+            light: character.light,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ScreenOverlaysDisplayConfigDto {
+    top_left: ScreenOverlayDisplayConfigDto,
+    top_right: ScreenOverlayDisplayConfigDto,
+    bottom_left: ScreenOverlayDisplayConfigDto,
+    bottom_right: ScreenOverlayDisplayConfigDto,
+}
+
+#[derive(Serialize)]
+struct ScreenOverlayDisplayConfigDto {
+    image_url: Option<String>,
+    scale: u8,
+}
+
+#[derive(Clone, Copy)]
+enum ScreenOverlaySlot {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ScreenOverlaySlot {
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::TopLeft => "screen-overlay-top-left.webp",
+            Self::TopRight => "screen-overlay-top-right.webp",
+            Self::BottomLeft => "screen-overlay-bottom-left.webp",
+            Self::BottomRight => "screen-overlay-bottom-right.webp",
+        }
+    }
+}
+
+impl TryFrom<&str> for ScreenOverlaySlot {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "top-left" => Ok(Self::TopLeft),
+            "top-right" => Ok(Self::TopRight),
+            "bottom-left" => Ok(Self::BottomLeft),
+            "bottom-right" => Ok(Self::BottomRight),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Deserialize)]
 struct BackgroundMusicVolumeRequest {
     volume: f32,
     duck_ratio: f32,
+}
+
+#[derive(Deserialize)]
+struct ScreenOverlayScaleRequest {
+    scale: u8,
 }
 
 #[derive(Deserialize)]
@@ -2136,6 +2441,7 @@ mod tests {
                 assets_dir: Arc::new(PathBuf::from("target/test-assets")),
                 vrm_model_lock: Arc::new(Mutex::new(())),
                 background_image_lock: Arc::new(Mutex::new(())),
+                screen_overlay_lock: Arc::new(Mutex::new(())),
                 background_music_lock: Arc::new(Mutex::new(())),
                 update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 shutdown: tokio::sync::watch::channel(false).0,
@@ -3625,6 +3931,140 @@ mod tests {
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         }
         assert!(!path.exists());
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn screen_overlay_upload_delete_and_display_config_use_fixed_slot_file() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join("screen-overlay-top-left.webp");
+        let image = webp_container(b"top-left-overlay");
+        let boundary = "screen-overlay-upload";
+        let body = multipart_image_body(boundary, "image/webp", &image);
+        let app = router(state);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/screen-overlays/top-left")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert!(!path.exists());
+
+        let uploaded = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/screen-overlays/top-left?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+        assert_eq!(std::fs::read(&path).unwrap(), image);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["screen_overlays"]["top_left"]["scale"], 100);
+        assert!(
+            json["screen_overlays"]["top_left"]["image_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("/assets/screen-overlay-top-left.webp?v=")
+        );
+        assert_eq!(
+            json["screen_overlays"]["top_right"]["image_url"],
+            serde_json::Value::Null
+        );
+
+        for _ in 0..2 {
+            let deleted = app
+                .clone()
+                .oneshot(
+                    Request::delete("/api/admin/screen-overlays/top-left?token=test-token")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        }
+        assert!(!path.exists());
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn screen_overlay_scale_is_validated_persisted_and_notifies_display_clients() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let config = state.config.current().as_ref().clone();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let mut events = state.events.subscribe();
+        let app = router(state.clone());
+
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/screen-overlays/top-left/scale?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"scale":0}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let updated = app
+            .oneshot(
+                Request::put("/api/admin/screen-overlays/bottom-right/scale?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"scale":65}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::NO_CONTENT);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.character.screen_overlays.bottom_right.scale, 65);
+        assert_eq!(saved.character.screen_overlays.top_left.scale, 100);
+        assert_eq!(
+            state
+                .config
+                .current()
+                .character
+                .screen_overlays
+                .bottom_right
+                .scale,
+            65
+        );
 
         std::fs::remove_dir_all(assets_dir).unwrap();
     }
