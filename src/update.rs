@@ -501,7 +501,7 @@ fn launch_updater(
         .arg(&layout.executable_name)
         .current_dir(&layout.root)
         .stdin(Stdio::null());
-    configure_hidden_process(&mut command);
+    configure_updater_process(&mut command);
     if let Err(error) = command.spawn() {
         let _ = writeln!(log, "外部アップデーターを起動できません: {error}");
         return Err(error).context("外部アップデーターを起動できません");
@@ -512,14 +512,30 @@ fn launch_updater(
 }
 
 #[cfg(windows)]
-fn configure_hidden_process(command: &mut Command) {
+fn configure_updater_process(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
-#[cfg(not(windows))]
-fn configure_hidden_process(_command: &mut Command) {}
+#[cfg(unix)]
+fn configure_updater_process(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // サーバーが端末セッションのリーダーでも、その終了時のSIGHUPを
+    // 外部アップデーターへ伝播させない。
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn configure_updater_process(_command: &mut Command) {}
 
 fn executable_file_name() -> &'static str {
     if cfg!(windows) {
@@ -548,6 +564,41 @@ fn package_root_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    const SESSION_TEST_CHILD_ENV: &str = "WEB_AITUBER_SESSION_TEST_CHILD";
+
+    #[cfg(unix)]
+    #[test]
+    fn updater_process_starts_in_new_session() {
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "update::tests::writes_session_ids_for_test",
+                "--ignored",
+            ])
+            .env(SESSION_TEST_CHILD_ENV, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_updater_process(&mut command);
+
+        let status = command.status().unwrap();
+
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "外部アップデーターのセッション分離テストが起動する子プロセス用"]
+    fn writes_session_ids_for_test() {
+        if env::var_os(SESSION_TEST_CHILD_ENV).is_some() {
+            let process_id = unsafe { libc::getpid() };
+            let session_id = unsafe { libc::getsid(0) };
+            assert_eq!(process_id, session_id);
+        }
+    }
 
     #[test]
     fn systemd判定は直接起動されたプロセスだけに一致する() {

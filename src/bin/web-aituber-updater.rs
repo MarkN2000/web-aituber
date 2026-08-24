@@ -37,8 +37,11 @@ fn main() {
         .get(1)
         .map(PathBuf::from)
         .map(|root| root.join(UPDATE_LOG_FILE_NAME));
-    append_update_log(log_path.as_deref(), "外部アップデーターを開始しました");
-    if let Err(error) = run(values, log_path.as_deref()) {
+    let result = detach_from_parent_session().and_then(|()| {
+        append_update_log(log_path.as_deref(), "外部アップデーターを開始しました");
+        run(values, log_path.as_deref())
+    });
+    if let Err(error) = result {
         let message = format!("アップデートに失敗しました: {error:#}");
         append_update_log(log_path.as_deref(), &message);
         eprintln!("{message}");
@@ -46,6 +49,28 @@ fn main() {
         append_update_log(log_path.as_deref(), "アップデートが完了しました");
     }
     schedule_self_delete();
+}
+
+#[cfg(unix)]
+fn detach_from_parent_session() -> Result<()> {
+    let process_id = unsafe { libc::getpid() };
+    let session_id = unsafe { libc::getsid(0) };
+    if session_id == -1 {
+        return Err(io::Error::last_os_error()).context("現在の端末セッションを確認できません");
+    }
+    if session_id == process_id {
+        return Ok(());
+    }
+    if unsafe { libc::setsid() } == -1 {
+        return Err(io::Error::last_os_error())
+            .context("外部アップデーターを端末セッションから分離できません");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn detach_from_parent_session() -> Result<()> {
+    Ok(())
 }
 
 fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
@@ -428,6 +453,8 @@ mod tests {
     use std::process::Stdio;
 
     const FORCE_STOP_TEST_CHILD_ENV: &str = "WEB_AITUBER_FORCE_STOP_TEST_CHILD";
+    #[cfg(unix)]
+    const SESSION_TEST_CHILD_ENV: &str = "WEB_AITUBER_UPDATER_SESSION_TEST_CHILD";
 
     fn spawn_waiting_test_child(duration: Duration) -> (u32, thread::JoinHandle<ExitStatus>) {
         let mut child = Command::new(env::current_exe().unwrap())
@@ -489,6 +516,37 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "開始\n完了\n");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn updater_detaches_itself_from_parent_session() {
+        let status = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::detaches_from_parent_session_test_child",
+                "--ignored",
+            ])
+            .env(SESSION_TEST_CHILD_ENV, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "外部アップデーター自身のセッション分離テストが起動する子プロセス用"]
+    fn detaches_from_parent_session_test_child() {
+        if env::var_os(SESSION_TEST_CHILD_ENV).is_some() {
+            detach_from_parent_session().unwrap();
+            let process_id = unsafe { libc::getpid() };
+            let session_id = unsafe { libc::getsid(0) };
+            assert_eq!(process_id, session_id);
+        }
     }
 
     #[test]

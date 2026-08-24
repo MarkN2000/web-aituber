@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web", "admin.html"), "utf8");
 const script = fs.readFileSync(path.join(root, "web", "js", "admin.js"), "utf8");
 const routes = fs.readFileSync(path.join(root, "src", "routes.rs"), "utf8");
+const update = fs.readFileSync(path.join(root, "src", "update.rs"), "utf8");
 const updater = fs.readFileSync(path.join(root, "src", "bin", "web-aituber-updater.rs"), "utf8");
 
 test("管理画面にはバージョンとアップデート確認操作を表示する", () => {
@@ -24,6 +25,13 @@ test("自己更新は接続を閉じて終了期限を設け、進行状況を�
   assert.match(updater, /terminate_parent\(parent_pid\)/);
   assert.match(updater, /UPDATE_LOG_FILE_NAME: &str = "update\.log"/);
   assert.match(updater, /append_update_log\(log_path/);
+});
+
+test("Unixでは外部アップデーターを親の端末セッションから分離する", () => {
+  assert.match(update, /command\.pre_exec/);
+  assert.match(update, /libc::setsid\(\)/);
+  assert.match(updater, /detach_from_parent_session\(\)/);
+  assert.match(updater, /libc::setsid\(\)/);
 });
 
 test("アップデートは確認後に同意を取り、再起動した版を確認する", () => {
