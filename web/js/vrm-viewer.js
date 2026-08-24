@@ -374,6 +374,11 @@ export class VrmViewer {
   }
 
   updateBlink(delta) {
+    if (this.currentExpression !== 'neutral') {
+      if (this.blinkTime > 0) this.setExpressionValue('blink', 0);
+      this.blinkTime = 0;
+      return;
+    }
     this.blinkTimer -= delta;
     if (this.blinkTimer <= 0 && this.blinkTime <= 0) this.blinkTime = 0.16;
     if (this.blinkTime > 0) {

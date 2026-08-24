@@ -185,6 +185,27 @@ test("音声停止中は口の表情を毎フレーム更新しない", () => {
   assert.deepEqual(applied, [{ aa: 0.5 }]);
 });
 
+test("neutral以外の表情中は進行中の瞬きを解除して停止する", () => {
+  const viewer = createViewer();
+  const applied = [];
+  viewer.setExpressionValue = (name, value) => applied.push([name, value]);
+  viewer.currentExpression = "happy";
+  viewer.blinkTimer = 0;
+  viewer.blinkTime = 0.08;
+
+  viewer.updateBlink(1 / 30);
+  viewer.updateBlink(1 / 30);
+
+  assert.deepEqual(applied, [["blink", 0]]);
+  assert.equal(viewer.blinkTime, 0);
+  assert.equal(viewer.blinkTimer, 0);
+
+  viewer.currentExpression = "neutral";
+  viewer.updateBlink(0.08);
+
+  assert.deepEqual(applied, [["blink", 0], ["blink", 1]]);
+});
+
 function debugState(overrides = {}) {
   return {
     motionFileName: undefined,
