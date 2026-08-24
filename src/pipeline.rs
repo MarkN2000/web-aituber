@@ -19,6 +19,8 @@ const AUDIO_RETENTION: Duration = Duration::from_secs(300);
 const FOOD_IMAGE_RETENTION: Duration = Duration::from_secs(300);
 const FOOD_CONSUME_AT_MS: u64 = 1_200;
 const FOOD_ACTION_DURATION_MS: u64 = 1_600;
+const MAX_ANSWER_CHARACTERS: usize = 300;
+const MAX_ANSWER_SENTENCES: usize = 4;
 
 pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
     while let Some(submission) = submissions.recv().await {
@@ -197,7 +199,7 @@ async fn process_active_submission(
         }
     };
 
-    let segments = split_answer(&generated.answer);
+    let segments = limited_answer_segments(&generated.answer, generated.output_limit_reached);
     if segments.is_empty() {
         return Err(ProcessError::Failed {
             error: anyhow!("LLMの回答が空です"),
@@ -440,6 +442,31 @@ fn display_answer(segments: &[AnswerSegment]) -> String {
         .collect()
 }
 
+fn limited_answer_segments(answer: &str, require_complete_last: bool) -> Vec<AnswerSegment> {
+    let mut segments = split_answer(answer);
+    if require_complete_last
+        && segments
+            .last()
+            .is_some_and(|segment| !segment.text.chars().last().is_some_and(is_sentence_end))
+    {
+        segments.pop();
+    }
+
+    let mut characters = 0;
+    segments
+        .into_iter()
+        .take(MAX_ANSWER_SENTENCES)
+        .take_while(|segment| {
+            let next_characters = characters + segment.text.chars().count();
+            if next_characters > MAX_ANSWER_CHARACTERS {
+                return false;
+            }
+            characters = next_characters;
+            true
+        })
+        .collect()
+}
+
 fn split_answer(answer: &str) -> Vec<AnswerSegment> {
     let mut raw_segments = Vec::new();
     let mut current = String::new();
@@ -448,8 +475,14 @@ fn split_answer(answer: &str) -> Vec<AnswerSegment> {
         if character == '\r' {
             continue;
         }
+        if character == '\n' {
+            if !current.chars().last().is_some_and(char::is_whitespace) {
+                current.push(' ');
+            }
+            continue;
+        }
         current.push(character);
-        if matches!(character, '。' | '！' | '？' | '!' | '?' | '\n') {
+        if is_sentence_end(character) {
             if !current.trim().is_empty() {
                 raw_segments.push(std::mem::take(&mut current));
             } else {
@@ -465,6 +498,10 @@ fn split_answer(answer: &str) -> Vec<AnswerSegment> {
         .into_iter()
         .filter_map(|raw| parse_segment(&raw))
         .collect()
+}
+
+fn is_sentence_end(character: char) -> bool {
+    matches!(character, '。' | '！' | '？' | '!' | '?')
 }
 
 fn parse_segment(raw: &str) -> Option<AnswerSegment> {
@@ -528,6 +565,50 @@ mod tests {
     fn 履歴用回答から感情タグを除去する() {
         let segments = split_answer("[happy]こんにちは！[sad]また明日。");
         assert_eq!(display_answer(&segments), "こんにちは！また明日。");
+    }
+
+    #[test]
+    fn 回答は感情タグを除いた本文を最大300文字かつ4文に制限する() {
+        let first = format!("[happy]{}。", "あ".repeat(299));
+        let answer = format!("{first}[sad]追加です。さらに追加です。まだ追加です。最後です。");
+
+        let segments = limited_answer_segments(&answer, false);
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text.chars().count(), MAX_ANSWER_CHARACTERS);
+
+        let segments = limited_answer_segments("一文目。二文目。三文目。四文目。五文目。", false);
+        assert_eq!(segments.len(), MAX_ANSWER_SENTENCES);
+        assert_eq!(
+            display_answer(&segments),
+            "一文目。二文目。三文目。四文目。"
+        );
+    }
+
+    #[test]
+    fn 先頭の一文だけで300文字を超える回答は使用しない() {
+        let answer = format!("{}。", "あ".repeat(300));
+
+        assert!(limited_answer_segments(&answer, false).is_empty());
+    }
+
+    #[test]
+    fn 出力上限に達した回答は文末まで完成した文だけを使用する() {
+        let answer = "[neutral]完成した文です。[happy]途中の文";
+
+        let limited = limited_answer_segments(answer, true);
+        assert_eq!(display_answer(&limited), "完成した文です。");
+
+        let completed = limited_answer_segments(answer, false);
+        assert_eq!(display_answer(&completed), "完成した文です。途中の文");
+    }
+
+    #[test]
+    fn 改行は文数に含めない() {
+        let segments = limited_answer_segments("改行を\n含む一文です。", false);
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "改行を 含む一文です。");
     }
 
     #[tokio::test]

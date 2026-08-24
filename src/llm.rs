@@ -13,11 +13,14 @@ use crate::{
 };
 
 const MAX_SOURCES: usize = 8;
+const MAX_OUTPUT_TOKENS: usize = 1024;
+const OUTPUT_LENGTH_INSTRUCTIONS: &str = "回答本文は日本語で300文字以内かつ最大4文にしてください。各文は「。」「！」「？」のいずれかで終えてください。Markdownの箇条書きは使用しないでください。";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct LlmResponse {
     pub answer: String,
     pub sources: Vec<SourceLink>,
+    pub output_limit_reached: bool,
 }
 
 pub async fn generate(
@@ -59,13 +62,13 @@ fn build_request(
     let is_food = submission.is_food();
     let instructions = if is_food {
         format!(
-            "{}\n\n現在日時（日本時間）: {current_time}\n\n食事投稿への追加指示:\n{}",
+            "{}\n\n{OUTPUT_LENGTH_INSTRUCTIONS}\n\n現在日時（日本時間）: {current_time}\n\n食事投稿への追加指示:\n{}",
             config.system_prompt.trim_end(),
             config.food_reaction_prompt.trim()
         )
     } else {
         format!(
-            "{}\n\n現在日時（日本時間）: {current_time}\n検索した場合も、回答本文にはURLや出典一覧を含めないでください。出典は画面側で別に表示します。",
+            "{}\n\n{OUTPUT_LENGTH_INSTRUCTIONS}\n\n現在日時（日本時間）: {current_time}\n検索した場合も、回答本文にはURLや出典一覧を含めないでください。出典は画面側で別に表示します。",
             config.system_prompt.trim_end()
         )
     };
@@ -99,6 +102,7 @@ fn build_request(
         "input": input,
         "reasoning": { "effort": "low" },
         "text": { "verbosity": "low" },
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
         "store": false,
         "stream": true
     });
@@ -123,6 +127,7 @@ async fn read_stream(
     let mut buffer = Vec::new();
     let mut fallback_text = String::new();
     let mut completed_response = None;
+    let mut output_limit_reached = false;
     let mut search_started = Some(search_started);
 
     while let Some(chunk) = chunks.next().await {
@@ -147,7 +152,14 @@ async fn read_stream(
                         fallback_text.push_str(delta);
                     }
                 }
-                "response.completed" => completed_response = event.get("response").cloned(),
+                "response.completed" => {
+                    completed_response = event.get("response").cloned();
+                    output_limit_reached = false;
+                }
+                "response.incomplete" if is_output_limit_incomplete(&event) => {
+                    completed_response = event.get("response").cloned();
+                    output_limit_reached = true;
+                }
                 "response.failed" | "response.incomplete" | "error" => {
                     let message = event
                         .pointer("/response/error/message")
@@ -169,6 +181,7 @@ async fn read_stream(
         .unwrap_or_else(|| LlmResponse {
             answer: fallback_text.trim().to_owned(),
             sources: Vec::new(),
+            output_limit_reached: false,
         });
     if result.answer.is_empty() {
         result.answer = fallback_text.trim().to_owned();
@@ -176,7 +189,17 @@ async fn read_stream(
     if result.answer.is_empty() {
         bail!("LLM API の応答に回答テキストがありません");
     }
+    result.output_limit_reached = output_limit_reached;
     Ok(result)
+}
+
+fn is_output_limit_incomplete(event: &Value) -> bool {
+    matches!(
+        event
+            .pointer("/response/incomplete_details/reason")
+            .and_then(Value::as_str),
+        Some("max_tokens" | "max_output_tokens")
+    )
 }
 
 fn is_web_search_event(event_type: &str, event: &Value) -> bool {
@@ -267,6 +290,7 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
     Ok(LlmResponse {
         answer: answer_parts.join("\n"),
         sources,
+        output_limit_reached: false,
     })
 }
 
@@ -381,6 +405,7 @@ mod tests {
         assert_eq!(request["max_tool_calls"], 1);
         assert_eq!(request["reasoning"]["effort"], "low");
         assert_eq!(request["text"]["verbosity"], "low");
+        assert_eq!(request["max_output_tokens"], MAX_OUTPUT_TOKENS);
         assert_eq!(request["include"][0], "web_search_call.action.sources");
         assert_eq!(request["stream"], true);
         assert_eq!(request["store"], false);
@@ -389,6 +414,12 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("現在日時（日本時間）: 2026-08-07T03:00:00+09:00")
+        );
+        assert!(
+            request["instructions"]
+                .as_str()
+                .unwrap()
+                .contains(OUTPUT_LENGTH_INSTRUCTIONS)
         );
         assert_eq!(request["input"][0]["role"], "user");
         assert_eq!(request["input"][0]["content"], "前の質問");
@@ -447,11 +478,18 @@ mod tests {
         assert!(request.get("tool_choice").is_none());
         assert!(request.get("max_tool_calls").is_none());
         assert!(request.get("include").is_none());
+        assert_eq!(request["max_output_tokens"], MAX_OUTPUT_TOKENS);
         assert!(
             request["instructions"]
                 .as_str()
                 .unwrap()
                 .contains("設定から変更した食事の感想指示")
+        );
+        assert!(
+            request["instructions"]
+                .as_str()
+                .unwrap()
+                .contains(OUTPUT_LENGTH_INSTRUCTIONS)
         );
     }
 
@@ -493,6 +531,38 @@ mod tests {
         assert_eq!(result.sources.len(), 2);
         assert_eq!(result.sources[0].title, "参照ページ");
         assert_eq!(result.sources[1].title, "ニュース");
+        assert!(!result.output_limit_reached);
+    }
+
+    #[test]
+    fn recognizes_only_output_token_limits_as_recoverable_incomplete() {
+        let max_tokens = json!({
+            "type": "response.incomplete",
+            "response": {
+                "incomplete_details": { "reason": "max_tokens" }
+            }
+        });
+        let max_output_tokens = json!({
+            "type": "response.incomplete",
+            "response": {
+                "incomplete_details": { "reason": "max_output_tokens" }
+            }
+        });
+        let content_filter = json!({
+            "type": "response.incomplete",
+            "response": {
+                "incomplete_details": { "reason": "content_filter" }
+            }
+        });
+        let misplaced_reason = json!({
+            "type": "response.incomplete",
+            "incomplete_details": { "reason": "max_output_tokens" }
+        });
+
+        assert!(is_output_limit_incomplete(&max_tokens));
+        assert!(is_output_limit_incomplete(&max_output_tokens));
+        assert!(!is_output_limit_incomplete(&content_filter));
+        assert!(!is_output_limit_incomplete(&misplaced_reason));
     }
 
     #[test]
