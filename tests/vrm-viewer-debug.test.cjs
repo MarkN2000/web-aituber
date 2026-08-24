@@ -359,7 +359,46 @@ test("待機中はモデルのNatural表情へ切り替える", () => {
   }));
 });
 
-test("Natural表情がないモデルの待機中はneutralへ戻す", () => {
+test("neutralの要求はモデルのNatural表情へ置き換える", () => {
+  const viewer = createViewer();
+  const applied = [];
+  viewer.vrm = {
+    expressionManager: {
+      expressions: [{ expressionName: "nAtUrAl" }],
+      getExpression: (name) => name === "nAtUrAl" ? {} : undefined,
+      setValue: (name, value) => applied.push([name, value]),
+    },
+  };
+
+  viewer.setEmotion("neutral");
+
+  assert.deepEqual(applied, [["nAtUrAl", 1]]);
+  assert.deepEqual(viewer.debugStates.at(-1), debugState({
+    expression: "natural",
+    expressionSupport: "supported",
+  }));
+});
+
+test("Naturalがない場合はモデルのneutral表情を適用する", () => {
+  const viewer = createViewer();
+  const applied = [];
+  viewer.vrm = {
+    expressionManager: {
+      expressions: [{ expressionName: "neutral" }],
+      getExpression: (name) => name === "neutral" ? {} : undefined,
+      setValue: (name, value) => applied.push([name, value]),
+    },
+  };
+
+  viewer.setEmotion("neutral");
+
+  assert.deepEqual(applied, [["neutral", 0], ["neutral", 1]]);
+  assert.deepEqual(viewer.debugStates.at(-1), debugState({
+    expressionSupport: "supported",
+  }));
+});
+
+test("Naturalとneutral表情がないモデルの待機中は全表情を解除する", () => {
   const viewer = createViewer();
   const applied = [];
   viewer.vrm = {

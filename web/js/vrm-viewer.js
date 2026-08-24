@@ -215,36 +215,35 @@ export class VrmViewer {
   }
 
   setEmotion(emotion) {
-    const value = isEmotion(emotion) ? emotion : 'neutral';
+    const requested = isEmotion(emotion) ? emotion : 'neutral';
+    const value = requested === 'neutral' && this.expressionSupport('natural') === 'supported'
+      ? 'natural'
+      : requested;
     this.setExpression(value);
   }
 
   setIdleExpression() {
-    const value = this.expressionSupport('natural') === 'supported' ? 'natural' : 'neutral';
-    this.setExpression(value);
+    this.setEmotion('neutral');
   }
 
   setExpression(value) {
     if (this.vrm?.expressionManager) this.setExpressionValue(this.currentExpression, 0);
     this.currentExpression = value;
     this.currentExpressionSupport = this.expressionSupport(value);
-    if (this.vrm?.expressionManager) this.setExpressionValue(value, value === 'neutral' ? 0 : 1);
+    if (this.currentExpressionSupport === 'supported') this.setExpressionValue(value, 1);
     this.reportDebugState();
   }
 
   expressionSupport(name) {
-    if (name === 'neutral') return 'base';
     const manager = this.vrm?.expressionManager;
-    if (!manager) return 'unsupported';
+    if (!manager) return name === 'neutral' ? 'base' : 'unsupported';
     try {
-      const expressionName = manager.expressions
-        ?.find((expression) => expression.expressionName?.toLowerCase() === name.toLowerCase())
-        ?.expressionName ?? name;
-      return !manager.getExpression || manager.getExpression(expressionName)
-        ? 'supported'
-        : 'unsupported';
+      const expression = manager.expressions
+        ?.find((candidate) => candidate.expressionName?.toLowerCase() === name.toLowerCase());
+      if (expression || manager.getExpression?.(name)) return 'supported';
+      return name === 'neutral' ? 'base' : 'unsupported';
     } catch {
-      return 'unsupported';
+      return name === 'neutral' ? 'base' : 'unsupported';
     }
   }
 
