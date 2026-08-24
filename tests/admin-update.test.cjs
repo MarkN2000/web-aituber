@@ -19,7 +19,9 @@ test("管理画面にはバージョンとアップデート確認操作を表�
 test("自己更新は接続を閉じて終了期限を設け、進行状況をログへ残す", () => {
   assert.match(routes, /state\.shutdown\.subscribe\(\)/);
   assert.match(routes, /sender\.send\(Message::Close\(None\)\)/);
-  assert.match(routes, /UPDATE_FORCE_EXIT_DELAY: Duration = Duration::from_secs\(10\)/);
+  assert.match(routes, /std::thread::spawn/);
+  assert.match(updater, /PARENT_GRACEFUL_EXIT_TIMEOUT: Duration = Duration::from_secs\(10\)/);
+  assert.match(updater, /terminate_parent\(parent_pid\)/);
   assert.match(updater, /UPDATE_LOG_FILE_NAME: &str = "update\.log"/);
   assert.match(updater, /append_update_log\(log_path/);
 });

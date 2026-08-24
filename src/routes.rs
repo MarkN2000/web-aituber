@@ -47,7 +47,6 @@ const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_B
 const VRM_MODEL_FILE_NAME: &str = "model.vrm";
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 const UPDATE_SHUTDOWN_DELAY: Duration = Duration::from_millis(750);
-const UPDATE_FORCE_EXIT_DELAY: Duration = Duration::from_secs(10);
 
 pub fn router(state: AppState) -> Router {
     let asset_routes = Router::new()
@@ -1494,12 +1493,9 @@ async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAut
     match update::prepare_and_launch(&state.http).await {
         Ok(prepared) => {
             let shutdown = state.shutdown.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(UPDATE_SHUTDOWN_DELAY).await;
+            std::thread::spawn(move || {
+                std::thread::sleep(UPDATE_SHUTDOWN_DELAY);
                 let _ = shutdown.send(true);
-                tokio::time::sleep(UPDATE_FORCE_EXIT_DELAY).await;
-                tracing::warn!("自己更新の終了猶予を超えたためプロセスを終了します");
-                std::process::exit(0);
             });
             admin_no_store(
                 (

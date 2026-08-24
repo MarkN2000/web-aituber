@@ -11,7 +11,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
+const PARENT_GRACEFUL_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
+const PARENT_FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const STARTUP_CONFIRMATION_TIME: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const UPDATE_LOG_FILE_NAME: &str = "update.log";
@@ -56,7 +57,12 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
         log_path,
         &format!("サーバープロセス {} の終了を待ちます", args.parent_pid),
     );
-    wait_for_parent(args.parent_pid, PARENT_EXIT_TIMEOUT)?;
+    ensure_parent_exit(
+        args.parent_pid,
+        PARENT_GRACEFUL_EXIT_TIMEOUT,
+        PARENT_FORCE_EXIT_TIMEOUT,
+        log_path,
+    )?;
     append_update_log(log_path, "サーバープロセスの終了を確認しました");
 
     let items = [
@@ -269,46 +275,106 @@ fn wait_for_early_exit(child: &mut Child, duration: Duration) -> Result<Option<E
     Ok(None)
 }
 
+fn ensure_parent_exit(
+    parent_pid: u32,
+    graceful_timeout: Duration,
+    force_timeout: Duration,
+    log_path: Option<&Path>,
+) -> Result<()> {
+    if wait_for_parent(parent_pid, graceful_timeout)? {
+        return Ok(());
+    }
+
+    append_update_log(log_path, "サーバープロセスが終了しないため強制終了します");
+    terminate_parent(parent_pid)?;
+    if !wait_for_parent(parent_pid, force_timeout)? {
+        bail!("サーバープロセスを強制終了できませんでした");
+    }
+    append_update_log(log_path, "サーバープロセスの強制終了を確認しました");
+    Ok(())
+}
+
 #[cfg(unix)]
-fn wait_for_parent(parent_pid: u32, timeout: Duration) -> Result<()> {
+fn wait_for_parent(parent_pid: u32, timeout: Duration) -> Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
         let result = unsafe { libc::kill(parent_pid as i32, 0) };
         if result == -1 {
             let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ESRCH) {
-                return Ok(());
+                return Ok(true);
             }
             if error.raw_os_error() != Some(libc::EPERM) {
                 return Err(error).context("サーバープロセスの終了を確認できません");
             }
         }
         if Instant::now() >= deadline {
-            bail!("サーバープロセスが終了しませんでした");
+            return Ok(false);
         }
         thread::sleep(POLL_INTERVAL);
     }
 }
 
+#[cfg(unix)]
+fn terminate_parent(parent_pid: u32) -> Result<()> {
+    let result = unsafe { libc::kill(parent_pid as i32, libc::SIGKILL) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    Err(error).context("サーバープロセスを強制終了できません")
+}
+
 #[cfg(windows)]
-fn wait_for_parent(parent_pid: u32, timeout: Duration) -> Result<()> {
+fn wait_for_parent(parent_pid: u32, timeout: Duration) -> Result<bool> {
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT},
         System::Threading::{OpenProcess, WaitForSingleObject},
     };
     const SYNCHRONIZE: u32 = 0x0010_0000;
     let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, parent_pid) };
     if handle.is_null() {
-        return Ok(());
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+            return Ok(true);
+        }
+        return Err(error).context("サーバープロセスの終了を確認できません");
     }
     let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
     let wait_result = unsafe { WaitForSingleObject(handle, milliseconds) };
     unsafe { CloseHandle(handle) };
     match wait_result {
-        WAIT_OBJECT_0 => Ok(()),
-        WAIT_TIMEOUT => bail!("サーバープロセスが終了しませんでした"),
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
         _ => bail!("サーバープロセスの終了を確認できません"),
     }
+}
+
+#[cfg(windows)]
+fn terminate_parent(parent_pid: u32) -> Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER},
+        System::Threading::{OpenProcess, TerminateProcess},
+    };
+    const PROCESS_TERMINATE: u32 = 0x0001;
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, parent_pid) };
+    if handle.is_null() {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+            return Ok(());
+        }
+        return Err(error).context("サーバープロセスを強制終了できません");
+    }
+    let result = unsafe { TerminateProcess(handle, 1) };
+    let error = (result == 0).then(io::Error::last_os_error);
+    unsafe { CloseHandle(handle) };
+    if let Some(error) = error {
+        return Err(error).context("サーバープロセスを強制終了できません");
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -359,6 +425,23 @@ fn updater_file_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Stdio;
+
+    const FORCE_STOP_TEST_CHILD_ENV: &str = "WEB_AITUBER_FORCE_STOP_TEST_CHILD";
+
+    fn spawn_waiting_test_child(duration: Duration) -> (u32, thread::JoinHandle<ExitStatus>) {
+        let mut child = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "tests::waits_for_force_stop_test", "--ignored"])
+            .env(FORCE_STOP_TEST_CHILD_ENV, duration.as_millis().to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let child_pid = child.id();
+        let waiter = thread::spawn(move || child.wait().unwrap());
+        (child_pid, waiter)
+    }
 
     #[test]
     fn rejects_unexpected_executable_name() {
@@ -406,5 +489,64 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "開始\n完了\n");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn force_stops_parent_after_graceful_timeout() {
+        let root = env::temp_dir().join(format!(
+            "web-aituber-updater-force-stop-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).unwrap();
+        let log_path = root.join(UPDATE_LOG_FILE_NAME);
+        let (child_pid, waiter) = spawn_waiting_test_child(Duration::from_secs(5));
+
+        let result = ensure_parent_exit(
+            child_pid,
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+            Some(&log_path),
+        );
+        let status = waiter.join().unwrap();
+
+        result.unwrap();
+        assert!(!status.success());
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("サーバープロセスが終了しないため強制終了します"));
+        assert!(log.contains("サーバープロセスの強制終了を確認しました"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn allows_parent_to_exit_during_graceful_timeout() {
+        let root = env::temp_dir().join(format!(
+            "web-aituber-updater-graceful-stop-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).unwrap();
+        let log_path = root.join(UPDATE_LOG_FILE_NAME);
+        let (child_pid, waiter) = spawn_waiting_test_child(Duration::from_millis(50));
+
+        let result = ensure_parent_exit(
+            child_pid,
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            Some(&log_path),
+        );
+        let status = waiter.join().unwrap();
+
+        result.unwrap();
+        assert!(status.success());
+        assert!(!log_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "強制停止テストが起動する子プロセス用"]
+    fn waits_for_force_stop_test() {
+        if let Some(milliseconds) = env::var_os(FORCE_STOP_TEST_CHILD_ENV) {
+            let milliseconds = milliseconds.to_string_lossy().parse().unwrap();
+            thread::sleep(Duration::from_millis(milliseconds));
+        }
     }
 }
