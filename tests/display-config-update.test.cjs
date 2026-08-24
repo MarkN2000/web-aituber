@@ -16,6 +16,8 @@ const applySource = source.slice(
 
 function config(overrides = {}) {
   return {
+    preparation_mode: false,
+    preparation_image_url: null,
     vrm_url: "/assets/model.vrm?v=1",
     antialias: true,
     idle_motions: ["/assets/idle.vrma?v=1"],
@@ -39,7 +41,7 @@ function config(overrides = {}) {
 }
 
 function loadContext(initialConfig) {
-  const calls = { backgrounds: [], overlays: [], levels: [], tracks: [], viewerReloads: 0 };
+  const calls = { backgrounds: [], overlays: [], levels: [], tracks: [], viewerReloads: 0, preparation: [] };
   const context = vm.createContext({ JSON, calls });
   vm.runInContext(`
     ${keySource}
@@ -54,6 +56,11 @@ function loadContext(initialConfig) {
     function applyBackground(value) { calls.backgrounds.push(value); }
     function applyScreenOverlays(value) { calls.overlays.push(value); }
     function applyPendingViewerConfig() { calls.viewerReloads += 1; }
+    function enterPreparationMode(value) {
+      calls.preparation.push(["enter", value.preparation_image_url]);
+      appliedViewerConfigKey = undefined;
+    }
+    function leavePreparationMode() { calls.preparation.push(["leave"]); }
     ${applySource}
     this.apply = applyUpdatedDisplayConfig;
     this.pending = () => pendingViewerConfig;
@@ -128,4 +135,38 @@ test("CameraとFood Propの配置が変わるとビューアーの再読み込�
   assert.equal(calls.viewerReloads, 1);
   assert.deepEqual(context.pending().camera.position, [0.1, 1.5, 2.8]);
   assert.deepEqual(context.pending().food_prop.rotation_degrees, [10, 20, 30]);
+});
+
+test("準備中モードでは準備中画像へ切り替えてモデルを再読み込みしない", () => {
+  const initial = config();
+  const { context, calls } = loadContext(initial);
+
+  context.apply(config({
+    preparation_mode: true,
+    preparation_image_url: "/assets/preparation.webp?v=1",
+  }));
+
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.preparation)), [["enter", "/assets/preparation.webp?v=1"]]);
+  assert.equal(calls.backgrounds.length, 0);
+  assert.equal(calls.overlays.length, 0);
+  assert.equal(calls.viewerReloads, 0);
+});
+
+test("準備中モードを解除すると通常表示とモデルを復元する", () => {
+  const initial = config({
+    preparation_mode: true,
+    preparation_image_url: "/assets/preparation.webp?v=1",
+  });
+  const { context, calls } = loadContext(initial);
+  context.apply(initial);
+
+  context.apply(config());
+
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.preparation)), [
+    ["enter", "/assets/preparation.webp?v=1"],
+    ["leave"],
+  ]);
+  assert.equal(calls.backgrounds.length, 1);
+  assert.equal(calls.overlays.length, 1);
+  assert.equal(calls.viewerReloads, 1);
 });

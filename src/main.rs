@@ -65,6 +65,7 @@ async fn run() -> Result<()> {
         assets_dir: Arc::new(PathBuf::from("assets")),
         vrm_model_lock: Arc::new(Mutex::new(())),
         background_image_lock: Arc::new(Mutex::new(())),
+        preparation_image_lock: Arc::new(Mutex::new(())),
         screen_overlay_lock: Arc::new(Mutex::new(())),
         background_music_lock: Arc::new(Mutex::new(())),
         update_in_progress: Arc::new(AtomicBool::new(false)),

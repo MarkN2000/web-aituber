@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{
         DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State, WebSocketUpgrade,
         multipart::Field, ws::Message,
@@ -46,6 +46,7 @@ const MAX_VRM_MODEL_REQUEST_BYTES: usize = MAX_VRM_MODEL_BYTES + 128 * 1024;
 const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_BYTES + 128 * 1024;
 const VRM_MODEL_FILE_NAME: &str = "model.vrm";
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
+const PREPARATION_IMAGE_FILE_NAME: &str = "preparation.webp";
 const UPDATE_SHUTDOWN_DELAY: Duration = Duration::from_millis(750);
 
 pub fn router(state: AppState) -> Router {
@@ -67,6 +68,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/qr-code", post(admin_qr_code))
         .route("/api/admin/display-config", get(admin_display_config))
+        .route(
+            "/api/admin/preparation-mode",
+            axum::routing::put(update_preparation_mode),
+        )
         .route(
             "/api/admin/model-brightness",
             axum::routing::put(update_model_brightness),
@@ -110,6 +115,12 @@ pub fn router(state: AppState) -> Router {
             "/api/admin/background-image",
             post(upload_background_image)
                 .delete(delete_background_image)
+                .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
+        )
+        .route(
+            "/api/admin/preparation-image",
+            post(upload_preparation_image)
+                .delete(delete_preparation_image)
                 .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
         )
         .route(
@@ -228,7 +239,7 @@ async fn submit(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
-    require_valid_event_identifier(&state, &event_identifier)?;
+    require_accepting_submissions(&state, &event_identifier)?;
     let mut text = None;
     while let Some(field) = multipart
         .next_field()
@@ -258,7 +269,7 @@ async fn submit(
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(ApiError::bad_request("質問は2000文字以下にしてください"));
     }
-    require_valid_event_identifier(&state, &event_identifier)?;
+    require_accepting_submissions(&state, &event_identifier)?;
 
     let id = Uuid::new_v4().to_string();
     state
@@ -278,7 +289,7 @@ async fn submit_food(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
-    require_valid_event_identifier(&state, &event_identifier)?;
+    require_accepting_submissions(&state, &event_identifier)?;
     let mut vrm_image = None;
     let mut ai_image = None;
 
@@ -302,7 +313,7 @@ async fn submit_food(
         vrm_image.ok_or_else(|| ApiError::bad_request("VRM表示用の食事画像がありません"))?;
     let ai_image =
         ai_image.ok_or_else(|| ApiError::bad_request("AI入力用の食事画像がありません"))?;
-    require_valid_event_identifier(&state, &event_identifier)?;
+    require_accepting_submissions(&state, &event_identifier)?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
@@ -393,6 +404,13 @@ async fn display_config_response(state: &AppState) -> Response {
         "背景画像",
     )
     .await;
+    let preparation_image_path = state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME);
+    let preparation_image_url = existing_versioned_asset_url(
+        &preparation_image_path,
+        &format!("/assets/{PREPARATION_IMAGE_FILE_NAME}"),
+        "準備中画像",
+    )
+    .await;
     let background_music_path = state.assets_dir.join(background_music::FILE_NAME);
     let background_music_url = existing_versioned_asset_url(
         &background_music_path,
@@ -406,6 +424,7 @@ async fn display_config_response(state: &AppState) -> Response {
         screen_overlays: screen_overlays_display_config(state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
+        preparation_image_url,
         background_image_url,
         background_music_url,
     };
@@ -638,66 +657,154 @@ async fn upload_vrm_model(
 async fn upload_background_image(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Response {
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
+    let image = match read_webp_image(multipart, "背景画像").await {
+        Ok(image) => image,
+        Err(response) => return response,
+    };
+    save_webp_image(
+        &state,
+        &state.background_image_lock,
+        BACKGROUND_IMAGE_FILE_NAME,
+        "背景画像",
+        image,
+    )
+    .await
+}
+
+async fn upload_preparation_image(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let image = match read_webp_image(multipart, "準備中画像").await {
+        Ok(image) => image,
+        Err(response) => return response,
+    };
+    save_webp_image(
+        &state,
+        &state.preparation_image_lock,
+        PREPARATION_IMAGE_FILE_NAME,
+        "準備中画像",
+        image,
+    )
+    .await
+}
+
+async fn save_webp_image(
+    state: &AppState,
+    lock: &tokio::sync::Mutex<()>,
+    file_name: &str,
+    label: &'static str,
+    image: Bytes,
+) -> Response {
+    let _guard = lock.lock().await;
+    let path = state.assets_dir.join(file_name);
+    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
+        Ok(Ok(())) => {
+            notify_display_config_changed(state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Ok(Err(error)) => {
+            tracing::error!(asset = label, error = ?error, "画像を保存できませんでした");
+            admin_error_owned(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{label}を保存できませんでした"),
+            )
+        }
+        Err(error) => {
+            tracing::error!(asset = label, error = ?error, "画像の保存処理を実行できませんでした");
+            admin_error_owned(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{label}を保存できませんでした"),
+            )
+        }
+    }
+}
+
+async fn delete_preparation_image(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let _guard = state.preparation_image_lock.lock().await;
+    if state.config.current().character.preparation_mode {
+        return admin_error(
+            StatusCode::CONFLICT,
+            "準備中モードをOFFにしてから画像を削除してください",
+        );
+    }
+    let path = state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), error = ?error, "準備中画像を削除できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "準備中画像を削除できませんでした",
+            )
+        }
+    }
+}
+
+async fn read_webp_image(mut multipart: Multipart, label: &str) -> Result<Bytes, Response> {
     let mut image = None;
-    while let Some(field) = match multipart.next_field().await {
-        Ok(field) => field,
-        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "背景画像を読み取れませんでした"),
-    } {
+    while let Some(field) = multipart.next_field().await.map_err(|_| {
+        admin_error_owned(
+            StatusCode::BAD_REQUEST,
+            format!("{label}を読み取れませんでした"),
+        )
+    })? {
         if field.name() != Some("image") || image.is_some() {
             continue;
         }
         if field.content_type() != Some("image/webp") {
-            return admin_error(
+            return Err(admin_error_owned(
                 StatusCode::BAD_REQUEST,
-                "背景画像はWebP形式で送信してください",
-            );
+                format!("{label}はWebP形式で送信してください"),
+            ));
         }
-        let bytes = match field.bytes().await {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                return admin_error(StatusCode::BAD_REQUEST, "背景画像を読み取れませんでした");
-            }
-        };
+        let bytes = field.bytes().await.map_err(|_| {
+            admin_error_owned(
+                StatusCode::BAD_REQUEST,
+                format!("{label}を読み取れませんでした"),
+            )
+        })?;
         if bytes.len() > MAX_IMAGE_BYTES {
-            return admin_error(StatusCode::BAD_REQUEST, "背景画像は10MiB以下にしてください");
+            return Err(admin_error_owned(
+                StatusCode::BAD_REQUEST,
+                format!("{label}は10MiB以下にしてください"),
+            ));
         }
         if !has_valid_webp_container(&bytes) {
-            return admin_error(StatusCode::BAD_REQUEST, "背景画像のWebP形式が不正です");
+            return Err(admin_error_owned(
+                StatusCode::BAD_REQUEST,
+                format!("{label}のWebP形式が不正です"),
+            ));
         }
         image = Some(bytes);
     }
 
-    let Some(image) = image else {
-        return admin_error(StatusCode::BAD_REQUEST, "背景画像がありません");
-    };
-    let _guard = state.background_image_lock.lock().await;
-    let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
-    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
-        Ok(Ok(())) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
-        Ok(Err(error)) => {
-            tracing::error!(error = ?error, "背景画像を保存できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "背景画像を保存できませんでした",
-            )
-        }
-        Err(error) => {
-            tracing::error!(error = ?error, "背景画像の保存処理を実行できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "背景画像を保存できませんでした",
-            )
-        }
-    }
+    image.ok_or_else(|| admin_error_owned(StatusCode::BAD_REQUEST, format!("{label}がありません")))
 }
 
 async fn delete_background_image(
@@ -733,7 +840,7 @@ async fn upload_screen_overlay(
     Path(slot): Path<String>,
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Response {
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
@@ -742,74 +849,18 @@ async fn upload_screen_overlay(
         return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
     };
 
-    let mut image = None;
-    while let Some(field) = match multipart.next_field().await {
-        Ok(field) => field,
-        Err(_) => {
-            return admin_error(
-                StatusCode::BAD_REQUEST,
-                "画面オーバーレイを読み取れませんでした",
-            );
-        }
-    } {
-        if field.name() != Some("image") || image.is_some() {
-            continue;
-        }
-        if field.content_type() != Some("image/webp") {
-            return admin_error(
-                StatusCode::BAD_REQUEST,
-                "画面オーバーレイはWebP形式で送信してください",
-            );
-        }
-        let bytes = match field.bytes().await {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                return admin_error(
-                    StatusCode::BAD_REQUEST,
-                    "画面オーバーレイを読み取れませんでした",
-                );
-            }
-        };
-        if bytes.len() > MAX_IMAGE_BYTES {
-            return admin_error(
-                StatusCode::BAD_REQUEST,
-                "画面オーバーレイは10MiB以下にしてください",
-            );
-        }
-        if !has_valid_webp_container(&bytes) {
-            return admin_error(
-                StatusCode::BAD_REQUEST,
-                "画面オーバーレイのWebP形式が不正です",
-            );
-        }
-        image = Some(bytes);
-    }
-
-    let Some(image) = image else {
-        return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイがありません");
+    let image = match read_webp_image(multipart, "画面オーバーレイ").await {
+        Ok(image) => image,
+        Err(response) => return response,
     };
-    let _guard = state.screen_overlay_lock.lock().await;
-    let path = state.assets_dir.join(slot.file_name());
-    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
-        Ok(Ok(())) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
-        Ok(Err(error)) => {
-            tracing::error!(error = ?error, "画面オーバーレイを保存できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "画面オーバーレイを保存できませんでした",
-            )
-        }
-        Err(error) => {
-            tracing::error!(error = ?error, "画面オーバーレイの保存処理を実行できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "画面オーバーレイを保存できませんでした",
-            )
-        }
-    }
+    save_webp_image(
+        &state,
+        &state.screen_overlay_lock,
+        slot.file_name(),
+        "画面オーバーレイ",
+        image,
+    )
+    .await
 }
 
 async fn delete_screen_overlay(
@@ -1151,6 +1202,49 @@ async fn update_model_antialias(
     }
 }
 
+async fn update_preparation_mode(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<PreparationModeRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+
+    let _guard = state.preparation_image_lock.lock().await;
+    let has_image = tokio::fs::metadata(state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME))
+        .await
+        .is_ok_and(|metadata| metadata.is_file());
+    if request.enabled && !has_image {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "準備中画像をアップロードしてから有効にしてください",
+        );
+    }
+
+    match state.config.update_and_save(move |config| {
+        config.character.preparation_mode = request.enabled;
+    }) {
+        Ok(_) => {
+            if request.enabled {
+                let active = state.active.lock().await;
+                if let Some(active) = active.as_ref() {
+                    active.cancel.cancel();
+                }
+            }
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "準備中モードを保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "準備中モードを保存できませんでした",
+            )
+        }
+    }
+}
+
 async fn update_drawing_stabilization(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
@@ -1445,11 +1539,20 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
-    let previous_event_identifier = state.config.current().event_identifier.clone();
+    let previous = state.config.current();
+    let previous_event_identifier = previous.event_identifier.clone();
+    let previous_preparation_mode = previous.character.preparation_mode;
     match state.config.reload() {
         Ok(result) => {
-            if state.config.current().event_identifier != previous_event_identifier {
+            let current = state.config.current();
+            if current.event_identifier != previous_event_identifier {
                 notify_event_access_changed(&state);
+            }
+            if current.character.preparation_mode && !previous_preparation_mode {
+                let active = state.active.lock().await;
+                if let Some(active) = active.as_ref() {
+                    active.cancel.cancel();
+                }
             }
             notify_display_config_changed(&state);
             admin_no_store(
@@ -2142,6 +2245,15 @@ fn require_valid_event_identifier(
     }
 }
 
+fn require_accepting_submissions(state: &AppState, event_identifier: &str) -> Result<(), ApiError> {
+    require_valid_event_identifier(state, event_identifier)?;
+    if state.config.current().character.preparation_mode {
+        Err(ApiError::unavailable("現在は準備中です"))
+    } else {
+        Ok(())
+    }
+}
+
 fn event_ended_response() -> Response {
     ApiError::not_found("このURLは使用できません。").into_response()
 }
@@ -2171,6 +2283,7 @@ struct AdminQrCodeRequest {
 struct DisplayConfigDto {
     #[serde(flatten)]
     character: DisplayCharacterConfig,
+    preparation_image_url: Option<String>,
     background_image_url: Option<String>,
     background_music_url: Option<String>,
     screen_overlays: ScreenOverlaysDisplayConfigDto,
@@ -2179,6 +2292,7 @@ struct DisplayConfigDto {
 
 #[derive(Serialize)]
 struct DisplayCharacterConfig {
+    preparation_mode: bool,
     vrm_url: String,
     antialias: bool,
     idle_motions: Vec<String>,
@@ -2194,6 +2308,7 @@ struct DisplayCharacterConfig {
 impl From<CharacterConfig> for DisplayCharacterConfig {
     fn from(character: CharacterConfig) -> Self {
         Self {
+            preparation_mode: character.preparation_mode,
             vrm_url: character.vrm_url,
             antialias: character.antialias,
             idle_motions: character.idle_motions,
@@ -2274,6 +2389,11 @@ struct ModelBrightnessRequest {
 #[derive(Deserialize)]
 struct ModelAntialiasRequest {
     antialias: bool,
+}
+
+#[derive(Deserialize)]
+struct PreparationModeRequest {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -2487,6 +2607,7 @@ mod tests {
                 assets_dir: Arc::new(PathBuf::from("target/test-assets")),
                 vrm_model_lock: Arc::new(Mutex::new(())),
                 background_image_lock: Arc::new(Mutex::new(())),
+                preparation_image_lock: Arc::new(Mutex::new(())),
                 screen_overlay_lock: Arc::new(Mutex::new(())),
                 background_music_lock: Arc::new(Mutex::new(())),
                 update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -3978,6 +4099,151 @@ mod tests {
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         }
         assert!(!path.exists());
+
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn preparation_mode_requires_image_cancels_active_turn_and_rejects_submissions() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config_path = assets_dir.join("config.json");
+        let config = state.config.current().as_ref().clone();
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+
+        let without_image = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/preparation-mode?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"enabled":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(without_image.status(), StatusCode::BAD_REQUEST);
+
+        let boundary = "preparation-upload-boundary";
+        let image = webp_container(b"preparation-image");
+        let uploaded = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/preparation-image?token=test-token")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_image_body(
+                        boundary,
+                        "image/webp",
+                        &image,
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            std::fs::read(assets_dir.join(PREPARATION_IMAGE_FILE_NAME)).unwrap(),
+            image
+        );
+
+        let cancel = CancellationToken::new();
+        *state.active.lock().await = Some(crate::state::ActiveTurn {
+            turn_id: "active-turn".to_owned(),
+            cancel: cancel.clone(),
+        });
+        let enabled = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/preparation-mode?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"enabled":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enabled.status(), StatusCode::NO_CONTENT);
+        assert!(cancel.is_cancelled());
+        assert!(state.config.current().character.preparation_mode);
+        assert!(
+            AppConfig::load_from_path(&config_path)
+                .unwrap()
+                .character
+                .preparation_mode
+        );
+
+        let display = app
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let display_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(display.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(display_json["preparation_mode"], true);
+        assert!(
+            display_json["preparation_image_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("/assets/preparation.webp?v=")
+        );
+
+        for path in ["api/submissions", "api/food-submissions"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/event/event-8k2m4q7x9p/{path}"))
+                        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=empty")
+                        .body(Body::from("--empty--\r\n"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let json: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(json["error"], "現在は準備中です");
+        }
+
+        let delete_while_enabled = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/admin/preparation-image?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_while_enabled.status(), StatusCode::CONFLICT);
+
+        let disabled = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/preparation-mode?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"enabled":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::NO_CONTENT);
+        let deleted = app
+            .oneshot(
+                Request::delete("/api/admin/preparation-image?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        assert!(!assets_dir.join(PREPARATION_IMAGE_FILE_NAME).exists());
 
         std::fs::remove_dir_all(assets_dir).unwrap();
     }

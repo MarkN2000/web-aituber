@@ -31,6 +31,12 @@ const elements = {
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
   engineUrl: document.querySelector("#tts-engine-url"),
+  preparationModeForm: document.querySelector("#preparation-mode-form"), preparationMode: document.querySelector("#preparation-mode"),
+  savePreparationMode: document.querySelector("#save-preparation-mode"), preparationStatus: document.querySelector("#preparation-status"), preparationError: document.querySelector("#preparation-error"),
+  preparationForm: document.querySelector("#preparation-image-form"), preparationInput: document.querySelector("#preparation-image"),
+  uploadPreparation: document.querySelector("#upload-preparation-image"), deletePreparation: document.querySelector("#delete-preparation-image"),
+  currentPreparationPreview: document.querySelector("#current-preparation-preview"), currentPreparationEmpty: document.querySelector("#current-preparation-empty"),
+  selectedPreparationPreview: document.querySelector("#selected-preparation-preview"), selectedPreparationEmpty: document.querySelector("#selected-preparation-empty"),
   drawingForm: document.querySelector("#drawing-stabilization-form"), drawingStabilization: document.querySelector("#drawing-stabilization"),
   drawingStabilizationValue: document.querySelector("#drawing-stabilization-value"), saveDrawingStabilization: document.querySelector("#save-drawing-stabilization"),
   drawingStatus: document.querySelector("#drawing-stabilization-status"), drawingError: document.querySelector("#drawing-stabilization-error"),
@@ -97,10 +103,8 @@ let vrmBusy = false;
 let brightnessBusy = false;
 let antialiasBusy = false;
 let layoutBusy = false;
-let selectedBackgroundBlob;
-let selectedBackgroundUrl;
-let currentBackgroundExists = false;
-let backgroundBusy = false;
+let preparationModeEnabled = false;
+let preparationModeBusy = false;
 let selectedMusicFile;
 let currentMusicExists = false;
 let musicBusy = false;
@@ -108,6 +112,23 @@ let currentEventIdentifier;
 let currentPublicBaseUrl;
 let eventQrImageUrl;
 let updateInProgress = false;
+
+const backgroundImageAsset = {
+  label: "背景画像", fileName: "background.webp", endpoint: "/api/admin/background-image",
+  input: elements.backgroundInput, upload: elements.uploadBackground, remove: elements.deleteBackground,
+  currentPreview: elements.currentBackgroundPreview, currentEmpty: elements.currentBackgroundEmpty,
+  selectedPreview: elements.selectedBackgroundPreview, selectedEmpty: elements.selectedBackgroundEmpty,
+  status: elements.displayStatus, error: elements.displayError,
+  selectedBlob: undefined, selectedUrl: undefined, currentExists: false, busy: false,
+};
+const preparationImageAsset = {
+  label: "準備中画像", fileName: "preparation.webp", endpoint: "/api/admin/preparation-image",
+  input: elements.preparationInput, upload: elements.uploadPreparation, remove: elements.deletePreparation,
+  currentPreview: elements.currentPreparationPreview, currentEmpty: elements.currentPreparationEmpty,
+  selectedPreview: elements.selectedPreparationPreview, selectedEmpty: elements.selectedPreparationEmpty,
+  status: elements.preparationStatus, error: elements.preparationError, preparation: true,
+  selectedBlob: undefined, selectedUrl: undefined, currentExists: false, busy: false,
+};
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -281,10 +302,18 @@ function updateBrightnessLabel() {
   elements.brightnessValue.value = `${elements.brightness.value}%`;
   elements.brightnessValue.textContent = `${elements.brightness.value}%`;
 }
-function updateBackgroundControls() {
-  elements.backgroundInput.disabled = backgroundBusy || !token;
-  elements.uploadBackground.disabled = backgroundBusy || !selectedBackgroundBlob || !token;
-  elements.deleteBackground.disabled = backgroundBusy || !currentBackgroundExists || !token;
+function updateImageAssetControls(asset) {
+  asset.input.disabled = asset.busy || !token;
+  asset.upload.disabled = asset.busy || !asset.selectedBlob || !token;
+  asset.remove.disabled = asset.busy || !asset.currentExists || !token
+    || (asset.preparation && preparationModeEnabled);
+}
+function updatePreparationModeControls() {
+  const missingImage = !preparationImageAsset.currentExists && !preparationModeEnabled;
+  elements.preparationMode.disabled = preparationModeBusy || !token || missingImage;
+  elements.savePreparationMode.disabled = preparationModeBusy || !token
+    || (elements.preparationMode.checked && !preparationImageAsset.currentExists);
+  updateImageAssetControls(preparationImageAsset);
 }
 function updateScreenOverlayControls(overlay) {
   overlay.input.disabled = overlay.busy || !token;
@@ -425,49 +454,51 @@ function selectMusic() {
   }
   updateMusicControls();
 }
-async function showCurrentBackground(url) {
-  currentBackgroundExists = Boolean(url);
-  elements.currentBackgroundPreview.hidden = true;
-  elements.currentBackgroundPreview.removeAttribute("src");
-  elements.currentBackgroundEmpty.hidden = false;
-  elements.currentBackgroundEmpty.textContent = url ? "現在の背景画像を読み込み中です…" : "背景画像は設定されていません。";
-  updateBackgroundControls();
+async function showCurrentImageAsset(asset, url) {
+  asset.currentExists = Boolean(url);
+  asset.currentPreview.hidden = true;
+  asset.currentPreview.removeAttribute("src");
+  asset.currentEmpty.hidden = false;
+  asset.currentEmpty.textContent = url ? `現在の${asset.label}を読み込み中です…` : `${asset.label}は設定されていません。`;
+  updateImageAssetControls(asset);
+  if (asset.preparation) updatePreparationModeControls();
   if (!url) return;
   try {
     await new Promise((resolve, reject) => {
-      elements.currentBackgroundPreview.onload = resolve;
-      elements.currentBackgroundPreview.onerror = () => reject(new Error("現在の背景画像を読み込めませんでした。"));
-      elements.currentBackgroundPreview.src = url;
+      asset.currentPreview.onload = resolve;
+      asset.currentPreview.onerror = () => reject(new Error(`現在の${asset.label}を読み込めませんでした。`));
+      asset.currentPreview.src = url;
     });
   } catch (error) {
-    elements.currentBackgroundPreview.removeAttribute("src");
-    elements.currentBackgroundEmpty.textContent = "現在の背景画像を読み込めませんでした。";
+    asset.currentPreview.removeAttribute("src");
+    asset.currentEmpty.textContent = `現在の${asset.label}を読み込めませんでした。`;
     throw error;
   } finally {
-    elements.currentBackgroundPreview.onload = null;
-    elements.currentBackgroundPreview.onerror = null;
+    asset.currentPreview.onload = null;
+    asset.currentPreview.onerror = null;
   }
-  elements.currentBackgroundPreview.hidden = false;
-  elements.currentBackgroundEmpty.hidden = true;
-  updateBackgroundControls();
+  asset.currentPreview.hidden = false;
+  asset.currentEmpty.hidden = true;
+  updateImageAssetControls(asset);
+  if (asset.preparation) updatePreparationModeControls();
 }
-function releaseSelectedBackground() {
-  if (selectedBackgroundUrl) URL.revokeObjectURL(selectedBackgroundUrl);
-  selectedBackgroundUrl = undefined;
-  selectedBackgroundBlob = undefined;
-  elements.selectedBackgroundPreview.removeAttribute("src");
-  elements.selectedBackgroundPreview.hidden = true;
-  elements.selectedBackgroundEmpty.hidden = false;
-  updateBackgroundControls();
+function releaseSelectedImageAsset(asset) {
+  if (asset.selectedUrl) URL.revokeObjectURL(asset.selectedUrl);
+  asset.selectedUrl = undefined;
+  asset.selectedBlob = undefined;
+  asset.selectedPreview.removeAttribute("src");
+  asset.selectedPreview.hidden = true;
+  asset.selectedEmpty.hidden = false;
+  updateImageAssetControls(asset);
 }
-function showSelectedBackground(blob) {
-  releaseSelectedBackground();
-  selectedBackgroundBlob = blob;
-  selectedBackgroundUrl = URL.createObjectURL(blob);
-  elements.selectedBackgroundPreview.src = selectedBackgroundUrl;
-  elements.selectedBackgroundPreview.hidden = false;
-  elements.selectedBackgroundEmpty.hidden = true;
-  updateBackgroundControls();
+function showSelectedImageAsset(asset, blob) {
+  releaseSelectedImageAsset(asset);
+  asset.selectedBlob = blob;
+  asset.selectedUrl = URL.createObjectURL(blob);
+  asset.selectedPreview.src = asset.selectedUrl;
+  asset.selectedPreview.hidden = false;
+  asset.selectedEmpty.hidden = true;
+  updateImageAssetControls(asset);
 }
 function loadImage(file) {
   return new Promise((resolve, reject) => {
@@ -518,7 +549,7 @@ function setVectorInputs(inputs, values) {
 function vectorValues(inputs) {
   return inputs.map((input) => Number(input.value));
 }
-async function loadDisplayConfig({ background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, drawing = true, brightness = true, antialias = true, layout = true } = {}) {
+async function loadDisplayConfig({ preparation = true, background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, drawing = true, brightness = true, antialias = true, layout = true } = {}) {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
   const config = await response.json();
@@ -547,33 +578,39 @@ async function loadDisplayConfig({ background = true, screenOverlays: loadScreen
     elements.musicDuckRatio.value = String(Math.round((Number.isFinite(configuredDuckRatio) ? configuredDuckRatio : 0.4) * 100));
     updateMusicVolumeLabels();
   }
-  if (background) await showCurrentBackground(config.background_image_url);
+  if (preparation) {
+    preparationModeEnabled = config.preparation_mode === true;
+    elements.preparationMode.checked = preparationModeEnabled;
+    await showCurrentImageAsset(preparationImageAsset, config.preparation_image_url);
+    updatePreparationModeControls();
+  }
+  if (background) await showCurrentImageAsset(backgroundImageAsset, config.background_image_url);
   if (loadScreenOverlays) await Promise.all([...screenOverlays.values()].map((overlay) => showCurrentScreenOverlay(overlay, config.screen_overlays?.[overlay.key])));
 }
-async function selectBackground() {
-  if (backgroundBusy) return;
-  backgroundBusy = true;
-  releaseSelectedBackground();
-  updateBackgroundControls();
-  setMessage(elements.displayStatus, elements.displayError);
-  const [file] = elements.backgroundInput.files;
+async function selectImageAsset(asset) {
+  if (asset.busy) return;
+  asset.busy = true;
+  releaseSelectedImageAsset(asset);
+  updateImageAssetControls(asset);
+  setMessage(asset.status, asset.error);
+  const [file] = asset.input.files;
   if (!file) {
-    backgroundBusy = false;
-    updateBackgroundControls();
+    asset.busy = false;
+    updateImageAssetControls(asset);
     return;
   }
-  elements.selectedBackgroundEmpty.textContent = "画像を変換中です…";
+  asset.selectedEmpty.textContent = "画像を変換中です…";
   try {
-    showSelectedBackground(await convertBackground(file));
-    setMessage(elements.displayStatus, elements.displayError, "画像をWebPへ変換しました。アップロードすると現在の背景画像を上書きします。");
+    showSelectedImageAsset(asset, await convertBackground(file));
+    setMessage(asset.status, asset.error, `画像をWebPへ変換しました。アップロードすると現在の${asset.label}を上書きします。`);
   } catch (error) {
     console.error(error);
-    elements.backgroundInput.value = "";
-    setMessage(elements.displayStatus, elements.displayError, error.message || "画像を変換できませんでした。", true);
+    asset.input.value = "";
+    setMessage(asset.status, asset.error, error.message || "画像を変換できませんでした。", true);
   } finally {
-    backgroundBusy = false;
-    elements.selectedBackgroundEmpty.textContent = "画像を選択してください。";
-    updateBackgroundControls();
+    asset.busy = false;
+    asset.selectedEmpty.textContent = "画像を選択してください。";
+    updateImageAssetControls(asset);
   }
 }
 async function selectScreenOverlay(overlay) {
@@ -823,62 +860,96 @@ async function saveModelLayout(event) {
     updateLayoutControls();
   }
 }
-async function uploadBackground(event) {
+async function uploadImageAsset(event, asset) {
   event.preventDefault();
-  if (!token || !selectedBackgroundBlob || backgroundBusy) return;
-  backgroundBusy = true;
-  updateBackgroundControls();
-  const original = elements.uploadBackground.textContent;
-  elements.uploadBackground.textContent = "アップロード中…";
-  setMessage(elements.displayStatus, elements.displayError);
+  if (!token || !asset.selectedBlob || asset.busy) return;
+  asset.busy = true;
+  updateImageAssetControls(asset);
+  const original = asset.upload.textContent;
+  asset.upload.textContent = "アップロード中…";
+  setMessage(asset.status, asset.error);
   try {
     const body = new FormData();
-    body.append("image", selectedBackgroundBlob, "background.webp");
-    const response = await fetch(adminUrl("/api/admin/background-image"), { method: "POST", body });
-    if (!response.ok) throw new Error(await readError(response, "背景画像をアップロードできませんでした。"));
-    releaseSelectedBackground();
-    elements.backgroundInput.value = "";
+    body.append("image", asset.selectedBlob, asset.fileName);
+    const response = await fetch(adminUrl(asset.endpoint), { method: "POST", body });
+    if (!response.ok) throw new Error(await readError(response, `${asset.label}をアップロードできませんでした。`));
+    releaseSelectedImageAsset(asset);
+    asset.input.value = "";
     try {
       await loadDisplayConfig({ music: false, volume: false });
-      setMessage(elements.displayStatus, elements.displayError, "背景画像を更新しました。接続中のメイン画面へ反映されます。");
+      setMessage(asset.status, asset.error, `${asset.label}を更新しました。接続中のメイン画面へ反映されます。`);
     } catch (error) {
       console.error(error);
-      setMessage(elements.displayStatus, elements.displayError, "背景画像は更新されましたが、現在のプレビューを更新できませんでした。", true);
+      setMessage(asset.status, asset.error, `${asset.label}は更新されましたが、現在のプレビューを更新できませんでした。`, true);
     }
   } catch (error) {
     console.error(error);
-    setMessage(elements.displayStatus, elements.displayError, error.message || "背景画像をアップロードできませんでした。", true);
+    setMessage(asset.status, asset.error, error.message || `${asset.label}をアップロードできませんでした。`, true);
   } finally {
-    backgroundBusy = false;
-    elements.uploadBackground.textContent = original;
-    updateBackgroundControls();
+    asset.busy = false;
+    asset.upload.textContent = original;
+    updateImageAssetControls(asset);
+    if (asset.preparation) updatePreparationModeControls();
   }
 }
-async function deleteBackground() {
-  if (!token || backgroundBusy || !window.confirm("現在の背景画像を削除しますか？")) return;
-  backgroundBusy = true;
-  updateBackgroundControls();
-  const original = elements.deleteBackground.textContent;
-  elements.deleteBackground.textContent = "削除中…";
-  setMessage(elements.displayStatus, elements.displayError);
+async function deleteImageAsset(asset) {
+  if (!token || asset.busy || !window.confirm(`現在の${asset.label}を削除しますか？`)) return;
+  asset.busy = true;
+  updateImageAssetControls(asset);
+  const original = asset.remove.textContent;
+  asset.remove.textContent = "削除中…";
+  setMessage(asset.status, asset.error);
   try {
-    const response = await fetch(adminUrl("/api/admin/background-image"), { method: "DELETE" });
-    if (!response.ok) throw new Error(await readError(response, "背景画像を削除できませんでした。"));
-    await showCurrentBackground(null);
+    const response = await fetch(adminUrl(asset.endpoint), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, `${asset.label}を削除できませんでした。`));
+    await showCurrentImageAsset(asset, null);
     try {
       await loadDisplayConfig({ music: false, volume: false });
-      setMessage(elements.displayStatus, elements.displayError, "背景画像を削除しました。接続中のメイン画面は背景色へ戻ります。");
+      setMessage(asset.status, asset.error, `${asset.label}を削除しました。`);
     } catch (error) {
       console.error(error);
-      setMessage(elements.displayStatus, elements.displayError, "背景画像は削除されましたが、現在のプレビューを更新できませんでした。", true);
+      setMessage(asset.status, asset.error, `${asset.label}は削除されましたが、現在のプレビューを更新できませんでした。`, true);
     }
   } catch (error) {
     console.error(error);
-    setMessage(elements.displayStatus, elements.displayError, error.message || "背景画像を削除できませんでした。", true);
+    setMessage(asset.status, asset.error, error.message || `${asset.label}を削除できませんでした。`, true);
   } finally {
-    backgroundBusy = false;
-    elements.deleteBackground.textContent = original;
-    updateBackgroundControls();
+    asset.busy = false;
+    asset.remove.textContent = original;
+    updateImageAssetControls(asset);
+    if (asset.preparation) updatePreparationModeControls();
+  }
+}
+
+async function savePreparationMode(event) {
+  event.preventDefault();
+  if (!token || preparationModeBusy) return;
+  const enabled = elements.preparationMode.checked;
+  if (enabled && !preparationImageAsset.currentExists) return;
+  preparationModeBusy = true;
+  updatePreparationModeControls();
+  const original = elements.savePreparationMode.textContent;
+  elements.savePreparationMode.textContent = "保存中…";
+  setMessage(elements.preparationStatus, elements.preparationError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/preparation-mode"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) throw new Error(await readError(response, "準備中モードを保存できませんでした。"));
+    preparationModeEnabled = enabled;
+    setMessage(elements.preparationStatus, elements.preparationError, enabled
+      ? "準備中モードを有効にしました。進行中の処理は中断されます。"
+      : "準備中モードを解除しました。");
+  } catch (error) {
+    console.error(error);
+    elements.preparationMode.checked = preparationModeEnabled;
+    setMessage(elements.preparationStatus, elements.preparationError, error.message || "準備中モードを保存できませんでした。", true);
+  } finally {
+    preparationModeBusy = false;
+    elements.savePreparationMode.textContent = original;
+    updatePreparationModeControls();
   }
 }
 
@@ -1223,9 +1294,16 @@ elements.brightnessForm.addEventListener("submit", saveModelBrightness);
 elements.antialiasForm.addEventListener("submit", saveModelAntialias);
 elements.layoutForm.addEventListener("submit", saveModelLayout);
 updateLayoutControls();
-elements.backgroundInput.addEventListener("change", selectBackground);
-elements.backgroundForm.addEventListener("submit", uploadBackground);
-elements.deleteBackground.addEventListener("click", deleteBackground);
+elements.preparationModeForm.addEventListener("submit", savePreparationMode);
+elements.preparationMode.addEventListener("change", updatePreparationModeControls);
+elements.preparationInput.addEventListener("change", () => { void selectImageAsset(preparationImageAsset); });
+elements.preparationForm.addEventListener("submit", (event) => { void uploadImageAsset(event, preparationImageAsset); });
+elements.deletePreparation.addEventListener("click", () => { void deleteImageAsset(preparationImageAsset); });
+elements.backgroundInput.addEventListener("change", () => { void selectImageAsset(backgroundImageAsset); });
+elements.backgroundForm.addEventListener("submit", (event) => { void uploadImageAsset(event, backgroundImageAsset); });
+elements.deleteBackground.addEventListener("click", () => { void deleteImageAsset(backgroundImageAsset); });
+updatePreparationModeControls();
+updateImageAssetControls(backgroundImageAsset);
 for (const overlay of screenOverlays.values()) {
   overlay.input.addEventListener("change", () => { void selectScreenOverlay(overlay); });
   overlay.form.addEventListener("submit", (event) => { void uploadScreenOverlay(event, overlay); });
@@ -1264,12 +1342,12 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.preparationModeForm.elements, ...elements.preparationForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();
   loadConfig();
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
-  loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の背景画像を確認できませんでした。", true); });
+  loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の表示設定を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedBackground(); for (const overlay of screenOverlays.values()) releaseSelectedScreenOverlay(overlay); releaseEventQrImage(); elements.currentMusic.pause(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); releasePreview(); userDictionary.releasePreview(); releaseSelectedImageAsset(backgroundImageAsset); releaseSelectedImageAsset(preparationImageAsset); for (const overlay of screenOverlays.values()) releaseSelectedScreenOverlay(overlay); releaseEventQrImage(); elements.currentMusic.pause(); });

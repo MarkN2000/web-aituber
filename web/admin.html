@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=22">
+  <link rel="stylesheet" href="/static/style.css?v=23">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -175,6 +175,46 @@
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
       <p class="admin-help">メイン画面の変更は接続中の画面へ通知されます。VRMモデル、明るさ、アンチエイリアスは現在の処理が終わってから切り替わります。</p>
+      <section class="display-setting-section preparation-setting-section" aria-labelledby="preparation-mode-title">
+        <h3 id="preparation-mode-title">準備中モード</h3>
+        <p class="admin-help">準備中画像とBGMだけを表示・再生し、投稿とAI・TTS処理を停止します。</p>
+        <form id="preparation-mode-form" novalidate>
+          <label class="checkbox-control" for="preparation-mode">
+            <input id="preparation-mode" type="checkbox">
+            準備中モード
+          </label>
+          <div class="admin-form-actions">
+            <button id="save-preparation-mode" type="submit">設定を保存</button>
+          </div>
+        </form>
+        <div class="background-previews preparation-previews">
+          <figure class="background-preview">
+            <figcaption>現在の準備中画像</figcaption>
+            <div class="background-preview-frame">
+              <img id="current-preparation-preview" alt="現在設定されている準備中画像" hidden>
+              <p id="current-preparation-empty">準備中画像は設定されていません。</p>
+            </div>
+          </figure>
+          <figure class="background-preview">
+            <figcaption>選択した画像</figcaption>
+            <div class="background-preview-frame">
+              <img id="selected-preparation-preview" alt="アップロードする準備中画像のプレビュー" hidden>
+              <p id="selected-preparation-empty">画像を選択してください。</p>
+            </div>
+          </figure>
+        </div>
+        <form id="preparation-image-form" novalidate>
+          <label for="preparation-image">準備中画像</label>
+          <input id="preparation-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="preparation-image-note">
+          <p id="preparation-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
+          <div class="admin-form-actions">
+            <button id="upload-preparation-image" type="submit" disabled>準備中画像をアップロード</button>
+            <button id="delete-preparation-image" class="secondary-button" type="button" disabled>準備中画像を削除</button>
+          </div>
+        </form>
+        <p id="preparation-status" class="status" role="status" aria-live="polite"></p>
+        <p id="preparation-error" class="status" role="alert"></p>
+      </section>
       <section class="display-setting-section" aria-labelledby="drawing-settings-title">
         <h3 id="drawing-settings-title">描画画面</h3>
         <form id="drawing-stabilization-form" novalidate>
@@ -393,6 +433,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=35"></script>
+  <script type="module" src="/static/js/admin.js?v=36"></script>
 </body>
 </html>

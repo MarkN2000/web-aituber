@@ -62,6 +62,8 @@ pub struct TtsConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CharacterConfig {
+    #[serde(default)]
+    pub preparation_mode: bool,
     #[serde(default = "default_vrm_url")]
     pub vrm_url: String,
     #[serde(default = "default_antialias")]
@@ -131,6 +133,7 @@ pub struct FoodPropConfig {
 impl Default for CharacterConfig {
     fn default() -> Self {
         Self {
+            preparation_mode: false,
             vrm_url: default_vrm_url(),
             antialias: default_antialias(),
             idle_motions: Vec::new(),
@@ -578,6 +581,7 @@ mod tests {
     #[test]
     fn character_defaults_are_available() {
         let character: CharacterConfig = serde_json::from_str("{}").unwrap();
+        assert!(!character.preparation_mode);
         assert_eq!(character.vrm_url, "/assets/model.vrm");
         assert!(character.antialias);
         assert_eq!(character.food_prop.size, 0.2);

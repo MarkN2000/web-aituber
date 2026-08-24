@@ -29,15 +29,26 @@ pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
 }
 
 async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
-    let config = state.config.current();
     let cancel = CancellationToken::new();
-    {
+    let config = {
         let mut active = state.active.lock().await;
+        let config = state.config.current();
+        if config.character.preparation_mode {
+            send_event(
+                state,
+                ServerEvent::Cancelled {
+                    turn_id: submission.id,
+                },
+            );
+            send_event(state, ServerEvent::Idle);
+            return Ok(());
+        }
         *active = Some(ActiveTurn {
             turn_id: submission.id.clone(),
             cancel: cancel.clone(),
         });
-    }
+        config
+    };
 
     publish_state(
         state,
@@ -484,7 +495,16 @@ fn parse_segment(raw: &str) -> Option<AnswerSegment> {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use tokio::sync::{Mutex, RwLock, broadcast, mpsc, watch};
+
     use super::*;
+    use crate::{
+        config::{AppConfig, ConfigStore},
+        protocol::{ServerEvent, SubmissionKind},
+        state::{ConversationHistory, SearchFillerRotation},
+    };
 
     #[test]
     fn 文と感情タグを分割する() {
@@ -508,5 +528,54 @@ mod tests {
     fn 履歴用回答から感情タグを除去する() {
         let segments = split_answer("[happy]こんにちは！[sad]また明日。");
         assert_eq!(display_answer(&segments), "こんにちは！また明日。");
+    }
+
+    #[tokio::test]
+    async fn 準備中は待機投稿を処理せずキャンセルする() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.character.preparation_mode = true;
+        let (submissions, _) = mpsc::channel(1);
+        let (events, _) = broadcast::channel(4);
+        let state = AppState {
+            config: ConfigStore::new("config.example.json", config),
+            http: reqwest::Client::new(),
+            submissions,
+            events,
+            current: Arc::new(RwLock::new(None)),
+            active: Arc::new(Mutex::new(None)),
+            history: Arc::new(Mutex::new(ConversationHistory::default())),
+            food_images: Arc::new(RwLock::new(HashMap::new())),
+            audio_dir: Arc::new(PathBuf::from("target/test-audio")),
+            assets_dir: Arc::new(PathBuf::from("target/test-assets")),
+            vrm_model_lock: Arc::new(Mutex::new(())),
+            background_image_lock: Arc::new(Mutex::new(())),
+            preparation_image_lock: Arc::new(Mutex::new(())),
+            screen_overlay_lock: Arc::new(Mutex::new(())),
+            background_music_lock: Arc::new(Mutex::new(())),
+            update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown: watch::channel(false).0,
+            search_filler_rotation: Arc::new(SearchFillerRotation::default()),
+        };
+        let mut events = state.events.subscribe();
+
+        process_submission(
+            &state,
+            Submission {
+                id: "queued-turn".to_owned(),
+                kind: SubmissionKind::Question,
+                text: "処理しない質問".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::Cancelled { turn_id } if turn_id == "queued-turn"
+        ));
+        assert!(matches!(events.recv().await.unwrap(), ServerEvent::Idle));
+        assert!(state.active.lock().await.is_none());
+        assert!(state.current.read().await.is_none());
     }
 }

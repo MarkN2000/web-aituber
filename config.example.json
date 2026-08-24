@@ -24,6 +24,7 @@
     "stabilization": 3
   },
   "character": {
+    "preparation_mode": false,
     "vrm_url": "/assets/model.vrm",
     "antialias": true,
     "idle_motions": [

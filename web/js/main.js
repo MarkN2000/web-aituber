@@ -5,7 +5,6 @@ import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.j
 import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
-import { VrmViewer } from "./vrm-viewer.js?v=14";
 
 const debugEnabled = isDebugEnabled(window.location.search);
 const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || "";
@@ -15,6 +14,7 @@ const elements = {
   start: document.querySelector("#start"),
   startError: document.querySelector("#start-error"),
   stage: document.querySelector("#stage"),
+  preparationImage: document.querySelector("#preparation-image"),
   canvas: document.querySelector("#vrm-canvas"),
   screenOverlays: document.querySelector("#screen-overlays"),
   viewerMessage: document.querySelector("#viewer-message"),
@@ -154,6 +154,15 @@ function viewerConfigKey(config) {
   });
 }
 
+async function createViewer(config) {
+  const { VrmViewer } = await import("./vrm-viewer.js?v=14");
+  return new VrmViewer(elements.canvas, showViewerMessage, {
+    antialias: config.antialias !== false,
+    showFoodPropGizmo: debugEnabled,
+    onDebugStateChange: debugEnabled ? updateDebugState : undefined,
+  });
+}
+
 async function fetchDisplayConfig() {
   const response = await fetch(`${eventBasePath}/api/display-config`, { cache: "no-store" });
   if (response.status === 404) {
@@ -165,27 +174,30 @@ async function fetchDisplayConfig() {
 }
 
 async function applyPendingViewerConfig() {
-  if (currentTurn || viewerReloading || !pendingViewerConfig) return;
+  if (displayConfig?.preparation_mode || currentTurn || viewerReloading || !pendingViewerConfig) return;
   const config = pendingViewerConfig;
   pendingViewerConfig = undefined;
   viewerReloading = true;
   showViewerMessage("モデルを更新しています。");
   viewer?.dispose();
-  const nextViewer = new VrmViewer(elements.canvas, showViewerMessage, {
-    antialias: config.antialias !== false,
-    showFoodPropGizmo: debugEnabled,
-    onDebugStateChange: debugEnabled
-      ? updateDebugState
-      : undefined,
-  });
-  viewer = nextViewer;
+  let nextViewer;
   try {
+    nextViewer = await createViewer(config);
+    if (displayConfig?.preparation_mode) {
+      nextViewer.dispose();
+      return;
+    }
+    viewer = nextViewer;
     await nextViewer.load(config);
+    if (displayConfig?.preparation_mode || viewer !== nextViewer) {
+      nextViewer.dispose();
+      return;
+    }
     appliedViewerConfigKey = viewerConfigKey(config);
     showViewerMessage();
   } catch (error) {
     console.error("モデルを更新できませんでした", error);
-    nextViewer.dispose();
+    nextViewer?.dispose();
     if (viewer === nextViewer) viewer = undefined;
     showViewerMessage(error.message || "モデルを更新できませんでした。");
   } finally {
@@ -194,11 +206,41 @@ async function applyPendingViewerConfig() {
   }
 }
 
+function enterPreparationMode(config) {
+  document.body.classList.add("preparation-mode");
+  elements.stage.style.backgroundColor = "#000";
+  elements.stage.style.backgroundImage = "none";
+  if (config.preparation_image_url) {
+    elements.preparationImage.src = config.preparation_image_url;
+    elements.preparationImage.hidden = false;
+  } else {
+    elements.preparationImage.hidden = true;
+    elements.preparationImage.removeAttribute("src");
+  }
+  elements.screenOverlays.replaceChildren();
+  pendingViewerConfig = undefined;
+  appliedViewerConfigKey = undefined;
+  viewer?.dispose();
+  viewer = undefined;
+  queue?.clear();
+  backgroundMusic?.setDucked(false);
+  receivedTurns.clear();
+  currentTurn = undefined;
+  motionPlayedForTurn = undefined;
+  clearAnswer();
+  elements.panel.hidden = true;
+  if (elements.sourceDialog.open) elements.sourceDialog.close();
+}
+
+function leavePreparationMode() {
+  document.body.classList.remove("preparation-mode");
+  elements.preparationImage.hidden = true;
+  elements.preparationImage.removeAttribute("src");
+}
+
 function applyUpdatedDisplayConfig(config) {
   const previous = displayConfig;
   displayConfig = config;
-  applyBackground(config);
-  applyScreenOverlays(config);
   backgroundMusic?.setLevels(
     config.background_music_volume,
     config.background_music_duck_ratio,
@@ -210,6 +252,13 @@ function applyUpdatedDisplayConfig(config) {
       config.background_music_duck_ratio,
     );
   }
+  if (config.preparation_mode) {
+    enterPreparationMode(config);
+    return;
+  }
+  leavePreparationMode();
+  applyBackground(config);
+  applyScreenOverlays(config);
   if (viewerConfigKey(config) !== appliedViewerConfigKey) {
     pendingViewerConfig = config;
     void applyPendingViewerConfig();
@@ -340,6 +389,9 @@ function connect(connectionState = "connecting") {
 }
 
 function handleServerEvent(event) {
+  if (displayConfig?.preparation_mode
+    && event.type !== "display_config_changed"
+    && event.type !== "event_ended") return;
   switch (event.type) {
     case "snapshot":
       historyView.render(event.history || []);
@@ -509,24 +561,23 @@ async function startMain() {
     await backgroundMusicResume;
 
     const config = await fetchDisplayConfig();
-    applyBackground(config);
-    applyScreenOverlays(config);
     void backgroundMusic?.play(
       config.background_music_url,
       config.background_music_volume,
       config.background_music_duck_ratio,
     );
 
-    viewer = new VrmViewer(elements.canvas, showViewerMessage, {
-      antialias: config.antialias !== false,
-      showFoodPropGizmo: debugEnabled,
-      onDebugStateChange: debugEnabled
-        ? updateDebugState
-        : undefined,
-    });
-    await viewer.load(config);
     displayConfig = config;
-    appliedViewerConfigKey = viewerConfigKey(config);
+    if (config.preparation_mode) {
+      enterPreparationMode(config);
+    } else {
+      leavePreparationMode();
+      applyBackground(config);
+      applyScreenOverlays(config);
+      viewer = await createViewer(config);
+      await viewer.load(config);
+      appliedViewerConfigKey = viewerConfigKey(config);
+    }
     started = true;
     elements.startScreen.hidden = true;
     connect();
