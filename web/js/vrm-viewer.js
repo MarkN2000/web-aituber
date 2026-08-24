@@ -215,10 +215,7 @@ export class VrmViewer {
   }
 
   setEmotion(emotion) {
-    const requested = isEmotion(emotion) ? emotion : 'neutral';
-    const value = requested === 'neutral' && this.expressionSupport('natural') === 'supported'
-      ? 'natural'
-      : requested;
+    const value = isEmotion(emotion) ? emotion : 'neutral';
     this.setExpression(value);
   }
 
@@ -382,7 +379,7 @@ export class VrmViewer {
   }
 
   updateBlink(delta) {
-    if (this.currentExpression !== 'neutral' && this.currentExpression !== 'natural') {
+    if (this.currentExpression !== 'neutral') {
       if (this.blinkTime > 0) this.setExpressionValue('blink', 0);
       this.blinkTime = 0;
       return;

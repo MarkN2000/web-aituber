@@ -14,7 +14,7 @@ const cleanTurnSource = source.slice(
   source.indexOf("function cancelTurnAudio"),
 );
 
-test("待機状態へ移るとNatural表情と待機モーションへ戻す", () => {
+test("待機状態へ移るとneutral表情と待機モーションへ戻す", () => {
   const calls = [];
   const context = vm.createContext({ calls });
   vm.runInContext(`
@@ -41,11 +41,11 @@ test("待機状態へ移るとNatural表情と待機モーションへ戻す", (
   assert.deepEqual(calls, ["expression", "motion", "answer", "config"]);
 });
 
-test("回答終了処理はneutralを挟まず待機状態へ移る", () => {
+test("回答終了処理は表情を直接解除せず待機状態へ移る", () => {
   assert.match(cleanTurnSource, /viewer\?\.clearFoodProp\(\);\s+setTurn\(undefined\);/);
   assert.doesNotMatch(cleanTurnSource, /setEmotion\("neutral"\)/);
 });
 
 test("メイン画面は更新したVRMビューアーを読み込む", () => {
-  assert.match(source, /import\("\.\/vrm-viewer\.js\?v=16"\)/);
+  assert.match(source, /import\("\.\/vrm-viewer\.js\?v=17"\)/);
 });
