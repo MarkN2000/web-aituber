@@ -2,7 +2,7 @@ import { AudioQueue } from "./audio-queue.js?v=4";
 import { BackgroundMusic } from "./background-music.js?v=7";
 import { ConversationHistory } from "./history.js?v=9";
 import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.js?v=1";
-import { isDebugEnabled, renderDebugState } from "./debug.js?v=2";
+import { isDebugEnabled, renderDebugState } from "./debug.js?v=3";
 import { isEmotion } from "./motion.js";
 import { createSourceButton, SourceDialog } from "./sources.js";
 
@@ -147,6 +147,7 @@ function viewerConfigKey(config) {
     emotion_motions: Object.fromEntries(
       Object.entries(config.emotion_motions || {}).sort(([left], [right]) => left.localeCompare(right)),
     ),
+    food_motion: config.food_motion,
     food_prop: config.food_prop,
     camera: config.camera,
     light: config.light,
@@ -155,7 +156,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=18");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=19");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,

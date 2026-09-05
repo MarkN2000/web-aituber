@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createVRMAnimationClip, VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
-import { motionFileName } from './debug.js?v=2';
+import { motionFileName } from './debug.js?v=3';
 import { isEmotion } from './motion.js';
 import { LipSyncAnalyzer } from './lip-sync.js?v=4';
 
 const MOTION_TRANSITION_SECONDS = 0.4;
+const FOOD_CONSUME_DURATION_MS = 400;
 const FRAME_INTERVAL_MS = 1000 / 30;
 const FRAME_TOLERANCE_MS = 1;
 
@@ -25,6 +26,7 @@ export class VrmViewer {
     this.textureLoader = new THREE.TextureLoader();
     this.idleClips = [];
     this.emotionClips = new Map();
+    this.foodMotion = undefined;
     this.currentAction = undefined;
     this.currentMotion = undefined;
     this.currentExpression = 'neutral';
@@ -118,6 +120,11 @@ export class VrmViewer {
         warnings.push(`感情モーションを読み込めませんでした: ${url}`);
       }
     }
+    try {
+      this.foodMotion = await this.loadMotion(config.food_motion.url, true);
+    } catch {
+      warnings.push(`食事モーションを読み込めませんでした: ${config.food_motion.url}`);
+    }
     if (warnings.length) this.report(warnings.join('\n'));
   }
 
@@ -173,11 +180,17 @@ export class VrmViewer {
     this.foodPropGizmo = undefined;
   }
 
-  async loadMotion(url) {
+  async loadMotion(url, bodyOnly = false) {
     const gltf = await this.loader.loadAsync(url);
     const animation = gltf.userData.vrmAnimations?.[0];
     if (!animation) throw new Error('VRMAではありません');
     const clip = createVRMAnimationClip(animation, this.vrm);
+    if (bodyOnly) {
+      const rotations = new Set(Object.values(this.vrm.humanoid.normalizedHumanBones)
+        .map(({ node }) => `${node.name}.quaternion`));
+      clip.tracks = clip.tracks.filter((track) => rotations.has(track.name));
+      if (!clip.tracks.length) throw new Error('身体の回転トラックがありません');
+    }
     const hips = this.vrm.humanoid?.getNormalizedBoneNode('hips');
     if (hips) {
       clip.tracks = clip.tracks.filter((track) => track.name !== `${hips.name}.position`);
@@ -186,6 +199,7 @@ export class VrmViewer {
   }
 
   resumeIdle() {
+    if (this.foodAction) return;
     if (!this.idleClips.length || !this.mixer) {
       this.currentAction?.fadeOut(MOTION_TRANSITION_SECONDS);
       this.currentAction = undefined;
@@ -198,6 +212,7 @@ export class VrmViewer {
   }
 
   playEmotionMotion(emotion) {
+    if (this.foodAction) return;
     const motion = this.emotionClips.get(emotion);
     if (!motion || !this.mixer) return;
     this.playClip(motion, false, 'emotion');
@@ -223,6 +238,7 @@ export class VrmViewer {
 
   onAnimationFinished(event) {
     if (event.action !== this.currentAction) return;
+    if (this.foodAction && this.currentMotion?.kind === 'food') return;
     this.resumeIdle();
   }
 
@@ -296,6 +312,10 @@ export class VrmViewer {
 
   playFoodAction(imageUrl, consumeAtMs, durationMs) {
     this.clearFoodProp();
+    if (!this.foodMotion || !this.mixer) {
+      this.report('食事モーションを再生できませんでした: character.food_motion.url を確認してください。');
+      return;
+    }
     if (!this.foodAnchor) {
       this.report('食事用Quadを表示できませんでした: 右手の配置設定を確認してください。');
       return;
@@ -310,6 +330,7 @@ export class VrmViewer {
       consumeAt,
       duration,
     };
+    this.playClip(this.foodMotion, false, 'food');
     this.setFoodActionState('loading');
 
     this.textureLoader.loadAsync(imageUrl)
@@ -324,6 +345,11 @@ export class VrmViewer {
           this.clearFoodProp();
           return;
         }
+        if (elapsed >= this.foodAction.consumeAt + FOOD_CONSUME_DURATION_MS) {
+          texture.dispose();
+          this.setFoodActionState('consuming');
+          return;
+        }
         texture.colorSpace = THREE.SRGBColorSpace;
         const geometry = new THREE.PlaneGeometry(this.foodPropSize, this.foodPropSize);
         const material = new THREE.MeshBasicMaterial({
@@ -336,7 +362,8 @@ export class VrmViewer {
         mesh.name = 'FoodPropQuad';
         this.foodAnchor.add(mesh);
         this.foodMesh = mesh;
-        this.setFoodActionState(elapsed >= this.foodAction.consumeAt ? 'consuming' : 'displaying');
+        this.setFoodActionState('displaying');
+        this.updateFoodAction();
       })
       .catch((error) => {
         console.error('食事用画像を読み込めませんでした', error);
@@ -353,10 +380,10 @@ export class VrmViewer {
     const elapsed = performance.now() - action.startedAt;
     if (this.foodMesh && elapsed >= action.consumeAt) {
       this.setFoodActionState('consuming');
-      const consumeDuration = Math.max(action.duration - action.consumeAt, 1);
-      const progress = THREE.MathUtils.clamp((elapsed - action.consumeAt) / consumeDuration, 0, 1);
+      const progress = THREE.MathUtils.clamp((elapsed - action.consumeAt) / FOOD_CONSUME_DURATION_MS, 0, 1);
       const remaining = 1 - progress;
       this.foodMesh.scale.setScalar(remaining);
+      if (progress >= 1) this.removeFoodMesh();
     }
     if (elapsed >= action.duration) this.clearFoodProp();
   }
@@ -364,7 +391,12 @@ export class VrmViewer {
   clearFoodProp() {
     this.foodActionId += 1;
     this.foodAction = undefined;
+    if (this.currentMotion?.kind === 'food') this.resumeIdle();
     this.setFoodActionState('none');
+    this.removeFoodMesh();
+  }
+
+  removeFoodMesh() {
     if (!this.foodMesh) return;
     this.foodAnchor?.remove(this.foodMesh);
     this.foodMesh.geometry.dispose();

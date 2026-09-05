@@ -514,6 +514,8 @@ async fn version_character_asset_urls(
     for url in character.emotion_motions.values_mut() {
         *url = version_local_asset_url(assets_dir, url).await;
     }
+    character.food_motion.url =
+        version_local_asset_url(assets_dir, &character.food_motion.url).await;
     character
 }
 
@@ -2280,6 +2282,7 @@ struct DisplayCharacterConfig {
     antialias: bool,
     idle_motions: Vec<String>,
     emotion_motions: HashMap<String, String>,
+    food_motion: crate::config::FoodMotionConfig,
     food_prop: crate::config::FoodPropConfig,
     camera: crate::config::CameraConfig,
     background_color: String,
@@ -2296,6 +2299,7 @@ impl From<CharacterConfig> for DisplayCharacterConfig {
             antialias: character.antialias,
             idle_motions: character.idle_motions,
             emotion_motions: character.emotion_motions,
+            food_motion: character.food_motion,
             food_prop: character.food_prop,
             camera: character.camera,
             background_color: character.background_color,
@@ -4443,6 +4447,7 @@ mod tests {
         std::fs::create_dir_all(assets_dir.join("motions")).unwrap();
         std::fs::write(assets_dir.join("model.vrm"), b"model").unwrap();
         std::fs::write(assets_dir.join("motions/VRMA_01.vrma"), b"motion").unwrap();
+        std::fs::write(assets_dir.join("motions/eat2.vrma"), b"food-motion").unwrap();
         let app = router(state);
 
         let load_config = || async {
@@ -4462,10 +4467,13 @@ mod tests {
         let second = load_config().await;
         let vrm_url = first["vrm_url"].as_str().unwrap();
         let motion_url = first["idle_motions"][0].as_str().unwrap();
+        let food_motion_url = first["food_motion"]["url"].as_str().unwrap();
         assert!(vrm_url.starts_with("/assets/model.vrm?v="));
         assert!(motion_url.starts_with("/assets/motions/VRMA_01.vrma?v="));
+        assert!(food_motion_url.starts_with("/assets/motions/eat2.vrma?v="));
         assert_eq!(first["vrm_url"], second["vrm_url"]);
         assert_eq!(first["idle_motions"][0], second["idle_motions"][0]);
+        assert_eq!(first["food_motion"]["url"], second["food_motion"]["url"]);
 
         let versioned = app
             .clone()

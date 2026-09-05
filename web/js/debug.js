@@ -18,9 +18,7 @@ export function renderDebugState(element, state) {
     reconnecting: '再接続中',
   }[state.connection];
   const motionName = state.motionFileName || 'なし';
-  const motionKind = state.motionKind === 'idle'
-    ? '待機'
-    : state.motionKind === 'emotion' ? '感情' : 'なし';
+  const motionKind = { idle: '待機', emotion: '感情', food: '食事' }[state.motionKind] || 'なし';
   const expressionSupport = {
     base: '基本状態',
     supported: 'あり',

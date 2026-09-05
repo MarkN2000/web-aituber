@@ -37,6 +37,11 @@
       "happy": "/assets/motions/VRMA_04.vrma",
       "angry": "/assets/motions/VRMA_06.vrma"
     },
+    "food_motion": {
+      "url": "/assets/motions/eat2.vrma",
+      "consume_at_ms": 3505,
+      "duration_ms": 14440
+    },
     "food_prop": {
       "position": [
         0.1,

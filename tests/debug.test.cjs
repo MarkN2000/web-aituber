@@ -67,6 +67,12 @@ test("身体モーションがない状態を明示する", () => {
   );
 });
 
+test("食事モーションのファイル名と種別を表示する", () => {
+  const element = { hidden: true, textContent: "" };
+  context.render(element, { motionFileName: "eat2.vrma", motionKind: "food" });
+  assert.match(element.textContent, /モーション: eat2.vrma\n種別: 食事/);
+});
+
 test("接続中・未対応表情・食事画像読込失敗を表示する", () => {
   const element = { hidden: true, textContent: "" };
 

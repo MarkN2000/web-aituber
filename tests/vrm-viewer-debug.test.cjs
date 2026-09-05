@@ -56,7 +56,7 @@ const context = vm.createContext({
     AmbientLight: FakeAmbientLight,
     MathUtils: { clamp: (value, min, max) => Math.min(Math.max(value, min), max) },
   },
-  createVRMAnimationClip: () => ({ tracks: [] }),
+  createVRMAnimationClip: (animation) => ({ tracks: animation.tracks || [] }),
   isEmotion: (value) => ["neutral", "happy", "sad", "angry", "surprised"].includes(value),
   motionFileName: (url) => new URL(url, "http://localhost/").pathname.split("/").pop(),
   performance: { now: () => currentTime },
@@ -71,8 +71,8 @@ function createAction() {
     running: false,
     transitions: [],
     fadeOut(duration) { this.fadeOutDuration = duration; return this; },
-    reset() { return this; },
-    setLoop() { return this; },
+    reset() { this.resetCount = (this.resetCount || 0) + 1; return this; },
+    setLoop(mode, repetitions) { this.loop = [mode, repetitions]; return this; },
     setEffectiveWeight() { return this; },
     fadeIn() { return this; },
     crossFadeTo(next, duration, warp) {
@@ -102,6 +102,7 @@ function createViewer() {
   viewer.lastDebugStateKey = undefined;
   viewer.idleClips = [];
   viewer.emotionClips = new Map();
+  viewer.foodMotion = { clip: { duration: 14.44 }, fileName: "eat2.vrma" };
   viewer.debugStates = [];
   viewer.onDebugStateChange = (state) => viewer.debugStates.push({ ...state });
   return viewer;
@@ -270,6 +271,47 @@ test("読み込んだモーションはクリップとファイル名を保持�
 
   assert.equal(motion.fileName, "idle.vrma");
   assert.deepEqual(motion.clip.tracks, []);
+});
+
+test("食事VRMAは身体の回転を残し、移動・表情・視線を適用しない", async () => {
+  const viewer = createViewer();
+  const tracks = [
+    { name: "hips.position" }, { name: "hips.quaternion" },
+    { name: "rightHand.quaternion" }, { name: "expression_aa.weight" },
+    { name: "lookAtQuaternionProxy.quaternion" },
+  ];
+  viewer.loader = { loadAsync: async () => ({ userData: { vrmAnimations: [{ tracks }] } }) };
+  viewer.vrm = { humanoid: {
+    normalizedHumanBones: { hips: { node: { name: "hips" } }, rightHand: { node: { name: "rightHand" } } },
+    getNormalizedBoneNode: () => ({ name: "hips" }),
+  } };
+
+  const motion = await viewer.loadMotion("/assets/motions/eat2.vrma", true);
+
+  assert.deepEqual(motion.clip.tracks.map((track) => track.name), ["hips.quaternion", "rightHand.quaternion"]);
+});
+
+test("食事用URLのモーションを読み込み、失敗した場合は設定エラーを表示する", async () => {
+  const viewer = createViewer();
+  viewer.foodMotion = undefined;
+  const loaded = [];
+  const warnings = [];
+  viewer.report = (message) => warnings.push(message);
+  const motion = { clip: {}, fileName: "eat2.vrma" };
+  viewer.loadMotion = async (url, bodyOnly) => { loaded.push([url, bodyOnly]); return motion; };
+  const config = { food_motion: { url: "/assets/motions/eat2.vrma" } };
+
+  await viewer.loadMotions(config);
+
+  assert.deepEqual(loaded, [["/assets/motions/eat2.vrma", true]]);
+  assert.equal(viewer.foodMotion, motion);
+  assert.deepEqual(warnings, []);
+
+  viewer.foodMotion = undefined;
+  viewer.loadMotion = async () => { throw new Error("missing"); };
+  await viewer.loadMotions(config);
+  assert.equal(viewer.foodMotion, undefined);
+  assert.match(warnings[0], /食事モーションを読み込めませんでした/);
 });
 
 test("実際に選択した待機・感情モーションを状態変更時だけ通知する", () => {
@@ -496,4 +538,101 @@ test("食事動作終了後に読み込みが完了した画像は表示しな�
   assert.equal(textureDisposed, true);
   assert.equal(viewer.foodMesh, undefined);
   assert.equal(viewer.debugStates.at(-1).foodAction, "none");
+});
+
+function configureFoodViewer() {
+  const viewer = createViewer();
+  viewer.idleClips = [{ clip: {}, fileName: "idle.vrma" }];
+  viewer.emotionClips.set("happy", { clip: {}, fileName: "happy.vrma" });
+  viewer.foodAnchor = { add() {}, remove() {} };
+  viewer.foodPropSize = 0.2;
+  viewer.report = () => {};
+  viewer.textureLoader = { loadAsync: async () => ({ dispose() {} }) };
+  currentTime = 0;
+  viewer.resumeIdle();
+  return viewer;
+}
+
+test("食事は1回再生し、画像消去後も演出終了まで食事姿勢を維持する", async () => {
+  const viewer = configureFoodViewer();
+  const idle = viewer.currentAction;
+  viewer.playFoodAction("/food/test.webp", 3505, 14440);
+  await Promise.resolve();
+  const food = viewer.currentAction;
+  const mesh = viewer.foodMesh;
+  assert.equal(viewer.currentMotion.kind, "food");
+  assert.equal(viewer.currentMotion.fileName, "eat2.vrma");
+  assert.deepEqual(Array.from(food.loop), ["once", 1]);
+  assert.equal(idle.transitions.at(-1).next, food);
+
+  currentTime = 3504;
+  viewer.updateFoodAction();
+  assert.equal(viewer.foodActionState, "displaying");
+  currentTime = 3705;
+  viewer.updateFoodAction();
+  assert.equal(mesh.scaleValue, 0.5);
+  currentTime = 3905;
+  viewer.updateFoodAction();
+  assert.equal(mesh.scaleValue, 0);
+  assert.equal(viewer.foodMesh, undefined);
+  assert.equal(viewer.currentAction, food);
+
+  viewer.resumeIdle();
+  viewer.playEmotionMotion("happy");
+  viewer.onAnimationFinished({ action: food });
+  assert.equal(viewer.currentAction, food);
+
+  currentTime = 14440;
+  viewer.updateFoodAction();
+  assert.equal(viewer.foodAction, undefined);
+  assert.equal(viewer.currentMotion.kind, "idle");
+  assert.equal(food.transitions.at(-1).next, viewer.currentAction);
+});
+
+test("食事中断は待機へ戻し、次の食事は先頭から再生して遅延画像を破棄する", async () => {
+  const viewer = configureFoodViewer();
+  const pending = [];
+  viewer.textureLoader = { loadAsync: () => new Promise((resolve) => pending.push(resolve)) };
+  viewer.playFoodAction("/food/first.webp", 3505, 14440);
+  const food = viewer.currentAction;
+  viewer.clearFoodProp();
+  assert.equal(viewer.currentMotion.kind, "idle");
+  assert.equal(viewer.foodAction, undefined);
+
+  viewer.playFoodAction("/food/second.webp", 3505, 14440);
+  assert.equal(viewer.currentAction, food);
+  assert.equal(food.resetCount, 2);
+  let disposed = false;
+  pending[0]({ dispose() { disposed = true; } });
+  await Promise.resolve();
+  assert.equal(disposed, true);
+  assert.equal(viewer.foodMesh, undefined);
+  pending[1]({ dispose() {} });
+  await Promise.resolve();
+  assert.ok(viewer.foodMesh);
+});
+
+test("画像消去時刻を過ぎた遅延画像は再表示せず食事モーションを継続する", async () => {
+  const viewer = configureFoodViewer();
+  let resolveTexture;
+  let disposed = false;
+  viewer.textureLoader = { loadAsync: () => new Promise((resolve) => { resolveTexture = resolve; }) };
+  viewer.playFoodAction("/food/late.webp", 3505, 14440);
+  currentTime = 5000;
+  resolveTexture({ dispose() { disposed = true; } });
+  await Promise.resolve();
+  assert.equal(disposed, true);
+  assert.equal(viewer.foodMesh, undefined);
+  assert.equal(viewer.currentMotion.kind, "food");
+});
+
+test("食事VRMAが未読込なら画像だけの食事演出を開始しない", () => {
+  const viewer = configureFoodViewer();
+  viewer.foodMotion = undefined;
+  const warnings = [];
+  viewer.report = (message) => warnings.push(message);
+  viewer.textureLoader = { loadAsync() { throw new Error("画像だけの演出を開始しました"); } };
+  viewer.playFoodAction("/food/test.webp", 3505, 14440);
+  assert.equal(viewer.foodAction, undefined);
+  assert.match(warnings[0], /character.food_motion.url/);
 });

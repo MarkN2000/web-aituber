@@ -17,8 +17,6 @@ use crate::{
 
 const AUDIO_RETENTION: Duration = Duration::from_secs(300);
 const FOOD_IMAGE_RETENTION: Duration = Duration::from_secs(300);
-const FOOD_CONSUME_AT_MS: u64 = 1_200;
-const FOOD_ACTION_DURATION_MS: u64 = 1_600;
 const MAX_ANSWER_CHARACTERS: usize = 300;
 const MAX_ANSWER_SENTENCES: usize = 4;
 
@@ -297,12 +295,15 @@ async fn process_active_submission(
             ServerEvent::FoodAction {
                 turn_id: submission.id.clone(),
                 image_url: format!("/food-images/{}", submission.id),
-                consume_at_ms: FOOD_CONSUME_AT_MS,
-                duration_ms: FOOD_ACTION_DURATION_MS,
+                consume_at_ms: config.character.food_motion.consume_at_ms,
+                duration_ms: config.character.food_motion.duration_ms,
             },
         );
         cancellable(cancel, async {
-            tokio::time::sleep(Duration::from_millis(FOOD_ACTION_DURATION_MS)).await;
+            tokio::time::sleep(Duration::from_millis(
+                config.character.food_motion.duration_ms,
+            ))
+            .await;
             Ok(())
         })
         .await

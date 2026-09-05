@@ -72,6 +72,7 @@ pub struct CharacterConfig {
     pub idle_motions: Vec<String>,
     #[serde(default)]
     pub emotion_motions: HashMap<String, String>,
+    pub food_motion: FoodMotionConfig,
     #[serde(default)]
     pub food_prop: FoodPropConfig,
     #[serde(default)]
@@ -130,23 +131,11 @@ pub struct FoodPropConfig {
     pub size: f32,
 }
 
-impl Default for CharacterConfig {
-    fn default() -> Self {
-        Self {
-            preparation_mode: false,
-            vrm_url: default_vrm_url(),
-            antialias: default_antialias(),
-            idle_motions: Vec::new(),
-            emotion_motions: HashMap::new(),
-            food_prop: FoodPropConfig::default(),
-            camera: CameraConfig::default(),
-            background_color: "#1b1b22".to_owned(),
-            background_music_volume: default_background_music_volume(),
-            background_music_duck_ratio: default_background_music_duck_ratio(),
-            screen_overlays: ScreenOverlaysConfig::default(),
-            light: LightConfig::default(),
-        }
-    }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FoodMotionConfig {
+    pub url: String,
+    pub consume_at_ms: u64,
+    pub duration_ms: u64,
 }
 
 impl Default for DrawingConfig {
@@ -265,6 +254,20 @@ impl AppConfig {
             bail!("設定項目 drawing.stabilization は0から10の整数にしてください");
         }
         required("character.vrm_url", &self.character.vrm_url)?;
+        required("character.food_motion.url", &self.character.food_motion.url)?;
+        let minimum_food_motion_duration = self
+            .character
+            .food_motion
+            .consume_at_ms
+            .checked_add(400)
+            .ok_or_else(|| {
+                anyhow::anyhow!("設定項目 character.food_motion.consume_at_ms が大きすぎます")
+            })?;
+        if self.character.food_motion.duration_ms < minimum_food_motion_duration {
+            bail!(
+                "設定項目 character.food_motion.duration_ms はconsume_at_msの400ms後以降にしてください"
+            );
+        }
         if !self.character.light.brightness.is_finite()
             || !(0.0..=2.0).contains(&self.character.light.brightness)
         {
@@ -580,7 +583,10 @@ mod tests {
 
     #[test]
     fn character_defaults_are_available() {
-        let character: CharacterConfig = serde_json::from_str("{}").unwrap();
+        let character: CharacterConfig = serde_json::from_str(
+            r#"{"food_motion":{"url":"/assets/motions/eat2.vrma","consume_at_ms":3505,"duration_ms":14440}}"#,
+        )
+        .unwrap();
         assert!(!character.preparation_mode);
         assert_eq!(character.vrm_url, "/assets/model.vrm");
         assert!(character.antialias);
@@ -592,6 +598,25 @@ mod tests {
         assert_eq!(character.screen_overlays.bottom_right.scale, 100);
         assert_eq!(character.light.ambient_intensity, 0.8);
         assert_eq!(character.light.brightness, 1.0);
+    }
+
+    #[test]
+    fn food_motion_requires_a_url_and_a_duration_after_consumption() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        assert!(config.validate().is_ok());
+
+        config.character.food_motion.url.clear();
+        assert!(config.validate().is_err());
+        config.character.food_motion.url = "/assets/motions/eat2.vrma".to_owned();
+
+        config.character.food_motion.duration_ms = config.character.food_motion.consume_at_ms + 399;
+        assert!(config.validate().is_err());
+        config.character.food_motion.duration_ms = config.character.food_motion.consume_at_ms + 400;
+        assert!(config.validate().is_ok());
+
+        config.character.food_motion.consume_at_ms = u64::MAX;
+        assert!(config.validate().is_err());
     }
 
     #[test]

@@ -101,6 +101,17 @@ test("VRMのURLが変わった場合だけビューアーの再読み込みを�
   assert.equal(context.pending().vrm_url, changed.vrm_url);
 });
 
+test("食事モーションと演出時刻の変更はビューアーの再読み込みを予約する", () => {
+  const initial = config({ food_motion: { url: "/eat.vrma", consume_at_ms: 3505, duration_ms: 14440 } });
+  for (const update of [{ url: "/eat2.vrma" }, { consume_at_ms: 4000 }, { duration_ms: 15000 }]) {
+    const { context, calls } = loadContext(initial);
+    const changed = config({ food_motion: { ...initial.food_motion, ...update } });
+    context.apply(changed);
+    assert.equal(calls.viewerReloads, 1);
+    assert.equal(context.pending().food_motion, changed.food_motion);
+  }
+});
+
 test("モデルの明るさが変わるとビューアーの再読み込みを予約する", () => {
   const initial = config();
   const { context, calls } = loadContext(initial);
