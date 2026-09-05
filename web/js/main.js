@@ -441,9 +441,9 @@ function handleServerEvent(event) {
       receiveSegment(event);
       break;
     case "complete":
-      if (!receivedTurns.has(event.turn_id)) {
-        cleanTurn(event.turn_id);
-      }
+      if (currentTurn?.turn_id !== event.turn_id) break;
+      currentTurn.serverCompleted = true;
+      if (!receivedTurns.has(event.turn_id)) cleanTurn(event.turn_id);
       break;
     case "cancelled":
       cancelTurnAudio(event.turn_id);
@@ -523,7 +523,11 @@ function onAudioStart(item, analyser) {
 function onAudioEnd(item) {
   backgroundMusic?.setDucked(false);
   viewer?.stopLipSync();
-  if (item.meta.is_last) cleanTurn(item.turnId);
+  if (!item.meta.is_last) return;
+  receivedTurns.delete(item.turnId);
+  if (currentTurn?.turn_id === item.turnId && currentTurn.serverCompleted) {
+    cleanTurn(item.turnId);
+  }
 }
 
 async function startMain() {

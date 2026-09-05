@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio,
-    config::AppConfig,
+    config::{AppConfig, FoodMotionConfig},
     protocol::{
         ConversationTurn, Emotion, SegmentKind, ServerEvent, SourceLink, Submission, TurnState,
         TurnStatus,
@@ -294,44 +294,12 @@ async fn process_active_submission(
             .insert(submission.id.clone(), image.clone());
         schedule_food_image_cleanup(state, submission.id.clone());
 
-        publish_state(
-            state,
-            TurnState {
-                turn_id: submission.id.clone(),
-                question: submission.text.clone(),
-                status: TurnStatus::Eating,
-            },
+        cancellable(
+            cancel,
+            present_food(state, submission, food_motion, food_segments),
         )
-        .await;
-        send_event(
-            state,
-            ServerEvent::FoodAction {
-                turn_id: submission.id.clone(),
-                image_url: format!("/food-images/{}", submission.id),
-                consume_at_ms: food_motion.consume_at_ms,
-                duration_ms: food_motion.duration_ms,
-            },
-        );
-        cancellable(cancel, async {
-            tokio::time::sleep(Duration::from_millis(food_motion.duration_ms)).await;
-            Ok(())
-        })
         .await
         .map_err(|error| error.with_files(audio_files.clone()))?;
-
-        publish_state(
-            state,
-            TurnState {
-                turn_id: submission.id.clone(),
-                question: submission.text.clone(),
-                status: TurnStatus::Speaking,
-            },
-        )
-        .await;
-        for (event, duration_ms) in food_segments {
-            send_event(state, event);
-            playback_deadline = append_playback_duration(playback_deadline, duration_ms);
-        }
     }
 
     if let Some(due) = playback_deadline {
@@ -348,6 +316,54 @@ async fn process_active_submission(
         answer: display_answer(&segments),
         sources: generated.sources,
     })
+}
+
+async fn present_food(
+    state: &AppState,
+    submission: &Submission,
+    food_motion: &FoodMotionConfig,
+    segments: Vec<(ServerEvent, u64)>,
+) -> Result<()> {
+    publish_state(
+        state,
+        TurnState {
+            turn_id: submission.id.clone(),
+            question: submission.text.clone(),
+            status: TurnStatus::Eating,
+        },
+    )
+    .await;
+    let started_at = Instant::now();
+    let motion_deadline = started_at + Duration::from_millis(food_motion.duration_ms);
+    send_event(
+        state,
+        ServerEvent::FoodAction {
+            turn_id: submission.id.clone(),
+            image_url: format!("/food-images/{}", submission.id),
+            consume_at_ms: food_motion.consume_at_ms,
+            duration_ms: food_motion.duration_ms,
+        },
+    );
+    tokio::time::sleep_until(started_at + Duration::from_millis(food_motion.consume_at_ms)).await;
+
+    publish_state(
+        state,
+        TurnState {
+            turn_id: submission.id.clone(),
+            question: submission.text.clone(),
+            status: TurnStatus::Speaking,
+        },
+    )
+    .await;
+    let mut playback_deadline = None;
+    for (event, duration_ms) in segments {
+        send_event(state, event);
+        playback_deadline = append_playback_duration(playback_deadline, duration_ms);
+    }
+    // 感想が短くても食事モーションの終了まで次の投稿へ進まない。
+    let due = playback_deadline.map_or(motion_deadline, |deadline| deadline.max(motion_deadline));
+    tokio::time::sleep_until(due).await;
+    Ok(())
 }
 
 async fn prepare_search_filler(
@@ -622,14 +638,10 @@ mod tests {
         assert_eq!(segments[0].text, "改行を 含む一文です。");
     }
 
-    #[tokio::test]
-    async fn 準備中は待機投稿を処理せずキャンセルする() {
-        let mut config: AppConfig =
-            serde_json::from_str(include_str!("../config.example.json")).unwrap();
-        config.character.preparation_mode = true;
+    fn test_state(config: AppConfig) -> AppState {
         let (submissions, _) = mpsc::channel(1);
-        let (events, _) = broadcast::channel(4);
-        let state = AppState {
+        let (events, _) = broadcast::channel(16);
+        AppState {
             config: ConfigStore::new("config.example.json", config),
             http: reqwest::Client::new(),
             submissions,
@@ -648,7 +660,166 @@ mod tests {
             update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown: watch::channel(false).0,
             search_filler_rotation: Arc::new(SearchFillerRotation::default()),
+        }
+    }
+
+    fn start_food_presentation(
+        consume_at_ms: u64,
+        duration_ms: u64,
+        audio_durations: &[u64],
+        cancel: CancellationToken,
+    ) -> (
+        tokio::task::JoinHandle<std::result::Result<(), CancellableError>>,
+        broadcast::Receiver<ServerEvent>,
+    ) {
+        let config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        let state = test_state(config);
+        let events = state.events.subscribe();
+        let submission = Submission {
+            id: "food-turn".to_owned(),
+            kind: SubmissionKind::Food {
+                vrm_image: crate::protocol::InputImage {
+                    mime_type: "image/webp".to_owned(),
+                    data: Vec::new(),
+                },
+                ai_image: crate::protocol::InputImage {
+                    mime_type: "image/webp".to_owned(),
+                    data: Vec::new(),
+                },
+            },
+            text: "食べ物の絵を送りました".to_owned(),
         };
+        let motion = FoodMotionConfig {
+            url: "/assets/motions/eat2.vrma".to_owned(),
+            consume_at_ms,
+            duration_ms,
+        };
+        let segments = audio_durations
+            .iter()
+            .enumerate()
+            .map(|(index, &duration_ms)| {
+                (
+                    ServerEvent::Segment {
+                        turn_id: submission.id.clone(),
+                        sequence: index as u32,
+                        text: "おいしいです。".to_owned(),
+                        emotion: Emotion::Happy,
+                        motion: None,
+                        audio_url: format!("/audio/food-{index}.webm"),
+                        duration_ms,
+                        is_last: index + 1 == audio_durations.len(),
+                        kind: SegmentKind::Answer,
+                        sources: Vec::new(),
+                    },
+                    duration_ms,
+                )
+            })
+            .collect();
+        let task = tokio::spawn(async move {
+            cancellable(
+                &cancel,
+                present_food(&state, &submission, &motion, segments),
+            )
+            .await
+        });
+        (task, events)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 食事の消去開始時刻に発話しモーションと全音声の両方を待つ() {
+        for (consume_at_ms, duration_ms, audio_durations, completion_ms) in [
+            (500, 2000, vec![200], 2000),
+            (500, 2000, vec![1000, 1500], 3000),
+            (0, 800, vec![400], 800),
+            (3505, 14440, vec![1000], 14440),
+        ] {
+            let started_at = Instant::now();
+            let (task, mut events) = start_food_presentation(
+                consume_at_ms,
+                duration_ms,
+                &audio_durations,
+                CancellationToken::new(),
+            );
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                ServerEvent::State { turn } if matches!(turn.status, TurnStatus::Eating)
+            ));
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                ServerEvent::FoodAction { consume_at_ms: consume, duration_ms: duration, .. }
+                    if consume == consume_at_ms && duration == duration_ms
+            ));
+            if consume_at_ms > 0 {
+                tokio::time::advance(Duration::from_millis(consume_at_ms - 1)).await;
+                tokio::task::yield_now().await;
+                assert!(events.try_recv().is_err());
+                assert!(!task.is_finished());
+                tokio::time::advance(Duration::from_millis(1)).await;
+            }
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                ServerEvent::State { turn } if matches!(turn.status, TurnStatus::Speaking)
+            ));
+            for (index, duration) in audio_durations.iter().enumerate() {
+                assert!(matches!(
+                    events.recv().await.unwrap(),
+                    ServerEvent::Segment { sequence, duration_ms, motion: None, .. }
+                        if sequence == index as u32 && duration_ms == *duration
+                ));
+            }
+            assert_eq!(
+                Instant::now() - started_at,
+                Duration::from_millis(consume_at_ms)
+            );
+
+            tokio::time::advance(Duration::from_millis(completion_ms - consume_at_ms - 1)).await;
+            tokio::task::yield_now().await;
+            assert!(!task.is_finished());
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert!(matches!(task.await.unwrap(), Ok(())));
+            assert_eq!(
+                Instant::now() - started_at,
+                Duration::from_millis(completion_ms)
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 食事発話の前後どちらでも中断し後から発話イベントを送らない() {
+        for cancel_at_ms in [200, 600] {
+            let cancel = CancellationToken::new();
+            let (task, mut events) = start_food_presentation(500, 2000, &[1000], cancel.clone());
+            events.recv().await.unwrap();
+            events.recv().await.unwrap();
+            tokio::time::advance(Duration::from_millis(cancel_at_ms)).await;
+            tokio::task::yield_now().await;
+            if cancel_at_ms > 500 {
+                assert!(matches!(
+                    events.recv().await.unwrap(),
+                    ServerEvent::State { .. }
+                ));
+                assert!(matches!(
+                    events.recv().await.unwrap(),
+                    ServerEvent::Segment { .. }
+                ));
+            }
+            cancel.cancel();
+            assert!(matches!(
+                task.await.unwrap(),
+                Err(CancellableError::Cancelled)
+            ));
+            tokio::time::advance(Duration::from_secs(30)).await;
+            assert!(events.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn 準備中は待機投稿を処理せずキャンセルする() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.character.preparation_mode = true;
+        let state = test_state(config);
         let mut events = state.events.subscribe();
 
         process_submission(
