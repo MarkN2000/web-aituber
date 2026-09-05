@@ -290,6 +290,7 @@ async fn submit_food(
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
     require_accepting_submissions(&state, &event_identifier)?;
+    require_food_motion(&state)?;
     let mut vrm_image = None;
     let mut ai_image = None;
 
@@ -314,6 +315,7 @@ async fn submit_food(
     let ai_image =
         ai_image.ok_or_else(|| ApiError::bad_request("AI入力用の食事画像がありません"))?;
     require_accepting_submissions(&state, &event_identifier)?;
+    require_food_motion(&state)?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
@@ -328,6 +330,16 @@ async fn submit_food(
         .map_err(queue_error)?;
 
     Ok((StatusCode::ACCEPTED, Json(SubmitResponse { id })))
+}
+
+fn require_food_motion(state: &AppState) -> Result<(), ApiError> {
+    if state.config.current().character.food_motion.is_none() {
+        return Err(ApiError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "食事モーションが設定されていません",
+        });
+    }
+    Ok(())
 }
 
 async fn read_food_image(field: Field<'_>) -> Result<InputImage, ApiError> {
@@ -514,8 +526,9 @@ async fn version_character_asset_urls(
     for url in character.emotion_motions.values_mut() {
         *url = version_local_asset_url(assets_dir, url).await;
     }
-    character.food_motion.url =
-        version_local_asset_url(assets_dir, &character.food_motion.url).await;
+    if let Some(food_motion) = &mut character.food_motion {
+        food_motion.url = version_local_asset_url(assets_dir, &food_motion.url).await;
+    }
     character
 }
 
@@ -2282,7 +2295,7 @@ struct DisplayCharacterConfig {
     antialias: bool,
     idle_motions: Vec<String>,
     emotion_motions: HashMap<String, String>,
-    food_motion: crate::config::FoodMotionConfig,
+    food_motion: Option<crate::config::FoodMotionConfig>,
     food_prop: crate::config::FoodPropConfig,
     camera: crate::config::CameraConfig,
     background_color: String,
@@ -5396,6 +5409,56 @@ mod tests {
         assert_eq!(vrm_image.data, b"vrm-image");
         assert_eq!(ai_image.mime_type, "image/webp");
         assert_eq!(ai_image.data, b"ai-image");
+    }
+
+    #[tokio::test]
+    async fn 食事設定のない更新前設定でも表示と通常質問を利用できる() {
+        let (mut state, mut submissions) = test_state_with_receiver();
+        let mut config = (*state.config.current()).clone();
+        config.character.food_motion = None;
+        state.config = ConfigStore::new("config.example.json", config);
+        let app = router(state);
+
+        let display = app
+            .clone()
+            .oneshot(
+                Request::get("/event/event-8k2m4q7x9p/api/display-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(display.status(), StatusCode::OK);
+        let body = to_bytes(display.into_body(), 64 * 1024).await.unwrap();
+        let display: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(display["food_motion"].is_null());
+
+        let food = app
+            .clone()
+            .oneshot(
+                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
+                    .header(header::CONTENT_TYPE, "multipart/form-data; boundary=food")
+                    .body(Body::from("--food--\r\n"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(food.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(food.into_body(), 4096).await.unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["error"], "食事モーションが設定されていません");
+        assert!(submissions.try_recv().is_err());
+
+        let question = app.oneshot(
+            Request::post("/event/event-8k2m4q7x9p/api/submissions")
+                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=question")
+                .body(Body::from("--question\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n通常質問\r\n--question--\r\n")).unwrap(),
+        ).await.unwrap();
+        assert_eq!(question.status(), StatusCode::ACCEPTED);
+        assert!(matches!(
+            submissions.recv().await.unwrap().kind,
+            SubmissionKind::Question
+        ));
     }
 
     #[tokio::test]

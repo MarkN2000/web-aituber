@@ -72,7 +72,8 @@ pub struct CharacterConfig {
     pub idle_motions: Vec<String>,
     #[serde(default)]
     pub emotion_motions: HashMap<String, String>,
-    pub food_motion: FoodMotionConfig,
+    #[serde(default)]
+    pub food_motion: Option<FoodMotionConfig>,
     #[serde(default)]
     pub food_prop: FoodPropConfig,
     #[serde(default)]
@@ -254,19 +255,16 @@ impl AppConfig {
             bail!("設定項目 drawing.stabilization は0から10の整数にしてください");
         }
         required("character.vrm_url", &self.character.vrm_url)?;
-        required("character.food_motion.url", &self.character.food_motion.url)?;
-        let minimum_food_motion_duration = self
-            .character
-            .food_motion
-            .consume_at_ms
-            .checked_add(400)
-            .ok_or_else(|| {
+        if let Some(food_motion) = &self.character.food_motion {
+            required("character.food_motion.url", &food_motion.url)?;
+            let minimum_duration = food_motion.consume_at_ms.checked_add(400).ok_or_else(|| {
                 anyhow::anyhow!("設定項目 character.food_motion.consume_at_ms が大きすぎます")
             })?;
-        if self.character.food_motion.duration_ms < minimum_food_motion_duration {
-            bail!(
-                "設定項目 character.food_motion.duration_ms はconsume_at_msの400ms後以降にしてください"
-            );
+            if food_motion.duration_ms < minimum_duration {
+                bail!(
+                    "設定項目 character.food_motion.duration_ms はconsume_at_msの400ms後以降にしてください"
+                );
+            }
         }
         if !self.character.light.brightness.is_finite()
             || !(0.0..=2.0).contains(&self.character.light.brightness)
@@ -583,10 +581,8 @@ mod tests {
 
     #[test]
     fn character_defaults_are_available() {
-        let character: CharacterConfig = serde_json::from_str(
-            r#"{"food_motion":{"url":"/assets/motions/eat2.vrma","consume_at_ms":3505,"duration_ms":14440}}"#,
-        )
-        .unwrap();
+        let character: CharacterConfig = serde_json::from_str("{}").unwrap();
+        assert!(character.food_motion.is_none());
         assert!(!character.preparation_mode);
         assert_eq!(character.vrm_url, "/assets/model.vrm");
         assert!(character.antialias);
@@ -601,21 +597,54 @@ mod tests {
     }
 
     #[test]
+    fn food_motionなしの既存設定を更新後も読み込みファイルを保持する() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]
+            .as_object_mut()
+            .unwrap()
+            .remove("food_motion");
+        let path =
+            std::env::temp_dir().join(format!("web-aituber-upgrade-{}.json", Uuid::new_v4()));
+        let original = serde_json::to_vec_pretty(&value).unwrap();
+        fs::write(&path, &original).unwrap();
+
+        let config = AppConfig::load_from_path(&path).unwrap();
+        assert!(config.character.food_motion.is_none());
+        assert_eq!(config.admin_token, value["admin_token"].as_str().unwrap());
+        assert_eq!(
+            config.llm.api_key,
+            value["llm"]["api_key"].as_str().unwrap()
+        );
+        let store = ConfigStore::new(&path, config);
+        store.reload().unwrap();
+        assert!(store.current().character.food_motion.is_none());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_file(path).unwrap();
+
+        value["character"]["food_motion"] = serde_json::Value::Null;
+        let config: AppConfig = serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+        assert!(config.character.food_motion.is_none());
+    }
+
+    #[test]
     fn food_motion_requires_a_url_and_a_duration_after_consumption() {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         assert!(config.validate().is_ok());
 
-        config.character.food_motion.url.clear();
+        config.character.food_motion.as_mut().unwrap().url.clear();
         assert!(config.validate().is_err());
-        config.character.food_motion.url = "/assets/motions/eat2.vrma".to_owned();
+        config.character.food_motion.as_mut().unwrap().url = "/assets/motions/eat2.vrma".to_owned();
 
-        config.character.food_motion.duration_ms = config.character.food_motion.consume_at_ms + 399;
+        let consume_at = config.character.food_motion.as_ref().unwrap().consume_at_ms;
+        config.character.food_motion.as_mut().unwrap().duration_ms = consume_at + 399;
         assert!(config.validate().is_err());
-        config.character.food_motion.duration_ms = config.character.food_motion.consume_at_ms + 400;
+        config.character.food_motion.as_mut().unwrap().duration_ms = consume_at + 400;
         assert!(config.validate().is_ok());
 
-        config.character.food_motion.consume_at_ms = u64::MAX;
+        config.character.food_motion.as_mut().unwrap().consume_at_ms = u64::MAX;
         assert!(config.validate().is_err());
     }
 

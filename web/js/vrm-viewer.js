@@ -120,10 +120,12 @@ export class VrmViewer {
         warnings.push(`感情モーションを読み込めませんでした: ${url}`);
       }
     }
-    try {
-      this.foodMotion = await this.loadMotion(config.food_motion.url, true);
-    } catch {
-      warnings.push(`食事モーションを読み込めませんでした: ${config.food_motion.url}`);
+    if (config.food_motion) {
+      try {
+        this.foodMotion = await this.loadMotion(config.food_motion.url, true);
+      } catch {
+        warnings.push(`食事モーションを読み込めませんでした: ${config.food_motion.url}`);
+      }
     }
     if (warnings.length) this.report(warnings.join('\n'));
   }

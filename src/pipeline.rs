@@ -127,6 +127,19 @@ async fn process_active_submission(
     cancel: &CancellationToken,
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
     let is_food = submission.is_food();
+    let food_presentation = if let Some(image) = submission.food_vrm_image() {
+        let motion = config
+            .character
+            .food_motion
+            .as_ref()
+            .ok_or_else(|| ProcessError::Failed {
+                error: anyhow!("食事モーションが設定されていません"),
+                audio_files: Vec::new(),
+            })?;
+        Some((image, motion))
+    } else {
+        None
+    };
     let mut audio_files = Vec::new();
     let mut playback_deadline: Option<Instant> = None;
     let mut sequence_offset = 0_u32;
@@ -273,7 +286,7 @@ async fn process_active_submission(
         }
     }
 
-    if let Some(image) = submission.food_vrm_image() {
+    if let Some((image, food_motion)) = food_presentation {
         state
             .food_images
             .write()
@@ -295,15 +308,12 @@ async fn process_active_submission(
             ServerEvent::FoodAction {
                 turn_id: submission.id.clone(),
                 image_url: format!("/food-images/{}", submission.id),
-                consume_at_ms: config.character.food_motion.consume_at_ms,
-                duration_ms: config.character.food_motion.duration_ms,
+                consume_at_ms: food_motion.consume_at_ms,
+                duration_ms: food_motion.duration_ms,
             },
         );
         cancellable(cancel, async {
-            tokio::time::sleep(Duration::from_millis(
-                config.character.food_motion.duration_ms,
-            ))
-            .await;
+            tokio::time::sleep(Duration::from_millis(food_motion.duration_ms)).await;
             Ok(())
         })
         .await

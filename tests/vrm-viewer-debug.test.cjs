@@ -314,6 +314,23 @@ test("食事用URLのモーションを読み込み、失敗した場合は設�
   assert.match(warnings[0], /食事モーションを読み込めませんでした/);
 });
 
+test("食事設定のない更新前の設定でも待機モーションを読み込める", async () => {
+  for (const food_motion of [undefined, null]) {
+    const viewer = createViewer();
+    viewer.foodMotion = undefined;
+    const loaded = [];
+    viewer.loadMotion = async (url) => { loaded.push(url); return { clip: {}, fileName: "idle.vrma" }; };
+    viewer.report = (message) => assert.fail(message);
+
+    await viewer.loadMotions({ idle_motions: ["/idle.vrma"], food_motion });
+    viewer.resumeIdle();
+
+    assert.deepEqual(loaded, ["/idle.vrma"]);
+    assert.equal(viewer.foodMotion, undefined);
+    assert.equal(viewer.currentMotion.kind, "idle");
+  }
+});
+
 test("実際に選択した待機・感情モーションを状態変更時だけ通知する", () => {
   const viewer = createViewer();
   const idle = { clip: {}, fileName: "idle.vrma" };
