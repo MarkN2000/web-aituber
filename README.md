@@ -24,17 +24,27 @@ APIキーと管理用トークンは管理画面に表示されません。`conf
 
 ## 食べるモーションの設定
 
-`config.json`の`character`内に、食事専用VRMAと演出時刻を設定します。
+**URLの入力先は、使用中の`config.json`の`character` → `food_motion` → `url`です。** 食べるモーションは設定ファイルで指定します。
 
-アップデートでは既存の`config.json`と`assets/`を保持します。`food_motion`がない設定でもサーバーは起動し、通常質問を利用できます。食事投稿は設定するまで「食事モーションが設定されていません」で受け付けません。設定例の更新内容は既存設定へ自動追加されないため、食事機能を利用する環境ではVRMAを配置し、次の設定を追加してください。
+1. 食事用VRMAをサーバーの`assets/motions/`へ配置する。たとえば`eat2.vrma`を配置した場合、URLは`/assets/motions/eat2.vrma`になります。
+2. 使用中の`config.json`を開き、`"character"`を探す。その中の`idle_motions`、`emotion_motions`、`food_prop`と同じ階層に`food_motion`を追加し、`url`に入力する。既に`food_motion`があればその値を編集する。
+3. 保存後、管理画面の「運用」→「ファイルから再読み込み」を押す。
+
+次は入力場所を示す抜粋です。既存の`character`にある他の項目は残して追加してください。全体の記載例は同梱の[config.example.json](config.example.json)にあります。
 
 ```json
-"food_motion": {
-  "url": "/assets/motions/eat2.vrma",
-  "consume_at_ms": 3505,
-  "duration_ms": 14440
+{
+  "character": {
+    "food_motion": {
+      "url": "/assets/motions/eat2.vrma",
+      "consume_at_ms": 3505,
+      "duration_ms": 14440
+    }
+  }
 }
 ```
+
+**アップデートした場合:** 既存の`config.json`と`assets/`は保持されるため、`food_motion`欄は自動追加されません。更新された`config.example.json`の`food_motion`を参考に、使用中の`config.json`へ上の手順で追加してください。`config.example.json`だけを編集しても使用中の設定には反映されません。未設定でもサーバーと通常質問は利用できますが、食事投稿は「食事モーションが設定されていません」で受け付けません。
 
 `url`は食べるモーションのファイルです。`consume_at_ms`は再生開始から食べ物の画像を消し始めるまでの時間で、400ミリ秒かけて縮小して消します。`duration_ms`は食事演出全体の時間です。モーションは元の速度で1回再生し、演出が終わると待機へ戻って感想を話します。消去が完了するよう、`duration_ms`は`consume_at_ms + 400`以上にしてください。
 
