@@ -333,7 +333,13 @@ async fn submit_food(
 }
 
 fn require_food_motion(state: &AppState) -> Result<(), ApiError> {
-    if state.config.current().character.food_motion.is_none() {
+    if state
+        .config
+        .current()
+        .character
+        .configured_food_motion()
+        .is_none()
+    {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: "食事モーションが設定されていません",
@@ -2580,7 +2586,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{AppConfig, ConfigStore},
+        config::{AppConfig, ConfigStore, FoodMotionConfig},
         state::{ConversationHistory, SearchFillerRotation},
     };
 
@@ -5413,52 +5419,65 @@ mod tests {
 
     #[tokio::test]
     async fn 食事設定のない更新前設定でも表示と通常質問を利用できる() {
-        let (mut state, mut submissions) = test_state_with_receiver();
-        let mut config = (*state.config.current()).clone();
-        config.character.food_motion = None;
-        state.config = ConfigStore::new("config.example.json", config);
-        let app = router(state);
+        for food_motion in [
+            None,
+            Some(FoodMotionConfig::default()),
+            Some(FoodMotionConfig {
+                url: " \t ".to_owned(),
+                ..FoodMotionConfig::default()
+            }),
+        ] {
+            let (mut state, mut submissions) = test_state_with_receiver();
+            let mut config = (*state.config.current()).clone();
+            let expected_display = food_motion
+                .as_ref()
+                .map(|motion| serde_json::to_value(motion).unwrap())
+                .unwrap_or(serde_json::Value::Null);
+            config.character.food_motion = food_motion;
+            state.config = ConfigStore::new("config.example.json", config);
+            let app = router(state);
 
-        let display = app
-            .clone()
-            .oneshot(
-                Request::get("/event/event-8k2m4q7x9p/api/display-config")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(display.status(), StatusCode::OK);
-        let body = to_bytes(display.into_body(), 64 * 1024).await.unwrap();
-        let display: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(display["food_motion"].is_null());
+            let display = app
+                .clone()
+                .oneshot(
+                    Request::get("/event/event-8k2m4q7x9p/api/display-config")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(display.status(), StatusCode::OK);
+            let body = to_bytes(display.into_body(), 64 * 1024).await.unwrap();
+            let display: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(display["food_motion"], expected_display);
 
-        let food = app
-            .clone()
-            .oneshot(
-                Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
-                    .header(header::CONTENT_TYPE, "multipart/form-data; boundary=food")
-                    .body(Body::from("--food--\r\n"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(food.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = to_bytes(food.into_body(), 4096).await.unwrap();
-        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(error["error"], "食事モーションが設定されていません");
-        assert!(submissions.try_recv().is_err());
+            let food = app
+                .clone()
+                .oneshot(
+                    Request::post("/event/event-8k2m4q7x9p/api/food-submissions")
+                        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=food")
+                        .body(Body::from("--food--\r\n"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(food.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = to_bytes(food.into_body(), 4096).await.unwrap();
+            let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(error["error"], "食事モーションが設定されていません");
+            assert!(submissions.try_recv().is_err());
 
-        let question = app.oneshot(
-            Request::post("/event/event-8k2m4q7x9p/api/submissions")
-                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=question")
-                .body(Body::from("--question\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n通常質問\r\n--question--\r\n")).unwrap(),
-        ).await.unwrap();
-        assert_eq!(question.status(), StatusCode::ACCEPTED);
-        assert!(matches!(
-            submissions.recv().await.unwrap().kind,
-            SubmissionKind::Question
-        ));
+            let question = app.oneshot(
+                Request::post("/event/event-8k2m4q7x9p/api/submissions")
+                    .header(header::CONTENT_TYPE, "multipart/form-data; boundary=question")
+                    .body(Body::from("--question\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n通常質問\r\n--question--\r\n")).unwrap(),
+            ).await.unwrap();
+            assert_eq!(question.status(), StatusCode::ACCEPTED);
+            assert!(matches!(
+                submissions.recv().await.unwrap().kind,
+                SubmissionKind::Question
+            ));
+        }
     }
 
     #[tokio::test]

@@ -139,6 +139,24 @@ pub struct FoodMotionConfig {
     pub duration_ms: u64,
 }
 
+impl Default for FoodMotionConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            consume_at_ms: 3505,
+            duration_ms: 14440,
+        }
+    }
+}
+
+impl CharacterConfig {
+    pub fn configured_food_motion(&self) -> Option<&FoodMotionConfig> {
+        self.food_motion
+            .as_ref()
+            .filter(|motion| !motion.url.trim().is_empty())
+    }
+}
+
 impl Default for DrawingConfig {
     fn default() -> Self {
         Self {
@@ -256,7 +274,6 @@ impl AppConfig {
         }
         required("character.vrm_url", &self.character.vrm_url)?;
         if let Some(food_motion) = &self.character.food_motion {
-            required("character.food_motion.url", &food_motion.url)?;
             let minimum_duration = food_motion.consume_at_ms.checked_add(400).ok_or_else(|| {
                 anyhow::anyhow!("設定項目 character.food_motion.consume_at_ms が大きすぎます")
             })?;
@@ -315,19 +332,36 @@ impl AppConfig {
 impl ConfigStore {
     pub fn load() -> Result<Self> {
         if let Some(path) = env::var_os("APP_CONFIG_FILE") {
-            let path = PathBuf::from(path);
-            let config = AppConfig::load_from_path(&path)?;
-            return Ok(Self::new(path, config));
+            return Self::load_from_path(PathBuf::from(path));
         }
 
         let path = PathBuf::from("config.json");
         let generated = create_default_config(&path, Path::new("config.example.json"))?;
-        let config = AppConfig::load_from_path(&path)?;
         if generated {
             tracing::warn!(
                 path = %path.display(),
                 "初回設定ファイルを生成しました。llm.api_keyなどを編集して再起動してください"
             );
+        }
+        Self::load_from_path(path)
+    }
+
+    fn load_from_path(path: PathBuf) -> Result<Self> {
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("設定ファイルを読み込めません: {}", path.display()))?;
+        let mut document: serde_json::Value = serde_json::from_str(&source)
+            .with_context(|| format!("設定ファイルの JSON が不正です: {}", path.display()))?;
+        let mut config: AppConfig = serde_json::from_value(document.clone())
+            .with_context(|| format!("設定ファイルの形式が不正です: {}", path.display()))?;
+        config.validate()?;
+
+        if config.character.food_motion.is_none() {
+            let motion = FoodMotionConfig::default();
+            document["character"]["food_motion"] = serde_json::to_value(&motion)?;
+            // 未知のキーを含む元のJSONを使用し、食事モーションの未設定欄だけを補う。
+            write_config_atomically(&path, &document)?;
+            config.character.food_motion = Some(motion);
+            tracing::info!(path = %path.display(), "食事モーションURLの入力欄を追加しました");
         }
         Ok(Self::new(path, config))
     }
@@ -430,7 +464,7 @@ fn create_default_config(path: &Path, example_path: &Path) -> Result<bool> {
     Ok(true)
 }
 
-fn write_config_atomically(path: &Path, config: &AppConfig) -> Result<()> {
+fn write_config_atomically(path: &Path, config: &impl Serialize) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let permissions = fs::metadata(path)
         .with_context(|| format!("設定ファイルの情報を取得できません: {}", path.display()))?
@@ -597,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn food_motionなしの既存設定を更新後も読み込みファイルを保持する() {
+    fn 通常の設定読み取りと再読み込みではファイルを変更しない() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         value["character"]
@@ -629,14 +663,19 @@ mod tests {
     }
 
     #[test]
-    fn food_motion_requires_a_url_and_a_duration_after_consumption() {
+    fn food_motionの空urlは未設定で時刻の範囲は検証する() {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         assert!(config.validate().is_ok());
 
         config.character.food_motion.as_mut().unwrap().url.clear();
-        assert!(config.validate().is_err());
+        assert!(config.validate().is_ok());
+        assert!(config.character.configured_food_motion().is_none());
+        config.character.food_motion.as_mut().unwrap().url = " \t ".to_owned();
+        assert!(config.validate().is_ok());
+        assert!(config.character.configured_food_motion().is_none());
         config.character.food_motion.as_mut().unwrap().url = "/assets/motions/eat2.vrma".to_owned();
+        assert!(config.character.configured_food_motion().is_some());
 
         let consume_at = config.character.food_motion.as_ref().unwrap().consume_at_ms;
         config.character.food_motion.as_mut().unwrap().duration_ms = consume_at + 399;
@@ -646,6 +685,99 @@ mod tests {
 
         config.character.food_motion.as_mut().unwrap().consume_at_ms = u64::MAX;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn 起動時に不足する食事url欄だけを追加し他の値と未知のキーを残す() {
+        for use_null in [false, true] {
+            let mut original: serde_json::Value =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            original["operator_note"] = serde_json::json!({"text": "そのまま残す", "revision": 2});
+            original["character"]["custom_motion_note"] = serde_json::json!("独自の設定値");
+            if use_null {
+                original["character"]["food_motion"] = serde_json::Value::Null;
+            } else {
+                original["character"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("food_motion");
+            }
+            let path =
+                std::env::temp_dir().join(format!("web-aituber-fields-{}.json", Uuid::new_v4()));
+            fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+
+            let store = ConfigStore::load_from_path(path.clone()).unwrap();
+
+            assert!(store.current().character.configured_food_motion().is_none());
+            let mut saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            let field = saved["character"]
+                .as_object_mut()
+                .unwrap()
+                .remove("food_motion")
+                .unwrap();
+            assert_eq!(
+                field,
+                serde_json::json!({"url": "", "consume_at_ms": 3505, "duration_ms": 14440})
+            );
+            original["character"]
+                .as_object_mut()
+                .unwrap()
+                .remove("food_motion");
+            assert_eq!(saved, original);
+
+            // 二度目の起動では、既に追加した空欄とファイルの書式をそのまま残す。
+            let existing = format!("\n{}\n", fs::read_to_string(&path).unwrap());
+            fs::write(&path, &existing).unwrap();
+            ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), existing);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn 起動時に設定済みのurlと時刻を上書きしない() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]["food_motion"] = serde_json::json!({
+            "url": "/assets/motions/custom-eat.vrma", "consume_at_ms": 1234, "duration_ms": 5678,
+        });
+        let path =
+            std::env::temp_dir().join(format!("web-aituber-configured-{}.json", Uuid::new_v4()));
+        let original = format!("\n{}\n", serde_json::to_string_pretty(&value).unwrap());
+        fs::write(&path, &original).unwrap();
+
+        let store = ConfigStore::load_from_path(path.clone()).unwrap();
+
+        let config = store.current();
+        let motion = config.character.configured_food_motion().unwrap();
+        assert_eq!(motion.url, "/assets/motions/custom-eat.vrma");
+        assert_eq!(motion.consume_at_ms, 1234);
+        assert_eq!(motion.duration_ms, 5678);
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn 不正な設定ファイルには食事url欄を追加しない() {
+        let path =
+            std::env::temp_dir().join(format!("web-aituber-invalid-{}.json", Uuid::new_v4()));
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]
+            .as_object_mut()
+            .unwrap()
+            .remove("food_motion");
+        value["llm"]["api_key"] = serde_json::json!("");
+        for original in [
+            serde_json::to_string(&value).unwrap(),
+            "{invalid".to_owned(),
+        ] {
+            fs::write(&path, &original).unwrap();
+            assert!(ConfigStore::load_from_path(path.clone()).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

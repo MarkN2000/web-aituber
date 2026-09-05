@@ -314,8 +314,8 @@ test("食事用URLのモーションを読み込み、失敗した場合は設�
   assert.match(warnings[0], /食事モーションを読み込めませんでした/);
 });
 
-test("食事設定のない更新前の設定でも待機モーションを読み込める", async () => {
-  for (const food_motion of [undefined, null]) {
+test("未設定の食事モーションURLは読み込まず、待機モーションを利用できる", async () => {
+  for (const food_motion of [undefined, null, { url: "" }, { url: "   " }]) {
     const viewer = createViewer();
     viewer.foodMotion = undefined;
     const loaded = [];

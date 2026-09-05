@@ -128,14 +128,14 @@ async fn process_active_submission(
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
     let is_food = submission.is_food();
     let food_presentation = if let Some(image) = submission.food_vrm_image() {
-        let motion = config
-            .character
-            .food_motion
-            .as_ref()
-            .ok_or_else(|| ProcessError::Failed {
-                error: anyhow!("食事モーションが設定されていません"),
-                audio_files: Vec::new(),
-            })?;
+        let motion =
+            config
+                .character
+                .configured_food_motion()
+                .ok_or_else(|| ProcessError::Failed {
+                    error: anyhow!("食事モーションが設定されていません"),
+                    audio_files: Vec::new(),
+                })?;
         Some((image, motion))
     } else {
         None
