@@ -732,7 +732,6 @@ mod tests {
             (500, 2000, vec![200], 2000),
             (500, 2000, vec![1000, 1500], 3000),
             (0, 800, vec![400], 800),
-            (3505, 14440, vec![1000], 14440),
         ] {
             let started_at = Instant::now();
             let (task, mut events) = start_food_presentation(

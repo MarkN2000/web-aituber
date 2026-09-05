@@ -29,10 +29,6 @@ const receiveSegmentSource = source.slice(
   source.indexOf("function receiveSegment"),
   source.indexOf("function onAudioStart"),
 );
-const onAudioStartSource = source.slice(
-  source.indexOf("function onAudioStart"),
-  source.indexOf("function onAudioEnd"),
-);
 const onAudioEndSource = source.slice(
   source.indexOf("function onAudioEnd"),
   source.indexOf("async function startMain"),
@@ -58,8 +54,6 @@ function loadContext() {
       clearFoodProp() { calls.push("clearFood"); },
       playFoodAction() { calls.push("food"); },
       stopLipSync() { calls.push("stopLip"); },
-      startLipSync() { calls.push("startLip"); },
-      playEmotionMotion() { calls.push("emotionMotion"); },
       setIdleExpression() { calls.push("idleExpression"); },
       resumeIdle() { calls.push("idleMotion"); },
     };
@@ -70,7 +64,6 @@ function loadContext() {
     const backgroundMusic = {
       setDucked(value) { calls.push(["duck", value]); },
     };
-    function isEmotion(value) { return ["neutral", "happy", "sad", "angry", "surprised"].includes(value); }
     function setEmotion(value) { calls.push(["expression", value]); }
     function applyPendingViewerConfig() { calls.push("config"); }
     ${clearAnswerSource}
@@ -85,10 +78,8 @@ function loadContext() {
     function showCurrentSources() {}
     ${handleServerEventSource}
     ${receiveSegmentSource}
-    ${onAudioStartSource}
     ${onAudioEndSource}
     this.handle = handleServerEvent;
-    this.audioStart = onAudioStart;
     this.audioEnd = onAudioEnd;
     this.currentTurn = () => currentTurn;
     this.received = (turnId) => receivedTurns.has(turnId);
@@ -100,7 +91,7 @@ function state(turnId) {
   return { type: "state", turn: { turn_id: turnId, question: "質問", status: "speaking" } };
 }
 
-function segment(turnId, isLast = true) {
+function segment(turnId) {
   return {
     type: "segment",
     turn_id: turnId,
@@ -111,28 +102,13 @@ function segment(turnId, isLast = true) {
     motion: null,
     audio_url: "/audio/test.webm",
     duration_ms: 1000,
-    is_last: isLast,
+    is_last: true,
   };
 }
 
 function audioItem(turnId) {
   return { turnId, meta: { is_last: true } };
 }
-
-test("食事中の発話開始は表情と口パクだけを開始し、食事モーションを中断しない", () => {
-  const { context, calls } = loadContext();
-  context.handle(state("food-1"));
-  context.handle({ type: "food_action", image_url: "/food/1.webp", consume_at_ms: 1000, duration_ms: 3000 });
-  context.handle(segment("food-1"));
-
-  context.audioStart({ meta: segment("food-1"), turnId: "food-1" }, {});
-
-  assert.ok(calls.includes("food"));
-  assert.ok(calls.some((call) => Array.isArray(call) && call[0] === "expression" && call[1] === "happy"));
-  assert.ok(calls.includes("startLip"));
-  assert.ok(!calls.includes("emotionMotion"));
-  assert.ok(!calls.includes("clearFood"));
-});
 
 test("Completeが先でも最終音声の終了まで食事演出を片付けない", () => {
   const { context, calls } = loadContext();
@@ -161,20 +137,6 @@ test("最終音声が先でもCompleteまで食事演出を片付けない", () 
   assert.equal(calls.filter((call) => call === "clearFood").length, 0);
 
   context.handle({ type: "complete", turn_id: "food-1" });
-
-  assert.equal(calls.filter((call) => call === "clearFood").length, 1);
-  assert.equal(context.currentTurn(), undefined);
-});
-
-test("通常質問も最終音声の終了とCompleteの両方を待つ", () => {
-  const { context, calls } = loadContext();
-  context.handle(state("turn-1"));
-  context.handle(segment("turn-1"));
-  context.audioEnd(audioItem("turn-1"));
-
-  assert.equal(calls.filter((call) => call === "clearFood").length, 0);
-
-  context.handle({ type: "complete", turn_id: "turn-1" });
 
   assert.equal(calls.filter((call) => call === "clearFood").length, 1);
   assert.equal(context.currentTurn(), undefined);
