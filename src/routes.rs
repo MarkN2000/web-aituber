@@ -686,7 +686,7 @@ async fn upload_background_image(
 
     let image = match read_webp_image(multipart, "背景画像").await {
         Ok(image) => image,
-        Err(response) => return response,
+        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,
@@ -709,7 +709,7 @@ async fn upload_preparation_image(
 
     let image = match read_webp_image(multipart, "準備中画像").await {
         Ok(image) => image,
-        Err(response) => return response,
+        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,
@@ -781,45 +781,33 @@ async fn delete_preparation_image(
     }
 }
 
-async fn read_webp_image(mut multipart: Multipart, label: &str) -> Result<Bytes, Response> {
+async fn read_webp_image(mut multipart: Multipart, label: &str) -> Result<Bytes, String> {
     let mut image = None;
-    while let Some(field) = multipart.next_field().await.map_err(|_| {
-        admin_error_owned(
-            StatusCode::BAD_REQUEST,
-            format!("{label}を読み取れませんでした"),
-        )
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| format!("{label}を読み取れませんでした"))?
+    {
         if field.name() != Some("image") || image.is_some() {
             continue;
         }
         if field.content_type() != Some("image/webp") {
-            return Err(admin_error_owned(
-                StatusCode::BAD_REQUEST,
-                format!("{label}はWebP形式で送信してください"),
-            ));
+            return Err(format!("{label}はWebP形式で送信してください"));
         }
-        let bytes = field.bytes().await.map_err(|_| {
-            admin_error_owned(
-                StatusCode::BAD_REQUEST,
-                format!("{label}を読み取れませんでした"),
-            )
-        })?;
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|_| format!("{label}を読み取れませんでした"))?;
         if bytes.len() > MAX_IMAGE_BYTES {
-            return Err(admin_error_owned(
-                StatusCode::BAD_REQUEST,
-                format!("{label}は10MiB以下にしてください"),
-            ));
+            return Err(format!("{label}は10MiB以下にしてください"));
         }
         if !has_valid_webp_container(&bytes) {
-            return Err(admin_error_owned(
-                StatusCode::BAD_REQUEST,
-                format!("{label}のWebP形式が不正です"),
-            ));
+            return Err(format!("{label}のWebP形式が不正です"));
         }
         image = Some(bytes);
     }
 
-    image.ok_or_else(|| admin_error_owned(StatusCode::BAD_REQUEST, format!("{label}がありません")))
+    image.ok_or_else(|| format!("{label}がありません"))
 }
 
 async fn delete_background_image(
@@ -866,7 +854,7 @@ async fn upload_screen_overlay(
 
     let image = match read_webp_image(multipart, "画面オーバーレイ").await {
         Ok(image) => image,
-        Err(response) => return response,
+        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,

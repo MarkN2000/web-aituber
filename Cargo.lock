@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "web-aituber"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "anyhow",
  "axum",
