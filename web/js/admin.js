@@ -1,4 +1,5 @@
 import { UserDictionaryEditor } from "./user-dictionary.js?v=8";
+import { canvasToWebp } from "./webp.js?v=1";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
@@ -506,17 +507,6 @@ function loadImage(file) {
     image.src = url;
   });
 }
-function canvasToWebp(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob || blob.type !== "image/webp") {
-        reject(new Error("このブラウザではWebPへ変換できません。"));
-        return;
-      }
-      resolve(blob);
-    }, "image/webp", BACKGROUND_WEBP_QUALITY);
-  });
-}
 async function convertBackground(file) {
   if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("JPEG、PNG、WebP画像を選択してください。");
   if (file.size > MAX_BACKGROUND_BYTES) throw new Error("元画像は10MiB以下にしてください。");
@@ -532,7 +522,7 @@ async function convertBackground(file) {
   image.src = "";
   let blob;
   try {
-    blob = await canvasToWebp(canvas);
+    blob = await canvasToWebp(canvas, BACKGROUND_WEBP_QUALITY);
   } finally {
     canvas.width = 0;
     canvas.height = 0;

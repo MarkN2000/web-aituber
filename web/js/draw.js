@@ -1,4 +1,5 @@
 import { showInvalidEventScreen } from "./invalid-event.js?v=1";
+import { canvasToWebp } from "./webp.js?v=1";
 
 const CANVAS_SIZE = 512;
 const VRM_IMAGE_SIZE = 256;
@@ -682,12 +683,7 @@ function createSubmissionCanvases() {
 }
 
 function canvasBlob(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error("描いた画像を作成できませんでした。"));
-    }, "image/webp", WEBP_QUALITY);
-  });
+  return canvasToWebp(canvas, WEBP_QUALITY);
 }
 
 async function submitFood() {

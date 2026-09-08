@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<title>WebPブラウザ検証</title>
+<h1>WebPブラウザ検証</h1>
+<pre id="result">検証中</pre>
+<script type="module">
+const output = document.querySelector("#result");
+try {
+  // ?wasm=1 でCanvas非対応端末の挙動を再現する。
+  if (new URLSearchParams(location.search).has("wasm")) {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(callback) {
+      return original.call(this, callback, "image/png");
+    };
+  }
+  const { canvasToWebp } = await import("/static/js/webp.js?v=1");
+  const sizes = [256, 128, 1920];
+  const results = await Promise.all(sizes.map(async (size) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (size === 128) {
+      context.fillStyle = "white";
+      context.fillRect(0, 0, size, size);
+    }
+    context.fillStyle = "red";
+    context.fillRect(0, 0, size / 2, size);
+    const blob = await canvasToWebp(canvas, size === 1920 ? 0.85 : 0.75);
+    const image = new Image();
+    const url = URL.createObjectURL(blob);
+    try {
+      image.src = url;
+      await image.decode();
+      if (blob.type !== "image/webp" || image.width !== size || image.height !== size) throw new Error("形式または寸法が不正です");
+      context.clearRect(0, 0, size, size);
+      context.drawImage(image, 0, 0);
+      const alpha = context.getImageData(size - 1, 0, 1, 1).data[3];
+      if (alpha !== (size === 128 ? 255 : 0)) throw new Error("透過が保持されていません");
+      return `${size}px: ${blob.type}, ${blob.size}バイト, 透過検証成功`;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }));
+  output.textContent = "成功\n" + results.join("\n");
+} catch (error) {
+  output.textContent = `失敗: ${error.message}`;
+}
+</script>
+</html>

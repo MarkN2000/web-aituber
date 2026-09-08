@@ -117,6 +117,14 @@ cargo clippy --all-targets -- -D warnings
 node --test tests/*.test.cjs
 ```
 
+画像変換の実ブラウザ検証は`node tests/webp-browser-server.cjs`で専用サーバーを起動し、
+`http://127.0.0.1:8765/`（通常経路）と`http://127.0.0.1:8765/?wasm=1`（Canvas非対応を再現）を開きます。
+256px・128px・1920pxの並行変換、WebPの読み込み、透過保持を確認し、結果を画面に表示します。
+検証サーバーはループバックだけで待ち受け、終了はCtrl+Cです。iOS実機の画像送信確認は別途行います。
+
+WebP非対応ブラウザ向けのWASMエンコーダーは`web/vendor/jsquash-webp-1.5.0/`にライセンスとともに同梱しています。
+配布時は`web/`全体を含めてください。画像変換時に外部CDNへアクセスする必要はありません。
+
 `v1.0.0`のようなタグをpushすると、Windows版とLinux版のGitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
 
 管理画面からの自己更新に失敗した場合は、配布フォルダの`update.log`を確認してください。
