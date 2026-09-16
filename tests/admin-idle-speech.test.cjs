@@ -25,8 +25,8 @@ test("待機候補を追加・削除・再読込でき各候補を検証し保�
     querySelectorAll(selector) { return this.children.map((row) => row.querySelector(selector)); },
   };
   elements.idleTemplate = { content: { firstElementChild: { cloneNode() {
-    const fields = Object.fromEntries(["select", "textarea", "legend", "[data-idle-remove]"].map((key) => [key, field()]));
-    return { querySelector: (key) => fields[key], remove() { elements.idleEntries.children.splice(elements.idleEntries.children.indexOf(this), 1); } };
+    const fields = Object.fromEntries(["select", "textarea", "[data-idle-number]", "[data-idle-remove]"].map((key) => [key, field()]));
+    return { ...field(), querySelector: (key) => fields[key], remove() { elements.idleEntries.children.splice(elements.idleEntries.children.indexOf(this), 1); } };
   } } } };
   const loadedConfig = {
     llm: { api_url: "https://example.com", model: "model", system_prompt: "設定", food_reaction_prompt: "食事", search_fillers: ["確認します"] },
@@ -42,7 +42,8 @@ test("待機候補を追加・削除・再読込でき各候補を検証し保�
   const second = elements.idleEntries.children[1];
   assert.equal(second.querySelector("textarea").focused, true);
   assert.equal(first.querySelector("[data-idle-remove]").disabled, false);
-  assert.equal(second.querySelector("legend").textContent, "セリフ候補 2");
+  assert.equal(second.querySelector("[data-idle-number]").textContent, "2");
+  assert.equal(second.querySelector("textarea")["aria-label"], "セリフ 2（300文字以内）");
   elements.idleEnabled.checked = true;
   elements.idleMin.value = "40";
   elements.idleMax.value = "40";
@@ -67,7 +68,8 @@ test("待機候補を追加・削除・再読込でき各候補を検証し保�
   assert.equal(context.validate(form), false);
   first.querySelector("[data-idle-remove]").click();
   assert.equal(elements.idleEntries.childElementCount, 1);
-  assert.equal(second.querySelector("legend").textContent, "セリフ候補 1");
+  assert.equal(second.querySelector("[data-idle-number]").textContent, "1");
+  assert.equal(second.querySelector("textarea")["aria-label"], "セリフ 1（300文字以内）");
   assert.equal(second.querySelector("[data-idle-remove]").disabled, true);
   second.querySelector("[data-idle-remove]").click();
   assert.equal(elements.idleEntries.childElementCount, 1);

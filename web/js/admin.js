@@ -1102,7 +1102,9 @@ function createIdleSpeechEntry(entry = { emotion: "neutral", text: "" }) {
 }
 function updateIdleSpeechEntries() {
   [...elements.idleEntries.children].forEach((row, index) => {
-    row.querySelector("legend").textContent = `セリフ候補 ${index + 1}`;
+    row.setAttribute("aria-label", `セリフ候補 ${index + 1}`);
+    row.querySelector("[data-idle-number]").textContent = `${index + 1}`;
+    row.querySelector("textarea").setAttribute("aria-label", `セリフ ${index + 1}（300文字以内）`);
     const remove = row.querySelector("[data-idle-remove]");
     remove.disabled = elements.idleEntries.childElementCount <= 1;
     remove.setAttribute("aria-label", `セリフ候補 ${index + 1}を削除`);

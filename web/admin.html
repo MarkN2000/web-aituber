@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=27">
+  <link rel="stylesheet" href="/static/style.css?v=28">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -94,16 +94,18 @@
         <p class="field-note admin-field-note">発話するたびに候補をランダムに1組選びます。同じ候補が続く場合もあります。改行では候補を分けません。</p>
         <div id="idle-speech-entries"></div>
         <template id="idle-speech-entry-template">
-          <fieldset class="display-setting-section">
-            <legend>セリフ候補</legend>
-            <label>感情
-              <select>
-                <option value="neutral">通常</option><option value="happy">喜び</option><option value="sad">悲しみ</option><option value="angry">怒り</option><option value="surprised">驚き</option>
-              </select>
-            </label>
-            <label>セリフ（300文字以内）<textarea required rows="2"></textarea></label>
-            <div class="admin-form-actions"><button type="button" class="secondary-button" data-idle-remove>削除</button></div>
-          </fieldset>
+          <div class="idle-speech-entry" role="group">
+            <div class="idle-speech-entry-header">
+              <span data-idle-number aria-hidden="true"></span>
+              <label>感情
+                <select>
+                  <option value="neutral">通常</option><option value="happy">喜び</option><option value="sad">悲しみ</option><option value="angry">怒り</option><option value="surprised">驚き</option>
+                </select>
+              </label>
+              <button type="button" class="secondary-button" data-idle-remove>削除</button>
+            </div>
+            <textarea required rows="2" placeholder="セリフを入力（300文字以内）"></textarea>
+          </div>
         </template>
         <div class="admin-form-actions"><button id="add-idle-speech" type="button" class="secondary-button">セリフを追加</button></div>
         <div class="admin-form-actions">
@@ -483,6 +485,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=42"></script>
+  <script type="module" src="/static/js/admin.js?v=44"></script>
 </body>
 </html>
