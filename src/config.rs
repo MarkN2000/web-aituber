@@ -404,6 +404,20 @@ impl ConfigStore {
         let mut document: serde_json::Value = serde_json::from_str(&source)
             .with_context(|| format!("設定ファイルの JSON が不正です: {}", path.display()))?;
         let mut changed = false;
+        if let Some(idle) = document
+            .get_mut("idle_speech")
+            .and_then(serde_json::Value::as_object_mut)
+            && !idle.contains_key("entries")
+            && idle.contains_key("emotion")
+            && idle.contains_key("text")
+        {
+            let entry = serde_json::json!({
+                "emotion": idle.remove("emotion").unwrap(),
+                "text": idle.remove("text").unwrap(),
+            });
+            idle.insert("entries".to_owned(), serde_json::json!([entry]));
+            changed = true;
+        }
         if let Some(motions) = document
             .pointer_mut("/character/emotion_motions")
             .and_then(serde_json::Value::as_object_mut)
@@ -428,7 +442,7 @@ impl ConfigStore {
         if changed {
             // 未知のキーを含む元のJSONを使い、検証済みの変更をまとめて保存する。
             write_config_atomically(&path, &document)?;
-            tracing::info!(path = %path.display(), "モーション設定の形式更新・未設定欄の補完を保存しました");
+            tracing::info!(path = %path.display(), "設定の形式更新・未設定欄の補完を保存しました");
         }
         Ok(Self::new(path, config))
     }
@@ -825,6 +839,127 @@ mod tests {
     }
 
     #[test]
+    fn 起動時に旧待機セリフを変換して全設定を保持し再起動できる() {
+        for enabled in [false, true] {
+            let mut original: serde_json::Value =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            original["idle_speech"] = serde_json::json!({
+                "enabled": enabled, "min_seconds": 45, "max_seconds": 120,
+                "emotion": "sad", "text": "  ひと休み……\n静かだね。  ", "note": {"keep": true}
+            });
+            original["operator_note"] = serde_json::json!({"text": "そのまま保持"});
+            original["character"]["emotion_motions"]["sad"] = serde_json::json!("/sad.vrma");
+            original["character"]
+                .as_object_mut()
+                .unwrap()
+                .remove("food_motion");
+            // APP_CONFIG_FILEの起動経路も同じ読み込み関数を使う。
+            let path =
+                std::env::temp_dir().join(format!("custom-idle-config-{}.json", Uuid::new_v4()));
+            fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+
+            let store = ConfigStore::load_from_path(path.clone()).unwrap();
+            let mut expected = original;
+            let idle = expected["idle_speech"].as_object_mut().unwrap();
+            let emotion = idle.remove("emotion").unwrap();
+            let text = idle.remove("text").unwrap();
+            idle.insert(
+                "entries".to_owned(),
+                serde_json::json!([{"emotion": emotion, "text": text}]),
+            );
+            expected["character"]["emotion_motions"]["sad"] = serde_json::json!(["/sad.vrma"]);
+            expected["character"]["food_motion"] =
+                serde_json::to_value(FoodMotionConfig::default()).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved, expected);
+            assert_eq!(store.current().idle_speech.enabled, enabled);
+            assert_eq!(store.current().idle_speech.entries.len(), 1);
+            assert_eq!(
+                store.current().idle_speech.entries[0].emotion,
+                crate::protocol::Emotion::Sad
+            );
+            assert_eq!(
+                store.current().idle_speech.entries[0].text,
+                "  ひと休み……\n静かだね。  "
+            );
+
+            let existing = format!("\n{}\n", fs::read_to_string(&path).unwrap());
+            fs::write(&path, &existing).unwrap();
+            store.reload().unwrap();
+            ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), existing);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn 新形式や待機設定のないファイルは変換せず保持する() {
+        for missing in [false, true] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            value["idle_speech"]["entries"] = serde_json::json!([
+                {"emotion": "happy", "text": "こんにちは"}, {"emotion": "sad", "text": "静かですね"}
+            ]);
+            // 新しい候補がある場合は、旧項目が残っていても上書きしない。
+            value["idle_speech"]["emotion"] = serde_json::json!("neutral");
+            value["idle_speech"]["text"] = serde_json::json!("使わない旧セリフ");
+            if missing {
+                value.as_object_mut().unwrap().remove("idle_speech");
+            }
+            let path =
+                std::env::temp_dir().join(format!("unchanged-idle-config-{}.json", Uuid::new_v4()));
+            let original = format!("\n{}\n", serde_json::to_string(&value).unwrap());
+            fs::write(&path, &original).unwrap();
+            let store = ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(
+                store.current().idle_speech.entries.len(),
+                if missing { 1 } else { 2 }
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn 旧待機設定の変換後に不正な項目があれば元ファイルを変更しない() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["idle_speech"] = serde_json::json!({
+            "enabled": false, "min_seconds": 30, "max_seconds": 90, "emotion": "happy", "text": "こんにちは"
+        });
+        let path =
+            std::env::temp_dir().join(format!("invalid-idle-config-{}.json", Uuid::new_v4()));
+        for (pointer, invalid) in [
+            ("/idle_speech/emotion", serde_json::json!("unknown")),
+            ("/idle_speech/text", serde_json::json!(" \n ")),
+            ("/idle_speech/text", serde_json::json!(null)),
+            ("/idle_speech/text", serde_json::json!("あ".repeat(301))),
+            ("/idle_speech/min_seconds", serde_json::json!(91)),
+            ("/llm/api_key", serde_json::json!("")),
+        ] {
+            let mut invalid_config = value.clone();
+            *invalid_config.pointer_mut(pointer).unwrap() = invalid;
+            let original = serde_json::to_vec(&invalid_config).unwrap();
+            fs::write(&path, &original).unwrap();
+            assert!(ConfigStore::load_from_path(path.clone()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        for invalid_idle in [
+            serde_json::json!({"enabled": false, "min_seconds": 30, "max_seconds": 90, "emotion": "happy"}),
+            serde_json::json!({"enabled": false, "min_seconds": 30, "max_seconds": 90, "text": "こんにちは"}),
+            serde_json::json!({"enabled": false, "min_seconds": 30, "max_seconds": 90, "entries": [], "emotion": "happy", "text": "こんにちは"}),
+        ] {
+            value["idle_speech"] = invalid_idle;
+            let original = serde_json::to_vec(&value).unwrap();
+            fs::write(&path, &original).unwrap();
+            assert!(ConfigStore::load_from_path(path.clone()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn 起動時に旧感情urlを配列へ保存し他の値を保持して再読み込みできる() {
         for missing_food in [false, true] {
             let mut original: serde_json::Value =
@@ -911,12 +1046,15 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn 感情urlの変換保存に失敗しても元ファイルを保持する() {
+    fn 待機セリフと感情urlの変換保存に失敗しても元ファイルを保持する() {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
 
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["idle_speech"] = serde_json::json!({
+            "enabled": true, "min_seconds": 30, "max_seconds": 90, "emotion": "happy", "text": "こんにちは"
+        });
         value["character"]["emotion_motions"]["happy"] = serde_json::json!("/happy.vrma");
         let path = std::env::temp_dir().join(format!(
             "web-aituber-locked-motions-{}.json",
