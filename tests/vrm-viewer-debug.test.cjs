@@ -73,8 +73,12 @@ function createAction() {
     fadeOut(duration) { this.fadeOutDuration = duration; return this; },
     reset() { this.resetCount = (this.resetCount || 0) + 1; return this; },
     setLoop(mode, repetitions) { this.loop = [mode, repetitions]; return this; },
-    setEffectiveWeight() { return this; },
-    fadeIn() { return this; },
+    setEffectiveWeight(weight) { this.effectiveWeight = weight; return this; },
+    fadeIn() {
+      this.fadeInCount = (this.fadeInCount || 0) + 1;
+      this.effectiveWeight = 0;
+      return this;
+    },
     crossFadeTo(next, duration, warp) {
       this.transitions.push({ next, duration, warp });
       return this;
@@ -499,6 +503,29 @@ test("実際に選択した待機・感情モーションを状態変更時だ�
       expressionSupport: "unsupported",
     }),
   ]);
+});
+
+test("同じモーションのループと手動再生でTポーズへのフェードを挟まない", () => {
+  for (const restart of [false, true]) {
+    const viewer = createViewer();
+    const motion = { clip: {}, fileName: "idle.vrma", url: "/idle.vrma" };
+    viewer.idleClips = [motion];
+    viewer.resumeIdle();
+    const action = viewer.currentAction;
+    assert.equal(action.fadeInCount, 1);
+
+    for (let i = 0; i < 3; i++) {
+      if (restart) viewer.resumeIdle({ url: motion.url, preview: true });
+      else {
+        action.running = false;
+        viewer.onAnimationFinished({ action });
+      }
+      assert.equal(viewer.currentAction, action);
+      assert.equal(action.resetCount, i + 2);
+      assert.equal(action.effectiveWeight, 1);
+      assert.equal(action.fadeInCount, 1);
+    }
+  }
 });
 
 test("感情モーション終了後は実際に選択した待機モーションへ表示を戻す", () => {

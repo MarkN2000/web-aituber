@@ -248,7 +248,7 @@ export class VrmViewer {
     next.setEffectiveWeight(1).play();
     if (previous && previous !== next) {
       previous.crossFadeTo(next, MOTION_TRANSITION_SECONDS, false);
-    } else {
+    } else if (!previous) {
       next.fadeIn(MOTION_TRANSITION_SECONDS);
     }
     this.currentAction = next;
