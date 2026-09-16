@@ -69,6 +69,7 @@ function loadContext() {
       setDucked(value) { calls.push(["duck", value]); },
     };
     function setEmotion(value) { calls.push(["expression", value]); }
+    function updateDebugMotionControls() {}
     function applyPendingViewerConfig() { calls.push("config"); }
     ${clearAnswerSource}
     ${setTurnSource}

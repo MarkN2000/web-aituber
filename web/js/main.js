@@ -19,6 +19,12 @@ const elements = {
   screenOverlays: document.querySelector("#screen-overlays"),
   viewerMessage: document.querySelector("#viewer-message"),
   debugOverlay: document.querySelector("#debug-overlay"),
+  debugPanel: document.querySelector("#debug-panel"),
+  debugEmotion: document.querySelector("#debug-emotion"),
+  debugMotion: document.querySelector("#debug-motion"),
+  debugMotionPlay: document.querySelector("#debug-motion-play"),
+  debugMotionStop: document.querySelector("#debug-motion-stop"),
+  debugMotionStatus: document.querySelector("#debug-motion-status"),
   panel: document.querySelector("#panel"),
   loader: document.querySelector("#answer-loader"),
   answer: document.querySelector("#answer"),
@@ -41,6 +47,7 @@ function updateDebugState(partialState) {
   if (nextKey === debugStateKey) return;
   debugStateKey = nextKey;
   renderDebugState(elements.debugOverlay, debugState);
+  updateDebugMotionControls();
 }
 
 function resetDebugState() {
@@ -49,6 +56,7 @@ function resetDebugState() {
   debugStateKey = undefined;
   elements.debugOverlay.hidden = true;
   elements.debugOverlay.textContent = "";
+  elements.debugPanel.hidden = true;
 }
 
 const sourceDialog = new SourceDialog(elements.sourceDialog, elements.sourceList, elements.sourceClose);
@@ -72,6 +80,47 @@ let appliedViewerConfigKey;
 let pendingViewerConfig;
 let viewerReloading = false;
 let eventEnded = false;
+
+function refreshDebugMotionOptions() {
+  if (!debugEnabled) return;
+  const selected = elements.debugMotion.value;
+  const motions = viewer?.emotionClips.get(elements.debugEmotion.value) || [];
+  elements.debugMotion.replaceChildren(new Option("ランダム", ""),
+    ...motions.map((motion) => new Option(motion.fileName, motion.url)));
+  elements.debugMotion.value = motions.some((motion) => motion.url === selected) ? selected : "";
+  updateDebugMotionControls();
+}
+
+function updateDebugMotionControls() {
+  if (!debugEnabled) return false;
+  elements.debugPanel.hidden = eventEnded || Boolean(displayConfig?.preparation_mode);
+  const busy = eventEnded ? "イベントは終了しました。"
+    : displayConfig?.preparation_mode ? "準備中です。"
+    : !started || viewerReloading ? "モデルを読み込んでいます。"
+    : !viewer ? "モデルを読み込めませんでした。"
+    : currentTurn || viewer.foodAction ? "投稿処理中はテストできません。" : "";
+  const emotion = elements.debugEmotion.value;
+  const count = viewer?.emotionClips.get(emotion)?.length || 0;
+  elements.debugEmotion.disabled = Boolean(busy);
+  elements.debugMotion.disabled = Boolean(busy) || !count;
+  elements.debugMotionPlay.disabled = Boolean(busy) || !count;
+  elements.debugMotionStop.disabled = Boolean(busy);
+  elements.debugMotionStatus.textContent = busy || (count ? `${count}件の候補から再生できます。`
+    : displayConfig?.emotion_motions?.[emotion]?.length ? "読み込み失敗：再生できる候補がありません。"
+    : "未登録：この感情のモーションは設定されていません。");
+  return !busy;
+}
+
+function playDebugMotion() {
+  if (!updateDebugMotionControls() || elements.debugMotionPlay.disabled) return;
+  viewer.playEmotionMotion(elements.debugEmotion.value, { url: elements.debugMotion.value, preview: true });
+}
+
+function stopDebugMotion() {
+  if (!updateDebugMotionControls()) return;
+  viewer.setIdleExpression();
+  viewer.resumeIdle();
+}
 
 const SCREEN_OVERLAY_SLOTS = [
   ["top_left", "top", "left"],
@@ -156,7 +205,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=22");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=23");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,
@@ -179,6 +228,7 @@ async function applyPendingViewerConfig() {
   const config = pendingViewerConfig;
   pendingViewerConfig = undefined;
   viewerReloading = true;
+  updateDebugMotionControls();
   showViewerMessage("モデルを更新しています。");
   viewer?.dispose();
   let nextViewer;
@@ -203,6 +253,7 @@ async function applyPendingViewerConfig() {
     showViewerMessage(error.message || "モデルを更新できませんでした。");
   } finally {
     viewerReloading = false;
+    refreshDebugMotionOptions();
     if (!currentTurn && pendingViewerConfig) void applyPendingViewerConfig();
   }
 }
@@ -224,6 +275,7 @@ function enterPreparationMode(config) {
   viewer?.dispose();
   viewer = undefined;
   queue?.clear();
+  updateDebugMotionControls();
   backgroundMusic?.setDucked(false);
   receivedTurns.clear();
   currentTurn = undefined;
@@ -326,6 +378,8 @@ function handleVisibilityChange() {
 function setTurn(turn) {
   const isNewTurn = turn?.turn_id !== currentTurn?.turn_id;
   currentTurn = turn;
+  if (turn && viewer?.motionPreview) viewer.resumeIdle();
+  updateDebugMotionControls();
   if (!turn) {
     viewer?.setIdleExpression();
     viewer?.resumeIdle();
@@ -477,6 +531,7 @@ function endEventAccess() {
   viewer?.dispose();
   viewer = undefined;
   showInvalidEventScreen();
+  updateDebugMotionControls();
 }
 
 function receiveSegment(segment) {
@@ -584,6 +639,7 @@ async function startMain() {
       appliedViewerConfigKey = viewerConfigKey(config);
     }
     started = true;
+    refreshDebugMotionOptions();
     elements.startScreen.hidden = true;
     connect();
   } catch (error) {
@@ -601,6 +657,11 @@ async function startMain() {
 }
 
 elements.start.addEventListener("click", startMain);
+if (debugEnabled) {
+  elements.debugEmotion.addEventListener("change", refreshDebugMotionOptions);
+  elements.debugMotionPlay.addEventListener("click", playDebugMotion);
+  elements.debugMotionStop.addEventListener("click", stopDebugMotion);
+}
 document.addEventListener("visibilitychange", handleVisibilityChange);
 window.addEventListener("resize", fitScreenOverlays);
 window.addEventListener("beforeunload", () => {

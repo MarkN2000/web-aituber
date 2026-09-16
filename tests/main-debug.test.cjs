@@ -64,6 +64,7 @@ function loadDebugContext() {
     const elements = { debugOverlay: {} };
     const rendered = this.rendered;
     function renderDebugState(_element, state) { rendered.push({ ...state }); }
+    function updateDebugMotionControls() {}
     function handleServerEvent() {}
     function showError() {}
     function refreshDisplayConfig() { displayConfigRefreshes += 1; }
@@ -122,4 +123,88 @@ test("通常モードではデバッグ状態を描画しない", () => {
 
 test("画面の表示状態ではVRM描画ループを解除しない", () => {
   assert.doesNotMatch(source, /viewer\?\.setRenderingEnabled\(visible\)/);
+});
+
+function loadMotionTestContext() {
+  const calls = [];
+  const elements = Object.fromEntries([
+    "debugPanel", "debugEmotion", "debugMotion", "debugMotionPlay", "debugMotionStop", "debugMotionStatus",
+    "answer", "loader", "panel", "answerText",
+  ].map((key) => [key, { value: "", textContent: "" }]));
+  elements.debugEmotion.value = "happy";
+  elements.debugMotion.replaceChildren = (...options) => { elements.debugMotion.options = options; };
+  const context = vm.createContext({
+    elements, calls,
+    Option: function (text, value) { return { text, value }; },
+    debugEnabled: true, started: true, eventEnded: false, viewerReloading: false,
+    currentTurn: undefined,
+    displayConfig: { emotion_motions: { happy: ["/a.vrma", "/b.vrma"], sad: ["/missing.vrma"] } },
+    viewer: {
+      emotionClips: new Map([["happy", [
+        { fileName: "a.vrma", url: "/a.vrma" }, { fileName: "b.vrma", url: "/b.vrma" },
+      ]]]),
+      playEmotionMotion(emotion, options) { calls.push([emotion, options.url, options.preview]); },
+      setIdleExpression() { calls.push("neutral"); },
+      resumeIdle() { this.motionPreview = false; calls.push("idle"); },
+    },
+    clearAnswer() {}, applyPendingViewerConfig() {},
+  });
+  vm.runInContext(source.slice(source.indexOf("function refreshDebugMotionOptions"),
+    source.indexOf("const SCREEN_OVERLAY_SLOTS")) + source.slice(source.indexOf("function setTurn"),
+    source.indexOf("function setEmotion")), context);
+  return { context, elements, calls };
+}
+
+test("読み込み済み候補だけを表示し、選択を維持して再生・停止できる", () => {
+  const { context, elements, calls } = loadMotionTestContext();
+  elements.debugMotion.value = "/b.vrma";
+  context.refreshDebugMotionOptions();
+  assert.deepEqual(elements.debugMotion.options.map((option) => option.value), ["", "/a.vrma", "/b.vrma"]);
+  assert.equal(elements.debugMotion.value, "/b.vrma");
+  context.playDebugMotion();
+  context.stopDebugMotion();
+  assert.deepEqual(calls, [["happy", "/b.vrma", true], "neutral", "idle"]);
+  context.viewer.emotionClips.set("happy", [{ fileName: "a.vrma", url: "/a.vrma" }]);
+  context.refreshDebugMotionOptions();
+  assert.equal(elements.debugMotion.value, "");
+});
+
+test("未登録と読み込み失敗を区別し、候補なしでは再生できない", () => {
+  const { context, elements, calls } = loadMotionTestContext();
+  for (const [emotion, message] of [["neutral", /未登録/], ["sad", /読み込み失敗/]]) {
+    elements.debugEmotion.value = emotion;
+    context.refreshDebugMotionOptions();
+    context.playDebugMotion();
+    assert.match(elements.debugMotionStatus.textContent, message);
+    assert.equal(elements.debugMotionPlay.disabled, true);
+    assert.equal(elements.debugEmotion.disabled, false);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("通常画面・読み込み中・モデルなし・準備中・投稿処理中・食事中・終了後は操作しない", () => {
+  for (const change of [
+    (c) => { c.debugEnabled = false; }, (c) => { c.started = false; },
+    (c) => { c.viewerReloading = true; }, (c) => { c.viewer = undefined; },
+    (c) => { c.displayConfig.preparation_mode = true; },
+    (c) => { c.currentTurn = { turn_id: "turn-1" }; },
+    (c) => { c.viewer.foodAction = {}; }, (c) => { c.eventEnded = true; },
+  ]) {
+    const { context, calls } = loadMotionTestContext();
+    change(context);
+    context.playDebugMotion();
+    context.stopDebugMotion();
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("投稿開始でテストを中断し、処理完了後に操作を再び有効にする", () => {
+  const { context, elements, calls } = loadMotionTestContext();
+  context.viewer.motionPreview = true;
+  context.setTurn({ turn_id: "turn-1" });
+  assert.equal(context.viewer.motionPreview, false);
+  assert.deepEqual(calls, ["idle"]);
+  assert.equal(elements.debugMotionPlay.disabled, true);
+  context.setTurn(undefined);
+  assert.equal(elements.debugMotionPlay.disabled, false);
 });

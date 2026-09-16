@@ -27,6 +27,7 @@ test("待機状態へ移るとneutral表情と待機モーションへ戻す", (
       panel: { hidden: false },
     };
     function clearAnswer() { calls.push("answer"); }
+    function updateDebugMotionControls() {}
     function applyPendingViewerConfig() { calls.push("config"); }
     ${setTurnSource}
     this.setTurn = setTurn;

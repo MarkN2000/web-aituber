@@ -164,7 +164,7 @@ textarea::placeholder {
 .preparation-mode #vrm-canvas,
 .preparation-mode #screen-overlays,
 .preparation-mode #viewer-message,
-.preparation-mode #debug-overlay,
+.preparation-mode #debug-panel,
 .preparation-mode .conversation-history,
 .preparation-mode .main-bottom,
 .preparation-mode .source-dialog {
@@ -195,24 +195,66 @@ textarea::placeholder {
   pointer-events: none;
 }
 
-#debug-overlay {
+#debug-panel {
   position: fixed;
   z-index: 4;
   top: max(16px, env(safe-area-inset-top));
   right: max(16px, env(safe-area-inset-right));
-  max-width: calc(100vw - 32px);
+  width: 300px;
+  max-width: calc(100vw - max(16px, env(safe-area-inset-left)) - max(16px, env(safe-area-inset-right)));
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
   margin: 0;
   padding: 10px 12px;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid rgb(255 255 255 / 28%);
   border-radius: 8px;
   background: rgb(0 0 0 / 68%);
   color: #fff;
   font: 13px/1.55 ui-monospace, "Cascadia Mono", "Noto Sans Mono", monospace;
   overflow-wrap: anywhere;
+  color-scheme: dark;
+}
+
+#debug-overlay {
+  margin: 0;
+  font: inherit;
   white-space: pre-wrap;
   pointer-events: none;
 }
+
+#debug-motion-test {
+  margin-top: 8px;
+  border-top: 1px solid rgb(255 255 255 / 28%);
+  padding-top: 8px;
+}
+
+#debug-motion-test summary { cursor: pointer; }
+
+.debug-motion-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.debug-motion-fields select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px;
+  font: inherit;
+}
+
+.debug-motion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.debug-motion-actions button { padding: 6px 10px; }
+#debug-motion-status { margin: 8px 0 0; }
+#debug-panel :focus-visible { outline: 2px solid #93b4e8; outline-offset: 2px; }
 
 #panel {
   width: 100%;

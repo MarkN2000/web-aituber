@@ -374,6 +374,57 @@ test("感情ごとに読み込めた候補から毎回ランダムで選び、�
   }
 });
 
+test("テストは指定候補と表情を再生し、同じ候補も先頭から再生し直す", () => {
+  const viewer = createViewer();
+  viewer.emotionClips.set("happy", [
+    { clip: {}, fileName: "a.vrma", url: "/a.vrma" },
+    { clip: {}, fileName: "b.vrma", url: "/b.vrma" },
+  ]);
+  viewer.playEmotionMotion("happy", { url: "/b.vrma", preview: true });
+  const action = viewer.currentAction;
+  assert.equal(viewer.currentMotion.fileName, "b.vrma");
+  assert.equal(viewer.currentExpression, "happy");
+  assert.equal(viewer.motionPreview, true);
+  viewer.playEmotionMotion("happy", { url: "/b.vrma", preview: true });
+  assert.equal(action.resetCount, 2);
+  viewer.playEmotionMotion("happy", { url: "/missing.vrma", preview: true });
+  assert.equal(action.resetCount, 2);
+  viewer.playEmotionMotion("happy", { url: "/a.vrma", preview: true });
+  assert.equal(viewer.currentMotion.fileName, "a.vrma");
+  viewer.onAnimationFinished({ action });
+  assert.equal(viewer.currentMotion.fileName, "a.vrma");
+});
+
+test("テストの終了と手動停止は表情を通常へ戻し、待機候補なしにも対応する", () => {
+  for (const idleClips of [[], [{ clip: {}, fileName: "idle.vrma" }]]) {
+    for (const finish of [true, false]) {
+      const viewer = createViewer();
+      viewer.idleClips = idleClips;
+      viewer.emotionClips.set("sad", [{ clip: {}, fileName: "sad.vrma" }]);
+      viewer.playEmotionMotion("sad", { preview: true });
+      if (finish) viewer.onAnimationFinished({ action: viewer.currentAction });
+      else viewer.resumeIdle();
+      assert.equal(viewer.motionPreview, false);
+      assert.equal(viewer.currentExpression, "neutral");
+      assert.equal(viewer.currentMotion?.kind, idleClips.length ? "idle" : undefined);
+    }
+  }
+});
+
+test("食事中はテストせず、通常の感情再生は終了時も表情を保持する", () => {
+  const viewer = createViewer();
+  viewer.emotionClips.set("happy", [{ clip: {}, fileName: "happy.vrma" }]);
+  viewer.foodAction = {};
+  viewer.playEmotionMotion("happy", { preview: true });
+  assert.equal(viewer.currentAction, undefined);
+  assert.equal(viewer.currentExpression, "neutral");
+  viewer.foodAction = undefined;
+  viewer.setEmotion("happy");
+  viewer.playEmotionMotion("happy");
+  viewer.onAnimationFinished({ action: viewer.currentAction });
+  assert.equal(viewer.currentExpression, "happy");
+});
+
 test("実際に選択した待機・感情モーションを状態変更時だけ通知する", () => {
   const viewer = createViewer();
   const idle = { clip: {}, fileName: "idle.vrma" };

@@ -29,6 +29,7 @@ export class VrmViewer {
     this.foodMotion = undefined;
     this.currentAction = undefined;
     this.currentMotion = undefined;
+    this.motionPreview = false;
     this.currentExpression = 'neutral';
     this.currentExpressionSupport = 'base';
     this.lipSync = new LipSyncAnalyzer();
@@ -202,11 +203,15 @@ export class VrmViewer {
     if (hips) {
       clip.tracks = clip.tracks.filter((track) => track.name !== `${hips.name}.position`);
     }
-    return { clip, fileName: motionFileName(url) };
+    return { clip, fileName: motionFileName(url), url };
   }
 
   resumeIdle() {
     if (this.foodAction) return;
+    if (this.motionPreview) {
+      this.motionPreview = false;
+      this.setIdleExpression();
+    }
     if (!this.idleClips.length || !this.mixer) {
       this.currentAction?.fadeOut(MOTION_TRANSITION_SECONDS);
       this.currentAction = undefined;
@@ -218,18 +223,22 @@ export class VrmViewer {
     this.playClip(motion, true, 'idle');
   }
 
-  playEmotionMotion(emotion) {
+  playEmotionMotion(emotion, { url, preview = false } = {}) {
     if (this.foodAction) return;
     const motions = this.emotionClips.get(emotion);
     if (!motions?.length || !this.mixer) return;
-    const motion = motions[Math.floor(Math.random() * motions.length)];
-    this.playClip(motion, false, 'emotion');
+    const motion = url ? motions.find((candidate) => candidate.url === url)
+      : motions[Math.floor(Math.random() * motions.length)];
+    if (!motion) return;
+    this.motionPreview = preview;
+    if (preview) this.setEmotion(emotion);
+    this.playClip(motion, false, 'emotion', preview);
   }
 
-  playClip(motion, loop, kind) {
+  playClip(motion, loop, kind, restart = false) {
     const next = this.mixer.clipAction(motion.clip);
     const previous = this.currentAction;
-    if (previous === next && previous.isRunning()) return;
+    if (!restart && previous === next && previous.isRunning()) return;
     next.reset();
     next.setLoop(loop ? THREE.LoopOnce : THREE.LoopOnce, 1);
     next.clampWhenFinished = true;
@@ -319,6 +328,7 @@ export class VrmViewer {
   }
 
   playFoodAction(imageUrl, consumeAtMs, durationMs) {
+    if (this.motionPreview) this.resumeIdle();
     this.clearFoodProp();
     if (!this.foodMotion || !this.mixer) {
       this.report('食事モーションを再生できませんでした: character.food_motion.url を確認してください。');
@@ -474,6 +484,7 @@ export class VrmViewer {
   }
 
   dispose() {
+    this.motionPreview = false;
     window.removeEventListener('resize', this.onResize);
     this.renderer.setAnimationLoop(null);
     this.clearFoodProp();

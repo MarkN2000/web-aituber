@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber</title>
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=26">
   <link rel="stylesheet" href="/static/history.css?v=9">
   <script type="importmap">
     {
@@ -23,7 +23,29 @@
     <canvas id="vrm-canvas" aria-label="VRMキャラクター表示"></canvas>
     <div id="screen-overlays" aria-hidden="true"></div>
     <p id="viewer-message" hidden></p>
-    <pre id="debug-overlay" aria-hidden="true" hidden></pre>
+    <aside id="debug-panel" aria-label="デバッグ" hidden>
+      <pre id="debug-overlay" hidden></pre>
+      <details id="debug-motion-test">
+        <summary>モーションテスト</summary>
+        <div class="debug-motion-fields">
+          <label for="debug-emotion">感情</label>
+          <select id="debug-emotion" disabled>
+            <option value="neutral">通常</option>
+            <option value="happy">喜び</option>
+            <option value="sad">悲しみ</option>
+            <option value="angry">怒り</option>
+            <option value="surprised">驚き</option>
+          </select>
+          <label for="debug-motion">モーション</label>
+          <select id="debug-motion" disabled><option value="">ランダム</option></select>
+        </div>
+        <div class="debug-motion-actions">
+          <button id="debug-motion-play" type="button" disabled>再生</button>
+          <button id="debug-motion-stop" type="button" disabled>待機に戻す</button>
+        </div>
+        <p id="debug-motion-status" role="status"></p>
+      </details>
+    </aside>
   </main>
 
   <section id="conversation-history" class="conversation-history" aria-label="会話履歴" hidden>
@@ -75,7 +97,7 @@
     </div>
   </section>
 
-  <script type="module" src="/static/js/main.js?v=41"></script>
+  <script type="module" src="/static/js/main.js?v=42"></script>
   <script type="module" src="/static/js/input.js?v=10"></script>
 </body>
 </html>
