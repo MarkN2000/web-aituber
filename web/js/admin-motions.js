@@ -22,9 +22,13 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
   const status = document.querySelector('#motion-settings-status');
   const error = document.querySelector('#motion-settings-error');
   const consume = document.querySelector('#food-consume-seconds');
+  const speech = document.querySelector('#food-speech-seconds');
   const duration = document.querySelector('#food-duration-seconds');
+  const deletePicker = document.querySelector('#delete-motion-file');
+  const deleteButton = document.querySelector('#delete-motion');
   const groups = new Map();
   let files = new Map();
+  let localFiles = new Map();
   let loaded = false;
   let busy = false;
 
@@ -42,6 +46,44 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
     select.value = selected;
     select.title = selected;
   }
+
+  function refreshFiles() {
+    for (const select of container.querySelectorAll('select')) fillOptions(select, select.value);
+    const selected = deletePicker.value;
+    deletePicker.replaceChildren(new Option('削除するファイルを選択してください', ''));
+    for (const [url, name] of localFiles) deletePicker.add(new Option(name, url));
+    deletePicker.value = localFiles.has(selected) ? selected : '';
+  }
+
+  deleteButton.addEventListener('click', async () => {
+    if (busy || !loaded || !token) return;
+    const url = deletePicker.value;
+    if (!localFiles.has(url)) {
+      setMessage(status, error, '削除するファイルを選択してください。', true);
+      deletePicker.focus();
+      return;
+    }
+    if ([...groups.values()].some((group) => [...group.list.querySelectorAll('select')].some((select) => select.value === url))) {
+      setMessage(status, error, '候補に含まれています。先に候補から外して保存してください。', true);
+      return;
+    }
+    if (!window.confirm(`「${localFiles.get(url)}」をサーバーから削除します。この操作は取り消せません。削除しますか？`)) return;
+    setBusy(true);
+    try {
+      const response = await fetch(adminUrl('/api/admin/motions'), {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+      });
+      if (!response.ok) throw new Error(await readError(response, 'モーションを削除できませんでした。'));
+      localFiles.delete(url);
+      files.delete(url);
+      refreshFiles();
+      setMessage(status, error, '選択したモーションファイルを削除しました。');
+    } catch (failure) {
+      setMessage(status, error, failure.message, true);
+    } finally {
+      setBusy(false);
+    }
+  });
 
   function addCandidate(group, url) {
     if (group.key === 'food') group.list.replaceChildren();
@@ -84,7 +126,8 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
       if (!response.ok) throw new Error(await readError(response, 'モーションをアップロードできませんでした。'));
       const uploaded = await response.json();
       files.set(uploaded.url, uploaded.name);
-      for (const select of container.querySelectorAll('select')) fillOptions(select, select.value);
+      localFiles.set(uploaded.url, uploaded.name);
+      refreshFiles();
       addCandidate(group, uploaded.url);
       changed();
     } catch (failure) {
@@ -154,6 +197,7 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
       if (!response.ok) throw new Error(await readError(response, 'モーション設定を読み込めませんでした。'));
       const config = await response.json();
       files = new Map(config.files.map((file) => [file.url, file.name]));
+      localFiles = new Map(files);
       const urls = [...config.idle_motions, ...Object.values(config.emotion_motions).flat(), config.food_motion?.url];
       for (const url of urls.filter((url) => url?.trim())) {
         if (!files.has(url)) files.set(url, `${motionFileName(url) || url}（現在の設定）`);
@@ -167,7 +211,9 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
         for (const url of candidates) addCandidate(group, url);
       }
       consume.value = String((config.food_motion?.consume_at_ms ?? 3505) / 1000);
+      speech.value = String((config.food_motion?.speech_start_ms ?? 3505) / 1000);
       duration.value = String((config.food_motion?.duration_ms ?? 14440) / 1000);
+      refreshFiles();
       loaded = true;
       setMessage(status, error, '保存済みのモーション設定を読み込みました。');
     } catch (failure) {
@@ -185,12 +231,13 @@ export function initMotionSettings({ token, adminUrl, readError, setMessage }) {
     try {
       const candidates = (key) => [...new Set([...groups.get(key).list.querySelectorAll('select')].map((select) => select.value))];
       const consumeAt = secondsToMilliseconds(consume.value);
+      const speechStart = secondsToMilliseconds(speech.value);
       const durationMs = secondsToMilliseconds(duration.value);
       if (durationMs - consumeAt < 400) throw new Error('演出終了は食べ物の消去開始から0.4秒後以降にしてください。');
       const settings = {
         idle_motions: candidates('idle'),
         emotion_motions: Object.fromEntries(MOTION_GROUPS.filter(([key]) => key !== 'idle' && key !== 'food').map(([key]) => [key, candidates(key)])),
-        food_motion: { url: candidates('food')[0] || '', consume_at_ms: consumeAt, duration_ms: durationMs },
+        food_motion: { url: candidates('food')[0] || '', consume_at_ms: consumeAt, speech_start_ms: speechStart, duration_ms: durationMs },
       };
       const response = await fetch(adminUrl('/api/admin/motions'), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings),

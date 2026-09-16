@@ -63,6 +63,7 @@ async fn run() -> Result<()> {
         food_images: Arc::new(RwLock::new(HashMap::new())),
         audio_dir: Arc::new(audio_dir.clone()),
         assets_dir: Arc::new(PathBuf::from("assets")),
+        motion_files_lock: Arc::new(Mutex::new(())),
         vrm_model_lock: Arc::new(Mutex::new(())),
         background_image_lock: Arc::new(Mutex::new(())),
         preparation_image_lock: Arc::new(Mutex::new(())),

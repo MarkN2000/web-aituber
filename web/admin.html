@@ -466,11 +466,22 @@
           <div class="motion-timing">
             <label for="food-consume-seconds">食べ物が消え始める時刻（秒）</label>
             <input id="food-consume-seconds" type="number" min="0" step="0.001" required value="3.505">
+            <label for="food-speech-seconds">感想を喋り始める時刻（秒）</label>
+            <input id="food-speech-seconds" type="number" min="0" step="0.001" required value="3.505">
             <label for="food-duration-seconds">演出終了までの時間（秒）</label>
             <input id="food-duration-seconds" type="number" min="0.4" step="0.001" required value="14.440">
-            <p class="field-note admin-field-note">食事開始からの時間です。演出終了は、食べ物が消え始めてから0.4秒以上後に設定してください。</p>
+            <p class="field-note admin-field-note">食事開始からの時間です。発話開始は消去時刻とは別に設定できます。演出終了は、食べ物が消え始めてから0.4秒以上後に設定してください。</p>
           </div>
           <div class="admin-form-actions"><button type="submit">モーション設定を保存</button></div>
+          <section class="display-setting-section" aria-labelledby="motion-delete-title">
+            <h3 id="motion-delete-title">モーションファイルの削除</h3>
+            <p class="admin-help">不要なVRMAをサーバーから削除します。割り当て中のファイルは、先に候補から外して保存してください。削除は取り消せません。</p>
+            <label for="delete-motion-file">削除するファイル</label>
+            <div class="motion-candidate">
+              <select id="delete-motion-file"></select>
+              <button id="delete-motion" class="secondary-button" type="button">選択したファイルを削除</button>
+            </div>
+          </section>
         </fieldset>
       </form>
       <div class="admin-form-actions"><button id="reload-motion-settings" class="secondary-button" type="button">保存済み設定を読み直す</button></div>
@@ -485,6 +496,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=44"></script>
+  <script type="module" src="/static/js/admin.js?v=45"></script>
 </body>
 </html>

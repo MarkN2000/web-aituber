@@ -472,7 +472,7 @@ async fn present_food(
             duration_ms: food_motion.duration_ms,
         },
     );
-    tokio::time::sleep_until(started_at + Duration::from_millis(food_motion.consume_at_ms)).await;
+    tokio::time::sleep_until(started_at + Duration::from_millis(food_motion.speech_start_ms)).await;
 
     publish_state(
         state,
@@ -780,6 +780,7 @@ mod tests {
             food_images: Arc::new(RwLock::new(HashMap::new())),
             audio_dir: Arc::new(PathBuf::from("target/test-audio")),
             assets_dir: Arc::new(PathBuf::from("target/test-assets")),
+            motion_files_lock: Arc::new(Mutex::new(())),
             vrm_model_lock: Arc::new(Mutex::new(())),
             background_image_lock: Arc::new(Mutex::new(())),
             preparation_image_lock: Arc::new(Mutex::new(())),
@@ -975,6 +976,7 @@ mod tests {
 
     fn start_food_presentation(
         consume_at_ms: u64,
+        speech_start_ms: u64,
         duration_ms: u64,
         audio_durations: &[u64],
         cancel: CancellationToken,
@@ -1003,6 +1005,7 @@ mod tests {
         let motion = FoodMotionConfig {
             url: "/assets/motions/eat2.vrma".to_owned(),
             consume_at_ms,
+            speech_start_ms,
             duration_ms,
         };
         let segments = audio_durations
@@ -1037,15 +1040,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn 食事の消去開始時刻に発話しモーションと全音声の両方を待つ() {
-        for (consume_at_ms, duration_ms, audio_durations, completion_ms) in [
-            (500, 2000, vec![200], 2000),
-            (500, 2000, vec![1000, 1500], 3000),
-            (0, 800, vec![400], 800),
+    async fn 食事の発話開始は消去と独立しモーションと全音声の両方を待つ() {
+        for (consume_at_ms, speech_start_ms, duration_ms, audio_durations, completion_ms) in [
+            (500, 1000, 2000, vec![200], 2000),
+            (500, 1000, 2000, vec![1000, 1500], 3500),
+            (400, 0, 800, vec![400], 800),
+            (500, 2500, 2000, vec![400], 2900),
         ] {
             let started_at = Instant::now();
             let (task, mut events) = start_food_presentation(
                 consume_at_ms,
+                speech_start_ms,
                 duration_ms,
                 &audio_durations,
                 CancellationToken::new(),
@@ -1059,8 +1064,8 @@ mod tests {
                 ServerEvent::FoodAction { consume_at_ms: consume, duration_ms: duration, .. }
                     if consume == consume_at_ms && duration == duration_ms
             ));
-            if consume_at_ms > 0 {
-                tokio::time::advance(Duration::from_millis(consume_at_ms - 1)).await;
+            if speech_start_ms > 0 {
+                tokio::time::advance(Duration::from_millis(speech_start_ms - 1)).await;
                 tokio::task::yield_now().await;
                 assert!(events.try_recv().is_err());
                 assert!(!task.is_finished());
@@ -1079,10 +1084,10 @@ mod tests {
             }
             assert_eq!(
                 Instant::now() - started_at,
-                Duration::from_millis(consume_at_ms)
+                Duration::from_millis(speech_start_ms)
             );
 
-            tokio::time::advance(Duration::from_millis(completion_ms - consume_at_ms - 1)).await;
+            tokio::time::advance(Duration::from_millis(completion_ms - speech_start_ms - 1)).await;
             tokio::task::yield_now().await;
             assert!(!task.is_finished());
             tokio::time::advance(Duration::from_millis(1)).await;
@@ -1098,7 +1103,8 @@ mod tests {
     async fn 食事発話の前後どちらでも中断し後から発話イベントを送らない() {
         for cancel_at_ms in [200, 600] {
             let cancel = CancellationToken::new();
-            let (task, mut events) = start_food_presentation(500, 2000, &[1000], cancel.clone());
+            let (task, mut events) =
+                start_food_presentation(500, 500, 2000, &[1000], cancel.clone());
             events.recv().await.unwrap();
             events.recv().await.unwrap();
             tokio::time::advance(Duration::from_millis(cancel_at_ms)).await;

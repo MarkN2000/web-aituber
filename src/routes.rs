@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
             get(admin_motions)
                 .put(update_motions)
                 .post(upload_motion)
+                .delete(delete_motion)
                 .layer(DefaultBodyLimit::max(MAX_VRM_MODEL_REQUEST_BYTES)),
         )
         .route(
@@ -719,6 +720,7 @@ async fn update_motions(
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
+    let _guard = state.motion_files_lock.lock().await;
     if request
         .emotion_motions
         .keys()
@@ -794,6 +796,88 @@ async fn update_motions(
             admin_error(
                 StatusCode::BAD_REQUEST,
                 "モーション設定を保存できませんでした。設定ファイルを確認してください",
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DeleteMotionRequest {
+    url: String,
+}
+
+async fn delete_motion(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<DeleteMotionRequest>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let _guard = state.motion_files_lock.lock().await;
+    let files = match motion_files(&state.assets_dir).await {
+        Ok(files) => files,
+        Err(_) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "モーション一覧を読み込めませんでした",
+            );
+        }
+    };
+    // 削除パスはリクエストから組み立てず、直下の通常ファイル一覧から選ぶ。
+    let Some(file) = files.into_iter().find(|file| file.url == request.url) else {
+        return admin_error(
+            StatusCode::NOT_FOUND,
+            "削除するモーションが一覧にありません",
+        );
+    };
+    let path = state.assets_dir.join("motions").join(&file.name);
+    let config = state.config.current();
+    let urls = config
+        .character
+        .idle_motions
+        .iter()
+        .chain(config.character.emotion_motions.values().flatten())
+        .chain(
+            config
+                .character
+                .food_motion
+                .iter()
+                .map(|motion| &motion.url),
+        );
+    let base =
+        reqwest::Url::from_directory_path(std::path::absolute(state.assets_dir.as_ref()).unwrap())
+            .unwrap();
+    let expected = base
+        .join(file.url.strip_prefix("/assets/").unwrap())
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    let used = urls
+        .filter_map(|url| url.strip_prefix("/assets/"))
+        .filter_map(|relative| base.join(relative).ok()?.to_file_path().ok())
+        .any(|candidate| {
+            if cfg!(windows) {
+                candidate
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&expected.to_string_lossy())
+            } else {
+                candidate == expected
+            }
+        });
+    if used {
+        return admin_error(
+            StatusCode::CONFLICT,
+            "割り当て中のモーションです。先に候補から外して保存してください",
+        );
+    }
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => {
+            tracing::warn!(error = ?error, "モーションを削除できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "モーションを削除できませんでした",
             )
         }
     }
@@ -1846,6 +1930,7 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
+    let _guard = state.motion_files_lock.lock().await;
     let previous = state.config.current();
     let previous_event_identifier = previous.event_identifier.clone();
     let previous_preparation_mode = previous.character.preparation_mode;
@@ -2918,6 +3003,7 @@ mod tests {
                 food_images: Arc::new(RwLock::new(HashMap::new())),
                 audio_dir: Arc::new(PathBuf::from("target/test-audio")),
                 assets_dir: Arc::new(PathBuf::from("target/test-assets")),
+                motion_files_lock: Arc::new(Mutex::new(())),
                 vrm_model_lock: Arc::new(Mutex::new(())),
                 background_image_lock: Arc::new(Mutex::new(())),
                 preparation_image_lock: Arc::new(Mutex::new(())),
@@ -4283,7 +4369,7 @@ mod tests {
         let request = serde_json::json!({
             "idle_motions": [url],
             "emotion_motions": {"happy": [url, "https://example.com/happy.vrma"], "sad": []},
-            "food_motion": {"url": url, "consume_at_ms": 1500, "duration_ms": 1900}
+            "food_motion": {"url": url, "consume_at_ms": 1500, "speech_start_ms": 2500, "duration_ms": 1900}
         });
         let unauthorized = app
             .clone()
@@ -4373,6 +4459,111 @@ mod tests {
             expected
         );
         std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn モーション削除は認証と未割り当てを検証し対象ファイルだけ削除する() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let motions = assets_dir.join("motions");
+        fs::create_dir_all(motions.join("sub")).unwrap();
+        for name in [
+            "未使用 #1.vrma",
+            "idle.vrma",
+            "happy.vrma",
+            "food.vrma",
+            "keep.txt",
+        ] {
+            fs::write(motions.join(name), b"original").unwrap();
+        }
+        fs::write(motions.join("sub/inside.vrma"), b"original").unwrap();
+        let mut config = state.config.current().as_ref().clone();
+        config.character.idle_motions = vec!["/assets/motions/%69dle.vrma?v=1#clip".to_owned()];
+        config.character.emotion_motions = HashMap::from([(
+            "happy".to_owned(),
+            vec!["/assets/motions/happy.vrma".to_owned()],
+        )]);
+        config.character.food_motion = Some(FoodMotionConfig {
+            url: "/assets/motions/food.vrma".to_owned(),
+            ..FoodMotionConfig::default()
+        });
+        let config_path = assets_dir.join("config.json");
+        let original_config = serde_json::to_vec(&config).unwrap();
+        fs::write(&config_path, &original_config).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+        let mut events = state.events.subscribe();
+        let unused = motion_file("未使用 #1.vrma".to_owned()).url;
+        for (token, url, status) in [
+            ("", unused.as_str(), StatusCode::UNAUTHORIZED),
+            (
+                "?token=test-token",
+                "/assets/motions/idle.vrma",
+                StatusCode::CONFLICT,
+            ),
+            (
+                "?token=test-token",
+                "/assets/motions/happy.vrma",
+                StatusCode::CONFLICT,
+            ),
+            (
+                "?token=test-token",
+                "/assets/motions/food.vrma",
+                StatusCode::CONFLICT,
+            ),
+            (
+                "?token=test-token",
+                "/assets/motions/../config.json",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                "?token=test-token",
+                "/assets/motions/sub/inside.vrma",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                "?token=test-token",
+                "/assets/motions/keep.txt",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                "?token=test-token",
+                "https://example.com/file.vrma",
+                StatusCode::NOT_FOUND,
+            ),
+            ("?token=test-token", unused.as_str(), StatusCode::NO_CONTENT),
+            ("?token=test-token", unused.as_str(), StatusCode::NOT_FOUND),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::delete(format!("/api/admin/motions{token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(serde_json::json!({"url":url}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{url}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+        assert!(!motions.join("未使用 #1.vrma").exists());
+        for name in [
+            "idle.vrma",
+            "happy.vrma",
+            "food.vrma",
+            "keep.txt",
+            "sub/inside.vrma",
+        ] {
+            assert_eq!(fs::read(motions.join(name)).unwrap(), b"original");
+        }
+        assert_eq!(fs::read(&config_path).unwrap(), original_config);
+        assert!(events.try_recv().is_err());
+        // 削除したURLを古い画面から新たに割り当てることもできない。
+        let response = app.oneshot(Request::put("/api/admin/motions?token=test-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({"idle_motions":[unused],"emotion_motions":{},"food_motion":null}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]

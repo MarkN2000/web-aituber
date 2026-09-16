@@ -1,6 +1,6 @@
 import { UserDictionaryEditor } from "./user-dictionary.js?v=8";
 import { canvasToWebp } from "./webp.js?v=1";
-import { initMotionSettings } from "./admin-motions.js?v=1";
+import { initMotionSettings } from "./admin-motions.js?v=2";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;

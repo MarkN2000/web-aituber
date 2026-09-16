@@ -166,6 +166,7 @@ pub struct FoodPropConfig {
 pub struct FoodMotionConfig {
     pub url: String,
     pub consume_at_ms: u64,
+    pub speech_start_ms: u64,
     pub duration_ms: u64,
 }
 
@@ -174,6 +175,7 @@ impl Default for FoodMotionConfig {
         Self {
             url: String::new(),
             consume_at_ms: 3505,
+            speech_start_ms: 3505,
             duration_ms: 14440,
         }
     }
@@ -428,6 +430,15 @@ impl ConfigStore {
                     changed = true;
                 }
             }
+        }
+        if let Some(food) = document
+            .pointer_mut("/character/food_motion")
+            .and_then(serde_json::Value::as_object_mut)
+            && !food.contains_key("speech_start_ms")
+            && let Some(consume) = food.get("consume_at_ms").cloned()
+        {
+            food.insert("speech_start_ms".to_owned(), consume);
+            changed = true;
         }
         let mut config: AppConfig = serde_json::from_value(document.clone())
             .with_context(|| format!("設定ファイルの形式が不正です: {}", path.display()))?;
@@ -1132,7 +1143,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 field,
-                serde_json::json!({"url": "", "consume_at_ms": 3505, "duration_ms": 14440})
+                serde_json::json!({"url": "", "consume_at_ms": 3505, "speech_start_ms": 3505, "duration_ms": 14440})
             );
             original["character"]
                 .as_object_mut()
@@ -1150,11 +1161,52 @@ mod tests {
     }
 
     #[test]
+    fn 発話開始のない設定は消去時刻を引き継ぎ明示済みなら保持する() {
+        for speech in [None, Some(0), Some(9000)] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            value["character"]["food_motion"]["consume_at_ms"] = serde_json::json!(2505);
+            value["character"]["food_motion"]["custom_note"] = serde_json::json!("保持する");
+            if let Some(ms) = speech {
+                value["character"]["food_motion"]["speech_start_ms"] = serde_json::json!(ms);
+            } else {
+                value["character"]["food_motion"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("speech_start_ms");
+            }
+            let path = std::env::temp_dir().join(format!("food-speech-{}.json", Uuid::new_v4()));
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            let store = ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(
+                store
+                    .current()
+                    .character
+                    .food_motion
+                    .as_ref()
+                    .unwrap()
+                    .speech_start_ms,
+                speech.unwrap_or(2505)
+            );
+            value["character"]["food_motion"]["speech_start_ms"] =
+                serde_json::json!(speech.unwrap_or(2505));
+            let saved = fs::read_to_string(&path).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&saved).unwrap(),
+                value
+            );
+            ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
     fn 起動時に設定済みのurlと時刻を上書きしない() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
         value["character"]["food_motion"] = serde_json::json!({
-            "url": "/assets/motions/custom-eat.vrma", "consume_at_ms": 1234, "duration_ms": 5678,
+            "url": "/assets/motions/custom-eat.vrma", "consume_at_ms": 1234, "speech_start_ms": 2500, "duration_ms": 5678,
         });
         let path =
             std::env::temp_dir().join(format!("web-aituber-configured-{}.json", Uuid::new_v4()));
