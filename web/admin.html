@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=24">
+  <link rel="stylesheet" href="/static/style.css?v=25">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -16,6 +16,7 @@
       <button id="tab-ai" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" tabindex="-1">AI設定</button>
       <button id="tab-tts" type="button" role="tab" aria-selected="false" aria-controls="panel-tts" tabindex="-1">音声設定</button>
       <button id="tab-display" type="button" role="tab" aria-selected="false" aria-controls="panel-display" tabindex="-1">表示設定</button>
+      <button id="tab-motions" type="button" role="tab" aria-selected="false" aria-controls="panel-motions" tabindex="-1">モーション</button>
     </div>
 
     <section id="panel-operation" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-operation">
@@ -425,6 +426,28 @@
         <p id="background-music-error" class="status" role="alert"></p>
       </section>
     </section>
+    <section id="panel-motions" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-motions" hidden>
+      <h2>モーション</h2>
+      <p class="admin-help">待機・感情は登録した候補からランダムで再生します。感情モーションは1回答につき最大1回です。</p>
+      <p class="admin-help">VRMAを選択、またはアップロードして登録してください。候補から外してもファイルは残ります。アップロードだけではメイン画面の設定は変わりません。</p>
+      <form id="motion-settings-form">
+        <fieldset id="motion-settings-fields" class="motion-fields" disabled>
+          <legend>モーションの割り当て</legend>
+          <div id="motion-groups"></div>
+          <div class="motion-timing">
+            <label for="food-consume-seconds">食べ物が消え始める時刻（秒）</label>
+            <input id="food-consume-seconds" type="number" min="0" step="0.001" required value="3.505">
+            <label for="food-duration-seconds">演出終了までの時間（秒）</label>
+            <input id="food-duration-seconds" type="number" min="0.4" step="0.001" required value="14.440">
+            <p class="field-note admin-field-note">食事開始からの時間です。演出終了は、食べ物が消え始めてから0.4秒以上後に設定してください。</p>
+          </div>
+          <div class="admin-form-actions"><button type="submit">モーション設定を保存</button></div>
+        </fieldset>
+      </form>
+      <div class="admin-form-actions"><button id="reload-motion-settings" class="secondary-button" type="button">保存済み設定を読み直す</button></div>
+      <p id="motion-settings-status" class="status" role="status" aria-live="polite"></p>
+      <p id="motion-settings-error" class="status" role="alert"></p>
+    </section>
   </main>
   <dialog id="event-qr-dialog" class="event-qr-dialog" aria-labelledby="event-qr-title">
     <div class="event-qr-card">
@@ -433,6 +456,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=38"></script>
+  <script type="module" src="/static/js/admin.js?v=39"></script>
 </body>
 </html>

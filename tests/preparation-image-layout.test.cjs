@@ -18,7 +18,7 @@ test("準備中画像の全画面スタイルはメイン画面だけに適用�
 });
 
 test("管理画面は修正後のスタイルシートを読み込む", () => {
-  assert.match(adminHtml, /\/static\/style\.css\?v=24/);
+  assert.match(adminHtml, /\/static\/style\.css\?v=25/);
 });
 
 test("準備中画像がない場合はステージを黒くする", () => {

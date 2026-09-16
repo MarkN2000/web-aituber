@@ -1,5 +1,6 @@
 import { UserDictionaryEditor } from "./user-dictionary.js?v=8";
 import { canvasToWebp } from "./webp.js?v=1";
+import { initMotionSettings } from "./admin-motions.js?v=1";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
@@ -1152,7 +1153,7 @@ async function clearConversationHistory() {
 async function reload() {
   if (!token) return;
   elements.reload.disabled = true; const original = elements.reload.textContent; elements.reload.textContent = "再読み込み中…"; setMessage(elements.operationStatus, elements.operationError);
-  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await Promise.all([loadConfig(), loadEventAccess()]); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
+  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await Promise.all([loadConfig(), loadEventAccess(), loadMotionSettings()]); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
@@ -1249,6 +1250,7 @@ async function previewTts() {
   finally { elements.preview.disabled = false; elements.preview.textContent = original; }
 }
 
+const loadMotionSettings = initMotionSettings({ token, adminUrl, readError, setMessage });
 elements.tabs.forEach((tab) => { tab.addEventListener("click", () => activateTab(tab)); tab.addEventListener("keydown", tabKeydown); });
 for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements]) {
   field.addEventListener("invalid", () => field.setAttribute("aria-invalid", "true"));
@@ -1333,6 +1335,7 @@ if (!token) {
   connect();
   loadVersion();
   loadConfig();
+  loadMotionSettings();
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の表示設定を確認できませんでした。", true); });
 }

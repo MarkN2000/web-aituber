@@ -443,6 +443,7 @@ textarea::placeholder {
 
 .admin-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: 0 0 24px;
   padding: 4px;
@@ -1003,6 +1004,27 @@ textarea::placeholder {
   font-size: .85rem;
   text-align: center;
 }
+
+.motion-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.motion-fields > legend { font-weight: 600; }
+.motion-candidate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.motion-candidate select { flex: 1 1 220px; min-width: 0; }
+.motion-candidate button { flex: 0 1 auto; }
+.motion-group input[type="file"] { max-width: 100%; }
+.motion-timing { margin-top: 20px; }
+#motion-settings-status { color: #35614c; }
+#motion-settings-error { color: #aa3232; }
 
 .display-setting-section {
   margin-top: 28px;

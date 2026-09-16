@@ -13,7 +13,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
     path::{Component, Path as FilePath, PathBuf},
@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::{
     background_music,
     config::{
-        CharacterConfig, TtsConfig, validate_event_identifier, validate_http_url,
+        CharacterConfig, FoodMotionConfig, TtsConfig, validate_event_identifier, validate_http_url,
         validate_public_base_url,
     },
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
@@ -68,6 +68,13 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/admin/qr-code", post(admin_qr_code))
         .route("/api/admin/display-config", get(admin_display_config))
+        .route(
+            "/api/admin/motions",
+            get(admin_motions)
+                .put(update_motions)
+                .post(upload_motion)
+                .layer(DefaultBodyLimit::max(MAX_VRM_MODEL_REQUEST_BYTES)),
+        )
         .route(
             "/api/admin/preparation-mode",
             axum::routing::put(update_preparation_mode),
@@ -635,6 +642,234 @@ fn append_asset_version(url: &str, version: &str) -> String {
     let separator = if url.contains('?') { '&' } else { '?' };
     let fragment = fragment.map_or_else(String::new, |fragment| format!("#{fragment}"));
     format!("{url}{separator}v={version}{fragment}")
+}
+
+#[derive(Serialize)]
+struct MotionFile {
+    name: String,
+    url: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct MotionSettings {
+    idle_motions: Vec<String>,
+    emotion_motions: HashMap<String, Vec<String>>,
+    food_motion: Option<FoodMotionConfig>,
+}
+
+fn motion_file(name: String) -> MotionFile {
+    let mut url = reqwest::Url::parse("http://localhost/assets/motions/").unwrap();
+    url.path_segments_mut().unwrap().pop_if_empty().push(&name);
+    MotionFile {
+        name,
+        url: url.path().to_owned(),
+    }
+}
+
+async fn motion_files(assets_dir: &FilePath) -> std::io::Result<Vec<MotionFile>> {
+    let mut directory = match tokio::fs::read_dir(assets_dir.join("motions")).await {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut files = Vec::new();
+    while let Some(entry) = directory.next_entry().await? {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if name.to_ascii_lowercase().ends_with(".vrma") && entry.file_type().await?.is_file() {
+            files.push(motion_file(name));
+        }
+    }
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
+}
+
+async fn admin_motions(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let files = match motion_files(&state.assets_dir).await {
+        Ok(files) => files,
+        Err(error) => {
+            tracing::warn!(error = ?error, "モーション一覧を読み込めませんでした");
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "モーション一覧を読み込めませんでした",
+            );
+        }
+    };
+    let config = state.config.current();
+    admin_no_store(
+        Json(serde_json::json!({
+            "files": files,
+            "idle_motions": config.character.idle_motions,
+            "emotion_motions": config.character.emotion_motions,
+            "food_motion": config.character.food_motion,
+        }))
+        .into_response(),
+    )
+}
+
+async fn update_motions(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    Json(request): Json<MotionSettings>,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if request
+        .emotion_motions
+        .keys()
+        .any(|key| crate::protocol::Emotion::from_tag(key).is_none())
+    {
+        return admin_error(StatusCode::BAD_REQUEST, "感情名が不正です");
+    }
+    let files = match motion_files(&state.assets_dir).await {
+        Ok(files) => files,
+        Err(_) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "モーション一覧を読み込めませんでした",
+            );
+        }
+    };
+    let current = state.config.current();
+    let mut allowed: HashSet<&str> = files.iter().map(|file| file.url.as_str()).collect();
+    allowed.extend(current.character.idle_motions.iter().map(String::as_str));
+    allowed.extend(
+        current
+            .character
+            .emotion_motions
+            .values()
+            .flatten()
+            .map(String::as_str),
+    );
+    if let Some(food) = &current.character.food_motion {
+        allowed.insert(&food.url);
+    }
+    let urls = request
+        .idle_motions
+        .iter()
+        .chain(request.emotion_motions.values().flatten())
+        .chain(
+            request
+                .food_motion
+                .iter()
+                .filter(|food| !food.url.trim().is_empty())
+                .map(|food| &food.url),
+        );
+    if urls
+        .into_iter()
+        .any(|url| url.trim().is_empty() || !allowed.contains(url.as_str()))
+    {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "一覧にあるモーションを選択してください",
+        );
+    }
+    if let Some(food) = &request.food_motion
+        && food
+            .consume_at_ms
+            .checked_add(400)
+            .is_none_or(|minimum| food.duration_ms < minimum)
+    {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "演出終了は食べ物の消去開始から0.4秒後以降にしてください",
+        );
+    }
+    match state.config.update_and_save(move |config| {
+        config.character.idle_motions = request.idle_motions;
+        config.character.emotion_motions = request.emotion_motions;
+        config.character.food_motion = request.food_motion;
+    }) {
+        Ok(_) => {
+            notify_display_config_changed(&state);
+            admin_no_store(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "モーション設定を保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "モーション設定を保存できませんでした。設定ファイルを確認してください",
+            )
+        }
+    }
+}
+
+async fn upload_motion(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    mut multipart: Multipart,
+) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let mut upload = None;
+    while let Some(field) = match multipart.next_field().await {
+        Ok(field) => field,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "モーションを読み取れませんでした"),
+    } {
+        if field.name() != Some("motion") || upload.is_some() {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "VRMAを1ファイルだけ指定してください",
+            );
+        }
+        let name = field
+            .file_name()
+            .unwrap_or_default()
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default();
+        if !name.to_ascii_lowercase().ends_with(".vrma") {
+            return admin_error(StatusCode::BAD_REQUEST, ".vrmaファイルを選択してください");
+        }
+        let stem: String = name[..name.len() - 5]
+            .chars()
+            .take(60)
+            .map(|character| {
+                if character.is_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let file = motion_file(format!("{stem}-{}.vrma", Uuid::new_v4().simple()));
+        let bytes = match field.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return admin_error(StatusCode::BAD_REQUEST, "VRMAは100MiB以下にしてください");
+            }
+        };
+        if bytes.len() > MAX_VRM_MODEL_BYTES {
+            return admin_error(StatusCode::BAD_REQUEST, "VRMAは100MiB以下にしてください");
+        }
+        if !has_valid_vrma(&bytes) {
+            return admin_error(
+                StatusCode::BAD_REQUEST,
+                "VRMAの形式が不正か、外部ファイルに依存しています",
+            );
+        }
+        upload = Some((file, bytes));
+    }
+    let Some((file, bytes)) = upload else {
+        return admin_error(StatusCode::BAD_REQUEST, "VRMAファイルがありません");
+    };
+    let path = state.assets_dir.join("motions").join(&file.name);
+    match tokio::task::spawn_blocking(move || write_file_atomically(&path, &bytes)).await {
+        Ok(Ok(())) => admin_no_store((StatusCode::CREATED, Json(file)).into_response()),
+        result => {
+            tracing::warn!(error = ?result, "モーションを保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "モーションを保存できませんでした",
+            )
+        }
+    }
 }
 
 async fn upload_vrm_model(
@@ -1361,6 +1596,48 @@ fn has_valid_webp_container(bytes: &[u8]) -> bool {
 }
 
 fn has_valid_vrm_model(bytes: &[u8]) -> bool {
+    has_valid_glb(bytes, |root| {
+        root.get("extensions")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|extensions| {
+                extensions.contains_key("VRM") || extensions.contains_key("VRMC_vrm")
+            })
+    })
+}
+
+fn has_valid_vrma(bytes: &[u8]) -> bool {
+    has_valid_glb(bytes, |root| {
+        root.pointer("/extensions/VRMC_vrm_animation")
+            .is_some_and(serde_json::Value::is_object)
+            && root
+                .get("animations")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|animations| {
+                    !animations.is_empty()
+                        && animations.iter().all(|animation| {
+                            ["channels", "samplers"].iter().all(|key| {
+                                animation
+                                    .get(key)
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some_and(|items| !items.is_empty())
+                            })
+                        })
+                })
+            && ["buffers", "images"].iter().all(|key| {
+                root.get(key)
+                    .and_then(serde_json::Value::as_array)
+                    .is_none_or(|items| {
+                        items.iter().all(|item| {
+                            item.get("uri").is_none_or(|uri| {
+                                uri.as_str().is_some_and(|uri| uri.starts_with("data:"))
+                            })
+                        })
+                    })
+            })
+    })
+}
+
+fn has_valid_glb(bytes: &[u8], validate: impl Fn(&serde_json::Value) -> bool) -> bool {
     if bytes.len() < 20 || !bytes.len().is_multiple_of(4) || &bytes[..4] != b"glTF" {
         return false;
     }
@@ -1374,7 +1651,7 @@ fn has_valid_vrm_model(bytes: &[u8]) -> bool {
 
     let mut offset = 12_usize;
     let mut first_chunk = true;
-    let mut has_vrm_extension = false;
+    let mut valid_root = false;
     while offset < bytes.len() {
         let Some(header_end) = offset.checked_add(8) else {
             return false;
@@ -1402,17 +1679,12 @@ fn has_valid_vrm_model(bytes: &[u8]) -> bool {
             else {
                 return false;
             };
-            has_vrm_extension = root
-                .get("extensions")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|extensions| {
-                    extensions.contains_key("VRM") || extensions.contains_key("VRMC_vrm")
-                });
+            valid_root = validate(&root);
             first_chunk = false;
         }
         offset = chunk_end;
     }
-    !first_chunk && has_vrm_extension
+    !first_chunk && valid_root
 }
 
 fn write_file_atomically(path: &FilePath, bytes: &[u8]) -> anyhow::Result<()> {
@@ -2682,9 +2954,13 @@ mod tests {
     }
 
     fn vrm_container(extension: &str) -> Vec<u8> {
-        let mut json =
-            format!(r#"{{"asset":{{"version":"2.0"}},"extensions":{{"{extension}":{{}}}}}}"#)
-                .into_bytes();
+        glb_container(
+            serde_json::json!({"asset": {"version": "2.0"}, "extensions": {extension: {}}}),
+        )
+    }
+
+    fn glb_container(root: serde_json::Value) -> Vec<u8> {
+        let mut json = serde_json::to_vec(&root).unwrap();
         while !json.len().is_multiple_of(4) {
             json.push(b' ');
         }
@@ -3926,6 +4202,247 @@ mod tests {
         assert!(has_valid_vrm_model(&vrm_container("VRMC_vrm")));
         assert!(!has_valid_vrm_model(&vrm_container("OTHER")));
         assert!(!has_valid_vrm_model(b"not-a-vrm"));
+    }
+
+    #[tokio::test]
+    async fn モーション一覧と保存は認証し他の設定を保持して変更を通知する() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        std::fs::create_dir_all(assets_dir.join("motions")).unwrap();
+        std::fs::write(assets_dir.join("motions/喜び #1.vrma"), b"existing").unwrap();
+        std::fs::write(assets_dir.join("motions/ignore.txt"), b"ignore").unwrap();
+        std::fs::create_dir_all(assets_dir.join("motions/folder.vrma")).unwrap();
+        let config_path = assets_dir.join("config.json");
+        let mut config = (*state.config.current()).clone();
+        config.character.emotion_motions.insert(
+            "happy".to_owned(),
+            vec!["https://example.com/happy.vrma".to_owned()],
+        );
+        let original = serde_json::to_value(&config).unwrap();
+        std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(&config_path, config);
+        let app = router(state.clone());
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::get("/api/admin/motions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/admin/motions?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let listed: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(listed.as_object().unwrap().len(), 4);
+        assert_eq!(listed["files"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["files"][0]["name"], "喜び #1.vrma");
+        let url = listed["files"][0]["url"].as_str().unwrap();
+        assert!(url.contains("%23"));
+        let asset = app
+            .clone()
+            .oneshot(Request::get(url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+        let request = serde_json::json!({
+            "idle_motions": [url],
+            "emotion_motions": {"happy": [url, "https://example.com/happy.vrma"], "sad": []},
+            "food_motion": {"url": url, "consume_at_ms": 1500, "duration_ms": 1900}
+        });
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/motions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        let mut events = state.events.subscribe();
+        for (pointer, invalid) in [
+            (
+                "/idle_motions",
+                serde_json::json!(["/assets/../config.json"]),
+            ),
+            (
+                "/idle_motions",
+                serde_json::json!(["https://new.example/motion.vrma"]),
+            ),
+            ("/emotion_motions", serde_json::json!({"unknown": []})),
+            ("/food_motion/duration_ms", serde_json::json!(1899)),
+        ] {
+            let mut invalid_request = request.clone();
+            *invalid_request.pointer_mut(pointer).unwrap() = invalid;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/motions?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(invalid_request.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                serde_json::to_value(state.config.current().as_ref()).unwrap(),
+                original
+            );
+        }
+        assert!(events.try_recv().is_err());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::put("/api/admin/motions?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+        let mut expected = original;
+        for key in ["idle_motions", "emotion_motions", "food_motion"] {
+            expected["character"][key] = request[key].clone();
+        }
+        let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(serde_json::to_value(saved).unwrap(), expected);
+        assert_eq!(
+            serde_json::to_value(state.config.current().as_ref()).unwrap(),
+            expected
+        );
+        // ファイル保存ができなければ、実行中設定や通知を変更しない。
+        std::fs::remove_file(&config_path).unwrap();
+        let mut clear = request.clone();
+        clear["emotion_motions"] = serde_json::json!({});
+        let response = app
+            .oneshot(
+                Request::put("/api/admin/motions?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(clear.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(events.try_recv().is_err());
+        assert_eq!(
+            serde_json::to_value(state.config.current().as_ref()).unwrap(),
+            expected
+        );
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn vrmaアップロードは検証し同名でも別ファイルへ保存して設定は変えない() {
+        let (state, assets_dir) = state_with_temporary_assets();
+        let original = serde_json::to_value(state.config.current().as_ref()).unwrap();
+        let mut events = state.events.subscribe();
+        let app = router(state.clone());
+        let root = serde_json::json!({
+            "asset": {"version": "2.0"}, "extensions": {"VRMC_vrm_animation": {}},
+            "animations": [{"channels": [{"sampler": 0}], "samplers": [{"input": 0, "output": 1}]}]
+        });
+        let bytes = glb_container(root.clone());
+        assert!(has_valid_vrma(&bytes));
+        assert!(!has_valid_vrma(&vrm_container("VRMC_vrm")));
+        assert!(!has_valid_vrma(&vrm_container("VRMC_vrm_animation")));
+        let mut external = root.clone();
+        external["buffers"] = serde_json::json!([{"uri": "https://example.com/external.bin"}]);
+        assert!(!has_valid_vrma(&glb_container(external)));
+        let body = |name: &str, bytes: &[u8]| {
+            let mut data = format!("--test-boundary\r\nContent-Disposition: form-data; name=\"motion\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").into_bytes();
+            data.extend_from_slice(bytes);
+            data.extend_from_slice(b"\r\n--test-boundary--\r\n");
+            data
+        };
+        let mut urls = Vec::new();
+        for (endpoint, name, bytes, expected) in [
+            (
+                "/api/admin/motions",
+                "happy.vrma",
+                bytes.as_slice(),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/api/admin/motions?token=test-token",
+                "happy.vrm",
+                bytes.as_slice(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "/api/admin/motions?token=test-token",
+                "happy.vrma",
+                b"invalid",
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "/api/admin/motions?token=test-token",
+                "../喜び.vrma",
+                bytes.as_slice(),
+                StatusCode::CREATED,
+            ),
+            (
+                "/api/admin/motions?token=test-token",
+                "../喜び.vrma",
+                bytes.as_slice(),
+                StatusCode::CREATED,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(endpoint)
+                        .header(
+                            header::CONTENT_TYPE,
+                            "multipart/form-data; boundary=test-boundary",
+                        )
+                        .body(Body::from(body(name, bytes)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::CREATED {
+                let uploaded: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap())
+                        .unwrap();
+                let name = uploaded["name"].as_str().unwrap();
+                assert!(!name.contains(['/', '\\']));
+                assert!(name.ends_with(".vrma"));
+                assert_eq!(
+                    std::fs::read(assets_dir.join("motions").join(name)).unwrap(),
+                    bytes
+                );
+                urls.push(uploaded["url"].as_str().unwrap().to_owned());
+            }
+        }
+        assert_ne!(urls[0], urls[1]);
+        assert_eq!(motion_files(&assets_dir).await.unwrap().len(), 2);
+        assert_eq!(
+            serde_json::to_value(state.config.current().as_ref()).unwrap(),
+            original
+        );
+        assert!(events.try_recv().is_err());
+        std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]
