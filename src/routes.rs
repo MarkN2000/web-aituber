@@ -150,6 +150,10 @@ pub fn router(state: AppState) -> Router {
         .route("/event/{event_identifier}/input", get(input_page))
         .route("/event/{event_identifier}/draw", get(draw_page))
         .route(
+            "/event/{event_identifier}/draw/manifest.webmanifest",
+            get(draw_manifest),
+        )
+        .route(
             "/event/{event_identifier}/api/submissions",
             post(submit).layer(DefaultBodyLimit::max(MAX_TEXT_REQUEST_BYTES)),
         )
@@ -204,6 +208,38 @@ async fn draw_page(
         return invalid_event_page().await;
     }
     html_file("web/draw.html").await
+}
+
+async fn draw_manifest(
+    Path(event_identifier): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !has_valid_event_identifier(&state, &event_identifier) {
+        return invalid_event_page().await;
+    }
+    let draw_url = format!("/event/{event_identifier}/draw");
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(serde_json::json!({
+            "id": draw_url,
+            "name": "Web AITuber お絵描き",
+            "short_name": "お絵描き",
+            "lang": "ja",
+            "start_url": draw_url,
+            "scope": draw_url,
+            "display": "standalone",
+            "theme_color": "#f6f6f4",
+            "background_color": "#f6f6f4",
+            "icons": [
+                { "src": "/static/icons/draw-192.png", "sizes": "192x192", "type": "image/png" },
+                { "src": "/static/icons/draw-512.png", "sizes": "512x512", "type": "image/png" }
+            ]
+        })),
+    )
+        .into_response()
 }
 
 async fn admin_page(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
@@ -2792,6 +2828,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn drawing_pwa_is_scoped_to_current_event_and_has_icons() {
+        let app = router(test_state());
+        let draw_url = "/event/event-8k2m4q7x9p/draw";
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("{draw_url}/manifest.webmanifest"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/manifest+json"
+        );
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), 32 * 1024).await.unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        for key in ["id", "start_url", "scope"] {
+            assert_eq!(manifest[key], draw_url);
+        }
+        assert_eq!(manifest["display"], "standalone");
+        assert_eq!(manifest["name"], "Web AITuber お絵描き");
+        for (path, size) in [
+            (manifest["icons"][0]["src"].as_str().unwrap(), 192u32),
+            (manifest["icons"][1]["src"].as_str().unwrap(), 512u32),
+            ("/static/icons/draw-180.png", 180u32),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+            let png = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+            assert_eq!(&png[16..20], &size.to_be_bytes());
+            assert_eq!(&png[20..24], &size.to_be_bytes());
+        }
+        for path in [
+            draw_url,
+            "/event/event-8k2m4q7x9p",
+            "/event/event-8k2m4q7x9p/input",
+            "/admin?token=test-token",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert_eq!(html.contains("rel=\"manifest\""), path == draw_url);
+            if path == draw_url {
+                assert!(html.contains("href=\"draw/manifest.webmanifest\""));
+                assert!(html.contains("href=\"/static/icons/draw-180.png\""));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn only_current_event_public_pages_are_available() {
         let app = router(test_state());
         let main = app
@@ -2831,6 +2932,7 @@ mod tests {
             "/event/old-event-2026",
             "/event/old-event-2026/input",
             "/event/old-event-2026/draw",
+            "/event/old-event-2026/draw/manifest.webmanifest",
         ] {
             let old = app
                 .clone()
