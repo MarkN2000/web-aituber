@@ -84,6 +84,19 @@
         <label for="search-fillers">検索中フィラー</label>
         <textarea id="search-fillers" required rows="5" aria-describedby="search-fillers-note"></textarea>
         <p id="search-fillers-note" class="field-note admin-field-note">1行に1文ずつ入力してください。</p>
+        <h3>待機中のセリフ</h3>
+        <label class="checkbox-control" for="idle-speech-enabled"><input id="idle-speech-enabled" type="checkbox">待機中に自動で話す</label>
+        <label for="idle-speech-min">最短待機時間（秒）</label>
+        <input id="idle-speech-min" type="number" min="1" max="86400" step="1" required value="30">
+        <label for="idle-speech-max">最長待機時間（秒）</label>
+        <input id="idle-speech-max" type="number" min="1" max="86400" step="1" required value="90" aria-describedby="idle-speech-note">
+        <p id="idle-speech-note" class="field-note admin-field-note">範囲内で毎回待ち時間を選び、話し終えたら数え直します。同じ秒数なら固定間隔です。投稿が来たら中断します。</p>
+        <label for="idle-speech-emotion">感情</label>
+        <select id="idle-speech-emotion">
+          <option value="neutral">通常</option><option value="happy">喜び</option><option value="sad">悲しみ</option><option value="angry">怒り</option><option value="surprised">驚き</option>
+        </select>
+        <label for="idle-speech-text">セリフ（300文字以内）</label>
+        <textarea id="idle-speech-text" required rows="2"></textarea>
         <div class="admin-form-actions">
           <button id="save-ai-config" type="submit">AI設定を保存</button>
           <button id="clear-conversation-history" class="secondary-button" type="button">会話履歴を削除</button>
@@ -461,6 +474,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=40"></script>
+  <script type="module" src="/static/js/admin.js?v=41"></script>
 </body>
 </html>

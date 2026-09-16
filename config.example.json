@@ -19,6 +19,13 @@
     "engine_url": "http://127.0.0.1:10101",
     "speaker_id": 1878365377
   },
+  "idle_speech": {
+    "enabled": false,
+    "min_seconds": 30,
+    "max_seconds": 90,
+    "emotion": "neutral",
+    "text": "ちょっとひと休み……"
+  },
   "ffmpeg_path": "ffmpeg",
   "drawing": {
     "stabilization": 3

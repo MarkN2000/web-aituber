@@ -29,6 +29,8 @@ pub struct AppConfig {
     pub event_identifier: String,
     pub llm: LlmConfig,
     pub tts: TtsConfig,
+    #[serde(default)]
+    pub idle_speech: IdleSpeechConfig,
     pub ffmpeg_path: String,
     #[serde(default)]
     pub drawing: DrawingConfig,
@@ -58,6 +60,27 @@ pub struct TtsConfig {
     /// VOICEVOX または AivisSpeech Engine のベース URL。
     pub engine_url: String,
     pub speaker_id: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IdleSpeechConfig {
+    pub enabled: bool,
+    pub min_seconds: u32,
+    pub max_seconds: u32,
+    pub emotion: crate::protocol::Emotion,
+    pub text: String,
+}
+
+impl Default for IdleSpeechConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_seconds: 30,
+            max_seconds: 90,
+            emotion: crate::protocol::Emotion::Neutral,
+            text: "ちょっとひと休み……".to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -267,6 +290,15 @@ impl AppConfig {
             required(&format!("llm.search_fillers[{index}]"), filler)?;
         }
         required("tts.engine_url", &self.tts.engine_url)?;
+        let idle = &self.idle_speech;
+        if idle.min_seconds == 0 || idle.min_seconds > idle.max_seconds || idle.max_seconds > 86400
+        {
+            bail!("待機秒数は1〜86400の整数で、最短≦最長にしてください");
+        }
+        required("idle_speech.text", &idle.text)?;
+        if idle.text.chars().count() > 300 {
+            bail!("待機セリフは300文字以内にしてください");
+        }
         validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
         if self.drawing.stabilization > 10 {
@@ -400,6 +432,10 @@ impl ConfigStore {
 
     pub fn current(&self) -> Arc<AppConfig> {
         self.current.borrow().clone()
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Arc<AppConfig>> {
+        self.current.subscribe()
     }
 
     pub fn reload(&self) -> Result<ConfigReloadResult> {
@@ -612,6 +648,43 @@ fn required(name: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn 待機発話の範囲と感情とセリフを検証する() {
+        let original: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        for (field, invalid) in [
+            ("min_seconds", serde_json::json!(0)),
+            ("min_seconds", serde_json::json!(91)),
+            ("max_seconds", serde_json::json!(86401)),
+            ("max_seconds", serde_json::json!(1.5)),
+            ("emotion", serde_json::json!("unknown")),
+            ("text", serde_json::json!(" \n ")),
+            ("text", serde_json::json!("あ".repeat(301))),
+        ] {
+            let mut value = original.clone();
+            value["idle_speech"][field] = invalid;
+            assert!(
+                serde_json::from_value::<AppConfig>(value)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|config| config.validate())
+                    .is_err(),
+                "{field}"
+            );
+        }
+        let mut config: AppConfig = serde_json::from_value(original.clone()).unwrap();
+        config.idle_speech.max_seconds = config.idle_speech.min_seconds;
+        config.idle_speech.text = "😀".repeat(300);
+        assert!(config.validate().is_ok());
+        let mut missing = original;
+        missing.as_object_mut().unwrap().remove("idle_speech");
+        assert!(
+            !serde_json::from_value::<AppConfig>(missing)
+                .unwrap()
+                .idle_speech
+                .enabled
+        );
+    }
 
     #[test]
     fn event_identifier_accepts_public_url_safe_value() {

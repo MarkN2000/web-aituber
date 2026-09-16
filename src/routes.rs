@@ -2092,6 +2092,7 @@ async fn update_admin_config(
         config.llm.search_fillers = request.llm.search_fillers;
         config.tts.engine_url = request.tts.engine_url;
         config.tts.speaker_id = request.tts.speaker_id;
+        config.idle_speech = request.idle_speech;
     }) {
         Ok(result) => admin_no_store(
             Json(AdminReloadResponse {
@@ -2740,6 +2741,7 @@ struct AdminVersionResponse {
 struct AdminConfigDto {
     llm: AdminLlmConfigDto,
     tts: AdminTtsConfigDto,
+    idle_speech: crate::config::IdleSpeechConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2760,6 +2762,7 @@ struct AdminTtsConfigDto {
 impl AdminConfigDto {
     fn from_config(config: &crate::config::AppConfig) -> Self {
         Self {
+            idle_speech: config.idle_speech.clone(),
             llm: AdminLlmConfigDto {
                 api_url: config.llm.api_url.clone(),
                 model: config.llm.model.clone(),
@@ -3551,7 +3554,8 @@ mod tests {
             "tts": {
                 "engine_url": "http://127.0.0.1:50021",
                 "speaker_id": 42
-            }
+            },
+            "idle_speech": {"enabled": true, "min_seconds": 30, "max_seconds": 90, "emotion": "happy", "text": "こんにちは。"}
         });
         let response = router(state.clone())
             .oneshot(
@@ -3567,6 +3571,8 @@ mod tests {
         let saved = AppConfig::load_from_path(&path).unwrap();
         assert_eq!(saved.llm.model, "updated-model");
         assert_eq!(saved.tts.speaker_id, 42);
+        assert!(saved.idle_speech.enabled);
+        assert_eq!(saved.idle_speech.emotion, crate::protocol::Emotion::Happy);
         assert_eq!(saved.llm.api_key, "externally-updated-key");
         assert_eq!(saved.admin_token, "test-token");
         assert_eq!(saved.bind, bind);
@@ -3598,7 +3604,8 @@ mod tests {
             "tts": {
                 "engine_url": "http://127.0.0.1:50021",
                 "speaker_id": 42
-            }
+            },
+            "idle_speech": {"enabled": false, "min_seconds": 30, "max_seconds": 90, "emotion": "neutral", "text": "こんにちは。"}
         });
         let response = router(state.clone())
             .oneshot(

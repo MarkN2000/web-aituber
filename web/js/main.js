@@ -411,6 +411,7 @@ function setEmotion(value) {
 function cleanTurn(turnId) {
   receivedTurns.delete(turnId);
   if (currentTurn?.turn_id !== turnId) return;
+  viewer?.stopLipSync();
   backgroundMusic?.setDucked(false);
   viewer?.clearFoodProp();
   setTurn(undefined);
@@ -477,6 +478,8 @@ function handleServerEvent(event) {
       endEventAccess();
       break;
     case "state":
+      if (event.turn.status === "idle_speaking"
+        && (document.hidden || (currentTurn && currentTurn.turn_id !== event.turn.turn_id))) break;
       if (currentTurn?.turn_id !== event.turn.turn_id) {
         if (currentTurn) {
           cancelTurnAudio(currentTurn.turn_id);
@@ -539,6 +542,7 @@ function endEventAccess() {
 }
 
 function receiveSegment(segment) {
+  if (segment.kind === "idle" && (document.hidden || currentTurn?.turn_id !== segment.turn_id)) return;
   receivedTurns.add(segment.turn_id);
   if (currentTurn?.turn_id !== segment.turn_id) {
     if (currentTurn) {

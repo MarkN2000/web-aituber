@@ -62,9 +62,10 @@ pub enum SegmentKind {
     #[default]
     Answer,
     Filler,
+    Idle,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Emotion {
     #[default]
@@ -104,6 +105,7 @@ pub enum TurnStatus {
     Generating,
     Eating,
     Speaking,
+    IdleSpeaking,
 }
 
 #[derive(Clone, Debug, Serialize)]

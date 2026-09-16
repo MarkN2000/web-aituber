@@ -21,11 +21,132 @@ const MAX_ANSWER_CHARACTERS: usize = 300;
 const MAX_ANSWER_SENTENCES: usize = 4;
 
 pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
-    while let Some(submission) = submissions.recv().await {
-        if let Err(error) = process_submission(&state, submission).await {
+    let mut config_changes = state.config.subscribe();
+    loop {
+        let config = config_changes.borrow_and_update().clone();
+        let wait = async {
+            if config.idle_speech.enabled && !config.character.preparation_mode {
+                tokio::time::sleep(idle_delay(&config.idle_speech)).await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        let submission = tokio::select! {
+            biased;
+            submission = submissions.recv() => {
+                let Some(submission) = submission else { break };
+                Some(submission)
+            },
+            _ = config_changes.changed() => continue,
+            _ = wait => {
+                if state.events.receiver_count() == 0 { continue; }
+                process_idle_speech(&state, &config, &mut submissions, &mut config_changes).await
+            },
+        };
+        if let Some(submission) = submission
+            && let Err(error) = process_submission(&state, submission).await
+        {
             tracing::error!(error = ?error, "投稿の処理に失敗しました");
         }
     }
+}
+
+fn idle_delay(config: &crate::config::IdleSpeechConfig) -> Duration {
+    let span = u64::from(config.max_seconds - config.min_seconds) + 1;
+    let random = uuid::Uuid::new_v4().as_u128() as u64;
+    Duration::from_secs(u64::from(config.min_seconds) + random % span)
+}
+
+async fn process_idle_speech(
+    state: &AppState,
+    config: &AppConfig,
+    submissions: &mut mpsc::Receiver<Submission>,
+    config_changes: &mut tokio::sync::watch::Receiver<std::sync::Arc<AppConfig>>,
+) -> Option<Submission> {
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    let cancel = CancellationToken::new();
+    *state.active.lock().await = Some(ActiveTurn {
+        turn_id: turn_id.clone(),
+        cancel: cancel.clone(),
+    });
+    publish_state(
+        state,
+        TurnState {
+            turn_id: turn_id.clone(),
+            question: String::new(),
+            status: TurnStatus::IdleSpeaking,
+        },
+    )
+    .await;
+    let file_name = format!("{turn_id}-idle.webm");
+    let output_path = state.audio_dir.join(&file_name);
+    let mut next_submission = None;
+    let result = tokio::select! {
+        biased;
+        submission = submissions.recv() => {
+            next_submission = submission;
+            None
+        },
+        _ = config_changes.changed() => None,
+        _ = cancel.cancelled() => None,
+        result = async {
+            let duration_ms = prepare_speech(state, config, &config.idle_speech.text, &output_path).await?;
+            present_idle_speech(state, config, &turn_id, &file_name, duration_ms).await;
+            Ok::<(), anyhow::Error>(())
+        } => Some(result),
+    };
+    *state.active.lock().await = None;
+    *state.current.write().await = None;
+    send_event(
+        state,
+        match result {
+            Some(Ok(())) => ServerEvent::Complete { turn_id },
+            Some(Err(error)) => {
+                tracing::warn!(error = ?error, "待機発話の生成に失敗しました");
+                ServerEvent::Error {
+                    turn_id,
+                    message: "待機発話の音声を生成できませんでした。".to_owned(),
+                }
+            }
+            None => ServerEvent::Cancelled { turn_id },
+        },
+    );
+    schedule_audio_cleanup(vec![output_path]);
+    send_event(state, ServerEvent::Idle);
+    next_submission
+}
+
+async fn present_idle_speech(
+    state: &AppState,
+    config: &AppConfig,
+    turn_id: &str,
+    file_name: &str,
+    duration_ms: u64,
+) {
+    let idle = &config.idle_speech;
+    let motion = config
+        .character
+        .emotion_motions
+        .get(idle.emotion.as_str())
+        .filter(|motions| !motions.is_empty())
+        .map(|_| idle.emotion);
+    send_event(
+        state,
+        ServerEvent::Segment {
+            turn_id: turn_id.to_owned(),
+            sequence: 0,
+            text: idle.text.clone(),
+            emotion: idle.emotion,
+            motion,
+            audio_url: format!("/audio/{file_name}"),
+            duration_ms,
+            is_last: true,
+            kind: SegmentKind::Idle,
+            sources: Vec::new(),
+        },
+    );
+    // ponytail: 終了は音声時間で推定する。端末ごとの遅延まで同期するなら再生完了通知へ拡張する。
+    tokio::time::sleep(Duration::from_millis(duration_ms)).await;
 }
 
 async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
@@ -169,7 +290,7 @@ async fn process_active_submission(
                 let filler = state.next_search_filler(&config.llm.search_fillers);
                 match cancellable(
                     cancel,
-                    prepare_search_filler(state, config, filler, &output_path),
+                    prepare_speech(state, config, filler, &output_path),
                 ).await {
                     Ok(duration_ms) => {
                         audio_files.push(output_path);
@@ -367,7 +488,7 @@ async fn present_food(
     Ok(())
 }
 
-async fn prepare_search_filler(
+async fn prepare_speech(
     state: &AppState,
     config: &AppConfig,
     filler: &str,
@@ -661,6 +782,153 @@ mod tests {
             update_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown: watch::channel(false).0,
             search_filler_rotation: Arc::new(SearchFillerRotation::default()),
+        }
+    }
+
+    #[test]
+    fn 待ち時間は設定範囲内で固定間隔にもできる() {
+        let mut idle = crate::config::IdleSpeechConfig::default();
+        for _ in 0..100 {
+            assert!(
+                (Duration::from_secs(30)..=Duration::from_secs(90)).contains(&idle_delay(&idle))
+            );
+        }
+        idle.max_seconds = idle.min_seconds;
+        assert_eq!(idle_delay(&idle), Duration::from_secs(30));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 待機発話は指定感情と固定文を送り音声終了まで待つ() {
+        let mut config: AppConfig =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        config.idle_speech.emotion = Emotion::Happy;
+        config.idle_speech.text = "ひと休み。".to_owned();
+        let state = test_state(config.clone());
+        let mut events = state.events.subscribe();
+        let running = state.clone();
+        let task = tokio::spawn(async move {
+            present_idle_speech(&running, &config, "idle-1", "idle-1.webm", 1500).await;
+        });
+        assert!(
+            matches!(events.recv().await.unwrap(), ServerEvent::Segment {
+            kind: SegmentKind::Idle, emotion: Emotion::Happy, motion: Some(Emotion::Happy),
+            text, is_last: true, ..
+        } if text == "ひと休み。")
+        );
+        tokio::time::advance(Duration::from_millis(1499)).await;
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        task.await.unwrap();
+        assert!(state.history.lock().await.snapshot().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 待機発話は失敗後も間隔を置き準備中と無効時は発動しない() {
+        for (enabled, preparation, listening) in [
+            (true, false, true),
+            (false, false, true),
+            (true, true, true),
+            (true, false, false),
+        ] {
+            let mut config: AppConfig =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            config.idle_speech.enabled = enabled;
+            config.idle_speech.min_seconds = 2;
+            config.idle_speech.max_seconds = 2;
+            config.character.preparation_mode = preparation;
+            // URL構築で即失敗させ、外部TTSへ接続しない。
+            config.tts.engine_url = "invalid:".to_owned();
+            let state = test_state(config);
+            let mut events = listening.then(|| state.events.subscribe());
+            let (_sender, receiver) = mpsc::channel(1);
+            let task = tokio::spawn(run(state.clone(), receiver));
+            tokio::task::yield_now().await;
+            for _ in 0..2 {
+                tokio::time::advance(Duration::from_millis(1999)).await;
+                tokio::task::yield_now().await;
+                assert!(state.current.read().await.is_none());
+                if let Some(events) = events.as_mut() {
+                    assert!(events.try_recv().is_err());
+                }
+                tokio::time::advance(Duration::from_millis(1)).await;
+                tokio::task::yield_now().await;
+                if enabled && !preparation && listening {
+                    let events = events.as_mut().unwrap();
+                    assert!(
+                        matches!(events.recv().await.unwrap(), ServerEvent::State { turn } if matches!(turn.status, TurnStatus::IdleSpeaking))
+                    );
+                    assert!(matches!(
+                        events.recv().await.unwrap(),
+                        ServerEvent::Error { .. }
+                    ));
+                    assert!(matches!(events.recv().await.unwrap(), ServerEvent::Idle));
+                } else if let Some(events) = events.as_mut() {
+                    assert!(events.try_recv().is_err());
+                }
+            }
+            assert!(state.history.lock().await.snapshot().is_empty());
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn 待機音声の生成中でも投稿と管理中断と設定変更を優先する() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for action in ["submission", "skip", "config"] {
+            let path = std::env::temp_dir().join(format!("idle-{}.json", uuid::Uuid::new_v4()));
+            let mut config: AppConfig =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            // 接続を受け付けずに保持し、TTS生成が終わらない状況を再現する。
+            config.tts.engine_url = format!("http://{}", listener.local_addr().unwrap());
+            std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+            let mut state = test_state(config.clone());
+            state.config = ConfigStore::new(&path, config.clone());
+            let (sender, mut receiver) = mpsc::channel(1);
+            let mut changes = state.config.subscribe();
+            let mut events = state.events.subscribe();
+            let running = state.clone();
+            let task = tokio::spawn(async move {
+                process_idle_speech(&running, &config, &mut receiver, &mut changes).await
+            });
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                ServerEvent::State { .. }
+            ));
+            match action {
+                "submission" => sender
+                    .send(Submission {
+                        id: "next".to_owned(),
+                        kind: SubmissionKind::Question,
+                        text: "質問".to_owned(),
+                    })
+                    .await
+                    .unwrap(),
+                "skip" => state.active.lock().await.as_ref().unwrap().cancel.cancel(),
+                _ => {
+                    state
+                        .config
+                        .update_and_save(|config| config.idle_speech.enabled = false)
+                        .unwrap();
+                }
+            }
+            let next = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                next.map(|submission| submission.id),
+                (action == "submission").then(|| "next".to_owned())
+            );
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                ServerEvent::Cancelled { .. }
+            ));
+            assert!(matches!(events.recv().await.unwrap(), ServerEvent::Idle));
+            assert!(state.current.read().await.is_none());
+            assert!(state.active.lock().await.is_none());
+            assert!(state.history.lock().await.snapshot().is_empty());
+            std::fs::remove_file(path).unwrap();
         }
     }
 

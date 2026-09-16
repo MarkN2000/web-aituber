@@ -39,6 +39,7 @@ const motionSource = fs.readFileSync(path.join(__dirname, "../web/js/motion.js")
 function loadContext() {
   const calls = [];
   const context = vm.createContext({ calls });
+  context.document = { hidden: false };
   vm.runInContext(`
     const calls = this.calls;
     let currentTurn;
@@ -117,6 +118,54 @@ function segment(turnId) {
 function audioItem(turnId) {
   return { turnId, meta: { is_last: true } };
 }
+
+test("待機発話は字幕と感情モーションを再生し音声終了後に待機へ戻る", () => {
+  const { context, calls } = loadContext();
+  const idle = { ...segment("idle-1"), kind: "idle", text: "ひと休み", emotion: "sad", motion: "sad" };
+  context.handle({ type: "state", turn: { turn_id: "idle-1", status: "idle_speaking" } });
+  context.handle(idle);
+  context.audioStart({ meta: idle });
+  assert.equal(vm.runInContext("elements.answerText.textContent", context), "ひと休み");
+  assert.ok(calls.some((call) => call[0] === "expression" && call[1] === "sad"));
+  assert.ok(calls.some((call) => call[0] === "motion" && call[1] === "sad"));
+  context.handle({ type: "complete", turn_id: "idle-1" });
+  assert.equal(context.currentTurn().turn_id, "idle-1");
+  context.audioEnd(audioItem("idle-1"));
+  assert.equal(context.currentTurn(), undefined);
+  assert.ok(calls.includes("idleExpression"));
+  assert.ok(calls.includes("idleMotion"));
+});
+
+test("通常回答が残っている端末と非表示端末は待機発話を見送る", () => {
+  for (const hidden of [false, true]) {
+    const { context, calls } = loadContext();
+    context.document.hidden = hidden;
+    if (!hidden) {
+      context.handle(state("answer-1"));
+      context.handle(segment("answer-1"));
+      context.handle({ type: "complete", turn_id: "answer-1" });
+    }
+    calls.length = 0;
+    context.handle({ type: "state", turn: { turn_id: "idle-1", status: "idle_speaking" } });
+    context.handle({ ...segment("idle-1"), kind: "idle" });
+    context.handle({ type: "complete", turn_id: "idle-1" });
+    assert.equal(context.currentTurn()?.turn_id, hidden ? undefined : "answer-1");
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("投稿到着による待機発話の中断は音声と口パクを止めて通常回答へ進む", () => {
+  const { context, calls } = loadContext();
+  context.handle({ type: "state", turn: { turn_id: "idle-1", status: "idle_speaking" } });
+  context.handle({ ...segment("idle-1"), kind: "idle" });
+  context.handle({ type: "cancelled", turn_id: "idle-1" });
+  assert.equal(context.currentTurn(), undefined);
+  assert.ok(calls.includes("stopLip"));
+  assert.ok(calls.some((call) => call[0] === "cancel" && call[1] === "idle-1"));
+  context.handle(state("answer-1"));
+  context.handle(segment("answer-1"));
+  assert.equal(context.currentTurn().turn_id, "answer-1");
+});
 
 test("音声開始時に指定感情のモーションを回答あたり最大1回だけ再生する", () => {
   const { context, calls } = loadContext();

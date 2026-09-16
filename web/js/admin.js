@@ -32,6 +32,8 @@ const elements = {
   loadSpeakers: document.querySelector("#load-tts-speakers"), speakerList: document.querySelector("#tts-speaker-list"), speakersStatus: document.querySelector("#tts-speakers-status"),
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
+  idleEnabled: document.querySelector("#idle-speech-enabled"), idleMin: document.querySelector("#idle-speech-min"), idleMax: document.querySelector("#idle-speech-max"),
+  idleEmotion: document.querySelector("#idle-speech-emotion"), idleText: document.querySelector("#idle-speech-text"),
   engineUrl: document.querySelector("#tts-engine-url"),
   preparationModeForm: document.querySelector("#preparation-mode-form"), preparationMode: document.querySelector("#preparation-mode"),
   savePreparationMode: document.querySelector("#save-preparation-mode"), preparationStatus: document.querySelector("#preparation-status"), preparationError: document.querySelector("#preparation-error"),
@@ -137,7 +139,7 @@ function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
 function setMessage(status, error, message = "", isError = false) { status.textContent = isError ? "" : message; error.textContent = isError ? message : ""; }
 function setCurrentTurn(turn) { currentTurn = turn; elements.skip.disabled = !turn; }
-function turnStatusLabel(status) { return status === "generating" ? "回答生成中" : status === "eating" ? "食事演出中" : "発話中"; }
+function turnStatusLabel(status) { return status === "idle_speaking" ? "待機発話中" : status === "generating" ? "回答生成中" : status === "eating" ? "食事演出中" : "発話中"; }
 function readError(response, fallback) { return response.json().catch(() => ({})).then((body) => body.error || fallback); }
 const userDictionary = new UserDictionaryEditor({ token, engineUrl: elements.engineUrl, adminUrl, readError, stopOtherPreview: releasePreview });
 
@@ -1094,13 +1096,22 @@ function configForSave(section) {
   return {
     llm: section === "ai" ? llmConfig() : { ...loadedConfig.llm, search_fillers: [...loadedConfig.llm.search_fillers] },
     tts: section === "tts" ? ttsConfig() : { ...loadedConfig.tts },
+    idle_speech: section === "ai" ? {
+      enabled: elements.idleEnabled.checked, min_seconds: Number(elements.idleMin.value), max_seconds: Number(elements.idleMax.value),
+      emotion: elements.idleEmotion.value, text: elements.idleText.value.trim(),
+    } : { ...loadedConfig.idle_speech },
   };
 }
 function validate(form) {
+  elements.idleMax.setCustomValidity(Number(elements.idleMin.value) <= Number(elements.idleMax.value) ? "" : "最長待機時間は最短待機時間以上にしてください。");
+  elements.idleText.setCustomValidity(elements.idleText.value.trim() && [...elements.idleText.value.trim()].length <= 300 ? "" : "セリフを1〜300文字で入力してください。");
   elements.fillers.setCustomValidity(elements.fillers.value.split(/\r?\n/).some((value) => value.trim()) ? "" : "検索中フィラーを1文以上入力してください。");
   return form.reportValidity();
 }
 function applyConfig(config) {
+  elements.idleEnabled.checked = config.idle_speech.enabled;
+  elements.idleMin.value = config.idle_speech.min_seconds; elements.idleMax.value = config.idle_speech.max_seconds;
+  elements.idleEmotion.value = config.idle_speech.emotion; elements.idleText.value = config.idle_speech.text;
   elements.apiUrl.value = config.llm.api_url; elements.model.value = config.llm.model; elements.systemPrompt.value = config.llm.system_prompt;
   elements.foodPrompt.value = config.llm.food_reaction_prompt; elements.fillers.value = config.llm.search_fillers.join("\n");
   elements.engineUrl.value = config.tts.engine_url; selectedSpeakerId = String(config.tts.speaker_id);
@@ -1135,7 +1146,7 @@ async function saveConfig(section, form, button, status, error) {
   if (!token || !validate(form)) return;
   if (section === "tts" && !hasSelectedSpeaker()) { setMessage(status, error, speakerSelectionError(), true); return; }
   button.disabled = true; const original = button.textContent; button.textContent = "保存中…"; setMessage(status, error);
-  try { const nextConfig = configForSave(section); const response = await fetch(adminUrl("/api/admin/config"), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextConfig) }); if (!response.ok) throw new Error(await readError(response, "設定を保存できませんでした。")); loadedConfig = nextConfig; setMessage(status, error, "保存しました。次の投稿から反映されます。"); }
+  try { const nextConfig = configForSave(section); const response = await fetch(adminUrl("/api/admin/config"), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextConfig) }); if (!response.ok) throw new Error(await readError(response, "設定を保存できませんでした。")); loadedConfig = nextConfig; setMessage(status, error, "保存しました。待機設定はすぐ、回答設定は次の投稿から反映されます。"); }
   catch (reason) { console.error(reason); setMessage(status, error, reason.message || "設定を保存できませんでした。", true); }
   finally { button.disabled = false; button.textContent = original; }
 }
