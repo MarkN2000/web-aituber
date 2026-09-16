@@ -359,6 +359,18 @@ impl ConfigStore {
             .with_context(|| format!("設定ファイルを読み込めません: {}", path.display()))?;
         let mut document: serde_json::Value = serde_json::from_str(&source)
             .with_context(|| format!("設定ファイルの JSON が不正です: {}", path.display()))?;
+        let mut changed = false;
+        if let Some(motions) = document
+            .pointer_mut("/character/emotion_motions")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for value in motions.values_mut() {
+                if value.is_string() {
+                    *value = serde_json::Value::Array(vec![value.take()]);
+                    changed = true;
+                }
+            }
+        }
         let mut config: AppConfig = serde_json::from_value(document.clone())
             .with_context(|| format!("設定ファイルの形式が不正です: {}", path.display()))?;
         config.validate()?;
@@ -366,10 +378,13 @@ impl ConfigStore {
         if config.character.food_motion.is_none() {
             let motion = FoodMotionConfig::default();
             document["character"]["food_motion"] = serde_json::to_value(&motion)?;
-            // 未知のキーを含む元のJSONを使用し、食事モーションの未設定欄だけを補う。
-            write_config_atomically(&path, &document)?;
             config.character.food_motion = Some(motion);
-            tracing::info!(path = %path.display(), "食事モーションURLの入力欄を追加しました");
+            changed = true;
+        }
+        if changed {
+            // 未知のキーを含む元のJSONを使い、検証済みの変更をまとめて保存する。
+            write_config_atomically(&path, &document)?;
+            tracing::info!(path = %path.display(), "モーション設定の形式更新・未設定欄の補完を保存しました");
         }
         Ok(Self::new(path, config))
     }
@@ -696,6 +711,120 @@ mod tests {
         );
         value["character"]["emotion_motions"]["happy"] = serde_json::json!("/happy.vrma");
         assert!(serde_json::from_value::<AppConfig>(value).is_err());
+    }
+
+    #[test]
+    fn 起動時に旧感情urlを配列へ保存し他の値を保持して再読み込みできる() {
+        for missing_food in [false, true] {
+            let mut original: serde_json::Value =
+                serde_json::from_str(include_str!("../config.example.json")).unwrap();
+            original["character"]["emotion_motions"] = serde_json::json!({
+                "happy": "/assets/motions/custom-happy.vrma",
+                "sad": "/assets/motions/custom-sad.vrma",
+                "angry": ["/angry1.vrma", "/angry2.vrma"],
+                "surprised": []
+            });
+            original["operator_note"] = serde_json::json!({"text": "保持する"});
+            original["character"]["custom_motion_note"] = serde_json::json!("独自の設定");
+            if missing_food {
+                original["character"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("food_motion");
+            }
+            let path = std::env::temp_dir()
+                .join(format!("web-aituber-custom-config-{}.json", Uuid::new_v4()));
+            fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+
+            let store = ConfigStore::load_from_path(path.clone()).unwrap();
+
+            let mut expected = original;
+            for emotion in ["happy", "sad"] {
+                let url = expected["character"]["emotion_motions"][emotion].take();
+                expected["character"]["emotion_motions"][emotion] = serde_json::json!([url]);
+            }
+            if missing_food {
+                expected["character"]["food_motion"] =
+                    serde_json::to_value(FoodMotionConfig::default()).unwrap();
+            }
+            let saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved, expected);
+            assert_eq!(
+                store.current().character.emotion_motions["happy"],
+                ["/assets/motions/custom-happy.vrma"]
+            );
+            store.reload().unwrap();
+            assert_eq!(
+                store.current().character.emotion_motions["sad"],
+                ["/assets/motions/custom-sad.vrma"]
+            );
+
+            // 二度目の起動は書式も含めて変更しない。
+            let existing = format!("\n{}\n", fs::read_to_string(&path).unwrap());
+            fs::write(&path, &existing).unwrap();
+            ConfigStore::load_from_path(path.clone()).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), existing);
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn 旧感情urlがあっても不正な設定ファイルは書き換えない() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]["emotion_motions"]["happy"] = serde_json::json!("/happy.vrma");
+        value["character"]
+            .as_object_mut()
+            .unwrap()
+            .remove("food_motion");
+        let path = std::env::temp_dir().join(format!(
+            "web-aituber-invalid-motions-{}.json",
+            Uuid::new_v4()
+        ));
+        for (pointer, invalid) in [
+            ("/llm/api_key", serde_json::json!("")),
+            ("/character/emotion_motions/sad", serde_json::json!(" \t ")),
+            ("/character/emotion_motions/sad", serde_json::json!(42)),
+            ("/character/emotion_motions/sad", serde_json::json!([null])),
+        ] {
+            let mut invalid_config = value.clone();
+            *invalid_config.pointer_mut(pointer).unwrap() = invalid;
+            let original = serde_json::to_string(&invalid_config).unwrap();
+            fs::write(&path, &original).unwrap();
+            assert!(ConfigStore::load_from_path(path.clone()).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn 感情urlの変換保存に失敗しても元ファイルを保持する() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]["emotion_motions"]["happy"] = serde_json::json!("/happy.vrma");
+        let path = std::env::temp_dir().join(format!(
+            "web-aituber-locked-motions-{}.json",
+            Uuid::new_v4()
+        ));
+        let original = serde_json::to_string(&value).unwrap();
+        fs::write(&path, &original).unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+
+        let error = ConfigStore::load_from_path(path.clone()).err().unwrap();
+        assert!(error.to_string().contains("原子的に置き換えられません"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        drop(locked);
+        ConfigStore::load_from_path(path.clone()).unwrap();
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
