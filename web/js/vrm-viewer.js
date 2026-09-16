@@ -206,21 +206,24 @@ export class VrmViewer {
     return { clip, fileName: motionFileName(url), url };
   }
 
-  resumeIdle() {
+  resumeIdle({ url, preview = false } = {}) {
     if (this.foodAction) return;
-    if (this.motionPreview) {
-      this.motionPreview = false;
+    const motion = url ? this.idleClips.find((candidate) => candidate.url === url)
+      : this.idleClips[Math.floor(Math.random() * this.idleClips.length)];
+    if (url && !motion) return;
+    if (this.motionPreview || preview) {
+      this.motionPreview = preview;
       this.setIdleExpression();
     }
     if (!this.idleClips.length || !this.mixer) {
+      this.motionPreview = false;
       this.currentAction?.fadeOut(MOTION_TRANSITION_SECONDS);
       this.currentAction = undefined;
       this.currentMotion = undefined;
       this.reportDebugState();
       return;
     }
-    const motion = this.idleClips[Math.floor(Math.random() * this.idleClips.length)];
-    this.playClip(motion, true, 'idle');
+    this.playClip(motion, true, 'idle', preview);
   }
 
   playEmotionMotion(emotion, { url, preview = false } = {}) {

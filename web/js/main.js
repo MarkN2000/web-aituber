@@ -20,7 +20,7 @@ const elements = {
   viewerMessage: document.querySelector("#viewer-message"),
   debugOverlay: document.querySelector("#debug-overlay"),
   debugPanel: document.querySelector("#debug-panel"),
-  debugEmotion: document.querySelector("#debug-emotion"),
+  debugMotionType: document.querySelector("#debug-motion-type"),
   debugMotion: document.querySelector("#debug-motion"),
   debugMotionPlay: document.querySelector("#debug-motion-play"),
   debugMotionStop: document.querySelector("#debug-motion-stop"),
@@ -84,7 +84,8 @@ let eventEnded = false;
 function refreshDebugMotionOptions() {
   if (!debugEnabled) return;
   const selected = elements.debugMotion.value;
-  const motions = viewer?.emotionClips.get(elements.debugEmotion.value) || [];
+  const type = elements.debugMotionType.value;
+  const motions = (type === "idle" ? viewer?.idleClips : viewer?.emotionClips.get(type)) || [];
   elements.debugMotion.replaceChildren(new Option("ランダム", ""),
     ...motions.map((motion) => new Option(motion.fileName, motion.url)));
   elements.debugMotion.value = motions.some((motion) => motion.url === selected) ? selected : "";
@@ -99,21 +100,24 @@ function updateDebugMotionControls() {
     : !started || viewerReloading ? "モデルを読み込んでいます。"
     : !viewer ? "モデルを読み込めませんでした。"
     : currentTurn || viewer.foodAction ? "投稿処理中はテストできません。" : "";
-  const emotion = elements.debugEmotion.value;
-  const count = viewer?.emotionClips.get(emotion)?.length || 0;
-  elements.debugEmotion.disabled = Boolean(busy);
+  const type = elements.debugMotionType.value;
+  const count = (type === "idle" ? viewer?.idleClips : viewer?.emotionClips.get(type))?.length || 0;
+  const configured = type === "idle" ? displayConfig?.idle_motions : displayConfig?.emotion_motions?.[type];
+  elements.debugMotionType.disabled = Boolean(busy);
   elements.debugMotion.disabled = Boolean(busy) || !count;
   elements.debugMotionPlay.disabled = Boolean(busy) || !count;
   elements.debugMotionStop.disabled = Boolean(busy);
   elements.debugMotionStatus.textContent = busy || (count ? `${count}件の候補から再生できます。`
-    : displayConfig?.emotion_motions?.[emotion]?.length ? "読み込み失敗：再生できる候補がありません。"
-    : "未登録：この感情のモーションは設定されていません。");
+    : configured?.length ? "読み込み失敗：再生できる候補がありません。"
+    : "未登録：この種類のモーションは設定されていません。");
   return !busy;
 }
 
 function playDebugMotion() {
   if (!updateDebugMotionControls() || elements.debugMotionPlay.disabled) return;
-  viewer.playEmotionMotion(elements.debugEmotion.value, { url: elements.debugMotion.value, preview: true });
+  const options = { url: elements.debugMotion.value, preview: true };
+  if (elements.debugMotionType.value === "idle") viewer.resumeIdle(options);
+  else viewer.playEmotionMotion(elements.debugMotionType.value, options);
 }
 
 function stopDebugMotion() {
@@ -205,7 +209,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=23");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=24");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,
@@ -658,7 +662,7 @@ async function startMain() {
 
 elements.start.addEventListener("click", startMain);
 if (debugEnabled) {
-  elements.debugEmotion.addEventListener("change", refreshDebugMotionOptions);
+  elements.debugMotionType.addEventListener("change", refreshDebugMotionOptions);
   elements.debugMotionPlay.addEventListener("click", playDebugMotion);
   elements.debugMotionStop.addEventListener("click", stopDebugMotion);
 }

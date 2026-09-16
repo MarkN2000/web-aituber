@@ -128,10 +128,10 @@ test("画面の表示状態ではVRM描画ループを解除しない", () => {
 function loadMotionTestContext() {
   const calls = [];
   const elements = Object.fromEntries([
-    "debugPanel", "debugEmotion", "debugMotion", "debugMotionPlay", "debugMotionStop", "debugMotionStatus",
+    "debugPanel", "debugMotionType", "debugMotion", "debugMotionPlay", "debugMotionStop", "debugMotionStatus",
     "answer", "loader", "panel", "answerText",
   ].map((key) => [key, { value: "", textContent: "" }]));
-  elements.debugEmotion.value = "happy";
+  elements.debugMotionType.value = "happy";
   elements.debugMotion.replaceChildren = (...options) => { elements.debugMotion.options = options; };
   const context = vm.createContext({
     elements, calls,
@@ -145,7 +145,10 @@ function loadMotionTestContext() {
       ]]]),
       playEmotionMotion(emotion, options) { calls.push([emotion, options.url, options.preview]); },
       setIdleExpression() { calls.push("neutral"); },
-      resumeIdle() { this.motionPreview = false; calls.push("idle"); },
+      resumeIdle(options) {
+        this.motionPreview = options?.preview || false;
+        calls.push(options ? ["idle", options.url, options.preview] : "idle");
+      },
     },
     clearAnswer() {}, applyPendingViewerConfig() {},
   });
@@ -169,15 +172,51 @@ test("読み込み済み候補だけを表示し、選択を維持して再生�
   assert.equal(elements.debugMotion.value, "");
 });
 
+test("待機用の候補を一覧・個別・ランダム再生に使い、通常の感情候補と区別する", () => {
+  const { context, elements, calls } = loadMotionTestContext();
+  context.viewer.idleClips = [
+    { fileName: "idle1.vrma", url: "/idle1.vrma" }, { fileName: "idle2.vrma", url: "/idle2.vrma" },
+  ];
+  elements.debugMotionType.value = "idle";
+  context.refreshDebugMotionOptions();
+  assert.deepEqual(elements.debugMotion.options.map((option) => option.value), ["", "/idle1.vrma", "/idle2.vrma"]);
+  elements.debugMotion.value = "/idle2.vrma";
+  context.playDebugMotion();
+  elements.debugMotion.value = "";
+  context.playDebugMotion();
+  assert.deepEqual(calls, [["idle", "/idle2.vrma", true], ["idle", "", true]]);
+  context.setTurn({ turn_id: "turn-1" });
+  assert.equal(context.viewer.motionPreview, false);
+  assert.equal(elements.debugMotionPlay.disabled, true);
+  context.setTurn(undefined);
+  elements.debugMotionType.value = "neutral";
+  context.refreshDebugMotionOptions();
+  assert.equal(elements.debugMotionPlay.disabled, true);
+});
+
+test("待機モーションの未登録と全候補の読み込み失敗を区別して再生を無効にする", () => {
+  const { context, elements, calls } = loadMotionTestContext();
+  elements.debugMotionType.value = "idle";
+  context.viewer.idleClips = [];
+  context.refreshDebugMotionOptions();
+  assert.match(elements.debugMotionStatus.textContent, /未登録/);
+  context.displayConfig.idle_motions = ["/missing.vrma"];
+  context.refreshDebugMotionOptions();
+  assert.match(elements.debugMotionStatus.textContent, /読み込み失敗/);
+  assert.equal(elements.debugMotionPlay.disabled, true);
+  context.playDebugMotion();
+  assert.deepEqual(calls, []);
+});
+
 test("未登録と読み込み失敗を区別し、候補なしでは再生できない", () => {
   const { context, elements, calls } = loadMotionTestContext();
   for (const [emotion, message] of [["neutral", /未登録/], ["sad", /読み込み失敗/]]) {
-    elements.debugEmotion.value = emotion;
+    elements.debugMotionType.value = emotion;
     context.refreshDebugMotionOptions();
     context.playDebugMotion();
     assert.match(elements.debugMotionStatus.textContent, message);
     assert.equal(elements.debugMotionPlay.disabled, true);
-    assert.equal(elements.debugEmotion.disabled, false);
+    assert.equal(elements.debugMotionType.disabled, false);
   }
   assert.deepEqual(calls, []);
 });

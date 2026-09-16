@@ -374,6 +374,57 @@ test("感情ごとに読み込めた候補から毎回ランダムで選び、�
   }
 });
 
+test("待機テストは指定候補を通常表情で先頭から再生し、終了後は通常の待機へ戻る", () => {
+  const viewer = createViewer();
+  viewer.idleClips = [
+    { clip: {}, fileName: "idle1.vrma", url: "/idle1.vrma" },
+    { clip: {}, fileName: "idle2.vrma", url: "/idle2.vrma" },
+  ];
+  viewer.setEmotion("happy");
+  viewer.resumeIdle({ url: "/idle2.vrma", preview: true });
+  const action = viewer.currentAction;
+  assert.equal(viewer.currentMotion.fileName, "idle2.vrma");
+  assert.equal(viewer.currentMotion.kind, "idle");
+  assert.equal(viewer.currentExpression, "neutral");
+  assert.equal(viewer.motionPreview, true);
+  viewer.resumeIdle({ url: "/idle2.vrma", preview: true });
+  assert.equal(action.resetCount, 2);
+  viewer.resumeIdle({ url: "/missing.vrma", preview: true });
+  assert.equal(action.resetCount, 2);
+  assert.equal(viewer.motionPreview, true);
+  action.running = false;
+  viewer.onAnimationFinished({ action });
+  assert.equal(viewer.motionPreview, false);
+  assert.equal(viewer.currentMotion.kind, "idle");
+  assert.ok(viewer.currentAction.isRunning());
+});
+
+test("待機のランダムテストも毎回候補を選び、食事中は割り込まない", () => {
+  const viewer = createViewer();
+  viewer.idleClips = [
+    { clip: {}, fileName: "idle1.vrma" }, { clip: {}, fileName: "idle2.vrma" },
+  ];
+  const originalRandom = vm.runInContext("Math.random", context);
+  try {
+    for (const [random, expected] of [[0, "idle1.vrma"], [0.99, "idle2.vrma"]]) {
+      context.random = () => random;
+      vm.runInContext("Math.random = random", context);
+      viewer.resumeIdle({ preview: true });
+      assert.equal(viewer.currentMotion.fileName, expected);
+    }
+    viewer.resumeIdle();
+    assert.equal(viewer.motionPreview, false);
+    viewer.foodAction = {};
+    const previous = viewer.currentAction;
+    viewer.resumeIdle({ preview: true });
+    assert.equal(viewer.currentAction, previous);
+    assert.equal(viewer.motionPreview, false);
+  } finally {
+    context.random = originalRandom;
+    vm.runInContext("Math.random = random", context);
+  }
+});
+
 test("テストは指定候補と表情を再生し、同じ候補も先頭から再生し直す", () => {
   const viewer = createViewer();
   viewer.emotionClips.set("happy", [
