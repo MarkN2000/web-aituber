@@ -71,7 +71,7 @@
 
     <section id="panel-ai" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-ai" hidden>
       <h2>AI設定</h2>
-      <p class="admin-help">保存した設定は、次に処理を開始する投稿から反映します。</p>
+      <p class="admin-help">回答の設定は次の投稿から、待機発話の設定は保存後すぐに反映します。</p>
       <form id="ai-config-form" novalidate>
         <label for="llm-api-url">API URL</label>
         <input id="llm-api-url" type="url" required inputmode="url" placeholder="https://api.example.com/v1/responses">
@@ -91,12 +91,21 @@
         <label for="idle-speech-max">最長待機時間（秒）</label>
         <input id="idle-speech-max" type="number" min="1" max="86400" step="1" required value="90" aria-describedby="idle-speech-note">
         <p id="idle-speech-note" class="field-note admin-field-note">範囲内で毎回待ち時間を選び、話し終えたら数え直します。同じ秒数なら固定間隔です。投稿が来たら中断します。</p>
-        <label for="idle-speech-emotion">感情</label>
-        <select id="idle-speech-emotion">
-          <option value="neutral">通常</option><option value="happy">喜び</option><option value="sad">悲しみ</option><option value="angry">怒り</option><option value="surprised">驚き</option>
-        </select>
-        <label for="idle-speech-text">セリフ（300文字以内）</label>
-        <textarea id="idle-speech-text" required rows="2"></textarea>
+        <p class="field-note admin-field-note">発話するたびに候補をランダムに1組選びます。同じ候補が続く場合もあります。改行では候補を分けません。</p>
+        <div id="idle-speech-entries"></div>
+        <template id="idle-speech-entry-template">
+          <fieldset class="display-setting-section">
+            <legend>セリフ候補</legend>
+            <label>感情
+              <select>
+                <option value="neutral">通常</option><option value="happy">喜び</option><option value="sad">悲しみ</option><option value="angry">怒り</option><option value="surprised">驚き</option>
+              </select>
+            </label>
+            <label>セリフ（300文字以内）<textarea required rows="2"></textarea></label>
+            <div class="admin-form-actions"><button type="button" class="secondary-button" data-idle-remove>削除</button></div>
+          </fieldset>
+        </template>
+        <div class="admin-form-actions"><button id="add-idle-speech" type="button" class="secondary-button">セリフを追加</button></div>
         <div class="admin-form-actions">
           <button id="save-ai-config" type="submit">AI設定を保存</button>
           <button id="clear-conversation-history" class="secondary-button" type="button">会話履歴を削除</button>
@@ -474,6 +483,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=41"></script>
+  <script type="module" src="/static/js/admin.js?v=42"></script>
 </body>
 </html>

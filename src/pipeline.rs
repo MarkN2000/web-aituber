@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio,
-    config::{AppConfig, FoodMotionConfig},
+    config::{AppConfig, FoodMotionConfig, IdleSpeechConfig, IdleSpeechEntry},
     protocol::{
         ConversationTurn, Emotion, SegmentKind, ServerEvent, SourceLink, Submission, TurnState,
         TurnStatus,
@@ -51,10 +51,15 @@ pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
     }
 }
 
-fn idle_delay(config: &crate::config::IdleSpeechConfig) -> Duration {
+fn idle_delay(config: &IdleSpeechConfig) -> Duration {
     let span = u64::from(config.max_seconds - config.min_seconds) + 1;
     let random = uuid::Uuid::new_v4().as_u128() as u64;
     Duration::from_secs(u64::from(config.min_seconds) + random % span)
+}
+
+fn choose_idle_entry(config: &IdleSpeechConfig) -> &IdleSpeechEntry {
+    let index = (uuid::Uuid::new_v4().as_u128() as u64) % config.entries.len() as u64;
+    &config.entries[index as usize]
 }
 
 async fn process_idle_speech(
@@ -90,8 +95,9 @@ async fn process_idle_speech(
         _ = config_changes.changed() => None,
         _ = cancel.cancelled() => None,
         result = async {
-            let duration_ms = prepare_speech(state, config, &config.idle_speech.text, &output_path).await?;
-            present_idle_speech(state, config, &turn_id, &file_name, duration_ms).await;
+            let entry = choose_idle_entry(&config.idle_speech);
+            let duration_ms = prepare_speech(state, config, &entry.text, &output_path).await?;
+            present_idle_speech(state, config, entry, &turn_id, &file_name, duration_ms).await;
             Ok::<(), anyhow::Error>(())
         } => Some(result),
     };
@@ -119,24 +125,24 @@ async fn process_idle_speech(
 async fn present_idle_speech(
     state: &AppState,
     config: &AppConfig,
+    entry: &IdleSpeechEntry,
     turn_id: &str,
     file_name: &str,
     duration_ms: u64,
 ) {
-    let idle = &config.idle_speech;
     let motion = config
         .character
         .emotion_motions
-        .get(idle.emotion.as_str())
+        .get(entry.emotion.as_str())
         .filter(|motions| !motions.is_empty())
-        .map(|_| idle.emotion);
+        .map(|_| entry.emotion);
     send_event(
         state,
         ServerEvent::Segment {
             turn_id: turn_id.to_owned(),
             sequence: 0,
-            text: idle.text.clone(),
-            emotion: idle.emotion,
+            text: entry.text.clone(),
+            emotion: entry.emotion,
             motion,
             audio_url: format!("/audio/{file_name}"),
             duration_ms,
@@ -797,17 +803,52 @@ mod tests {
         assert_eq!(idle_delay(&idle), Duration::from_secs(30));
     }
 
+    #[test]
+    fn 待機発話の候補は毎回選び感情とセリフを同じ組で返す() {
+        let mut config = IdleSpeechConfig::default();
+        assert!(std::ptr::eq(choose_idle_entry(&config), &config.entries[0]));
+        config.entries.push(IdleSpeechEntry {
+            emotion: Emotion::Happy,
+            text: "うれしい。".to_owned(),
+        });
+        config.entries.push(IdleSpeechEntry {
+            emotion: Emotion::Sad,
+            text: "静かだね。".to_owned(),
+        });
+        let mut seen = [false; 3];
+        for _ in 0..256 {
+            let selected = choose_idle_entry(&config);
+            let index = config
+                .entries
+                .iter()
+                .position(|entry| std::ptr::eq(entry, selected))
+                .unwrap();
+            seen[index] = true;
+        }
+        assert!(seen.into_iter().all(|selected| selected));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn 待機発話は指定感情と固定文を送り音声終了まで待つ() {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("../config.example.json")).unwrap();
-        config.idle_speech.emotion = Emotion::Happy;
-        config.idle_speech.text = "ひと休み。".to_owned();
+        config.idle_speech.entries.push(IdleSpeechEntry {
+            emotion: Emotion::Happy,
+            text: "ひと休み。".to_owned(),
+        });
         let state = test_state(config.clone());
         let mut events = state.events.subscribe();
         let running = state.clone();
         let task = tokio::spawn(async move {
-            present_idle_speech(&running, &config, "idle-1", "idle-1.webm", 1500).await;
+            present_idle_speech(
+                &running,
+                &config,
+                &config.idle_speech.entries[1],
+                "idle-1",
+                "idle-1.webm",
+                1500,
+            )
+            .await;
         });
         assert!(
             matches!(events.recv().await.unwrap(), ServerEvent::Segment {

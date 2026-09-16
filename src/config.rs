@@ -67,6 +67,11 @@ pub struct IdleSpeechConfig {
     pub enabled: bool,
     pub min_seconds: u32,
     pub max_seconds: u32,
+    pub entries: Vec<IdleSpeechEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IdleSpeechEntry {
     pub emotion: crate::protocol::Emotion,
     pub text: String,
 }
@@ -77,8 +82,10 @@ impl Default for IdleSpeechConfig {
             enabled: false,
             min_seconds: 30,
             max_seconds: 90,
-            emotion: crate::protocol::Emotion::Neutral,
-            text: "ちょっとひと休み……".to_owned(),
+            entries: vec![IdleSpeechEntry {
+                emotion: crate::protocol::Emotion::Neutral,
+                text: "ちょっとひと休み……".to_owned(),
+            }],
         }
     }
 }
@@ -295,9 +302,14 @@ impl AppConfig {
         {
             bail!("待機秒数は1〜86400の整数で、最短≦最長にしてください");
         }
-        required("idle_speech.text", &idle.text)?;
-        if idle.text.chars().count() > 300 {
-            bail!("待機セリフは300文字以内にしてください");
+        if idle.entries.is_empty() {
+            bail!("待機セリフの候補は1件以上必要です");
+        }
+        for (index, entry) in idle.entries.iter().enumerate() {
+            required(&format!("idle_speech.entries[{index}].text"), &entry.text)?;
+            if entry.text.chars().count() > 300 {
+                bail!("待機セリフの候補{}は300文字以内にしてください", index + 1);
+            }
         }
         validate_http_url("tts.engine_url", &self.tts.engine_url)?;
         required("ffmpeg_path", &self.ffmpeg_path)?;
@@ -658,9 +670,23 @@ mod tests {
             ("min_seconds", serde_json::json!(91)),
             ("max_seconds", serde_json::json!(86401)),
             ("max_seconds", serde_json::json!(1.5)),
-            ("emotion", serde_json::json!("unknown")),
-            ("text", serde_json::json!(" \n ")),
-            ("text", serde_json::json!("あ".repeat(301))),
+            ("entries", serde_json::json!([])),
+            (
+                "entries",
+                serde_json::json!([{"emotion": "unknown", "text": "こんにちは"}]),
+            ),
+            (
+                "entries",
+                serde_json::json!([{"emotion": "neutral", "text": " \n "}]),
+            ),
+            (
+                "entries",
+                serde_json::json!([{"emotion": "neutral", "text": "あ".repeat(301)}]),
+            ),
+            (
+                "entries",
+                serde_json::json!([{"emotion": "happy", "text": "有効"}, {"emotion": "sad", "text": ""}]),
+            ),
         ] {
             let mut value = original.clone();
             value["idle_speech"][field] = invalid;
@@ -674,8 +700,20 @@ mod tests {
         }
         let mut config: AppConfig = serde_json::from_value(original.clone()).unwrap();
         config.idle_speech.max_seconds = config.idle_speech.min_seconds;
-        config.idle_speech.text = "😀".repeat(300);
+        config.idle_speech.entries[0].text = "😀".repeat(300);
+        config.idle_speech.entries.push(IdleSpeechEntry {
+            emotion: crate::protocol::Emotion::Happy,
+            text: "複数行でも\nひとつの候補。".to_owned(),
+        });
         assert!(config.validate().is_ok());
+        let mut old = original.clone();
+        old["idle_speech"]
+            .as_object_mut()
+            .unwrap()
+            .remove("entries");
+        old["idle_speech"]["emotion"] = serde_json::json!("neutral");
+        old["idle_speech"]["text"] = serde_json::json!("旧形式");
+        assert!(serde_json::from_value::<AppConfig>(old).is_err());
         let mut missing = original;
         missing.as_object_mut().unwrap().remove("idle_speech");
         assert!(

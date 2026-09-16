@@ -3555,7 +3555,7 @@ mod tests {
                 "engine_url": "http://127.0.0.1:50021",
                 "speaker_id": 42
             },
-            "idle_speech": {"enabled": true, "min_seconds": 30, "max_seconds": 90, "emotion": "happy", "text": "こんにちは。"}
+            "idle_speech": {"enabled": true, "min_seconds": 30, "max_seconds": 90, "entries": [{"emotion": "happy", "text": "こんにちは。"}, {"emotion": "sad", "text": "静かですね。"}]}
         });
         let response = router(state.clone())
             .oneshot(
@@ -3572,7 +3572,16 @@ mod tests {
         assert_eq!(saved.llm.model, "updated-model");
         assert_eq!(saved.tts.speaker_id, 42);
         assert!(saved.idle_speech.enabled);
-        assert_eq!(saved.idle_speech.emotion, crate::protocol::Emotion::Happy);
+        assert_eq!(saved.idle_speech.entries.len(), 2);
+        assert_eq!(
+            saved.idle_speech.entries[0].emotion,
+            crate::protocol::Emotion::Happy
+        );
+        assert_eq!(
+            saved.idle_speech.entries[1].emotion,
+            crate::protocol::Emotion::Sad
+        );
+        assert_eq!(saved.idle_speech.entries[1].text, "静かですね。");
         assert_eq!(saved.llm.api_key, "externally-updated-key");
         assert_eq!(saved.admin_token, "test-token");
         assert_eq!(saved.bind, bind);
@@ -3605,7 +3614,7 @@ mod tests {
                 "engine_url": "http://127.0.0.1:50021",
                 "speaker_id": 42
             },
-            "idle_speech": {"enabled": false, "min_seconds": 30, "max_seconds": 90, "emotion": "neutral", "text": "こんにちは。"}
+            "idle_speech": {"enabled": false, "min_seconds": 30, "max_seconds": 90, "entries": [{"emotion": "neutral", "text": "こんにちは。"}]}
         });
         let response = router(state.clone())
             .oneshot(

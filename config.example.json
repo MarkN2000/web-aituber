@@ -23,8 +23,9 @@
     "enabled": false,
     "min_seconds": 30,
     "max_seconds": 90,
-    "emotion": "neutral",
-    "text": "ちょっとひと休み……"
+    "entries": [
+      { "emotion": "neutral", "text": "ちょっとひと休み……" }
+    ]
   },
   "ffmpeg_path": "ffmpeg",
   "drawing": {

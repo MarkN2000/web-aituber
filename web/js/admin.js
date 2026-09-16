@@ -33,7 +33,7 @@ const elements = {
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
   foodPrompt: document.querySelector("#food-reaction-prompt"), fillers: document.querySelector("#search-fillers"),
   idleEnabled: document.querySelector("#idle-speech-enabled"), idleMin: document.querySelector("#idle-speech-min"), idleMax: document.querySelector("#idle-speech-max"),
-  idleEmotion: document.querySelector("#idle-speech-emotion"), idleText: document.querySelector("#idle-speech-text"),
+  idleEntries: document.querySelector("#idle-speech-entries"), idleTemplate: document.querySelector("#idle-speech-entry-template"), addIdleSpeech: document.querySelector("#add-idle-speech"),
   engineUrl: document.querySelector("#tts-engine-url"),
   preparationModeForm: document.querySelector("#preparation-mode-form"), preparationMode: document.querySelector("#preparation-mode"),
   savePreparationMode: document.querySelector("#save-preparation-mode"), preparationStatus: document.querySelector("#preparation-status"), preparationError: document.querySelector("#preparation-error"),
@@ -1088,6 +1088,26 @@ function applySpeakers(speakers, preferredId) {
     elements.speakersStatus.textContent = "話者一覧を取得しました。使用する話者を選択してください。";
   }
 }
+function createIdleSpeechEntry(entry = { emotion: "neutral", text: "" }) {
+  const row = elements.idleTemplate.content.firstElementChild.cloneNode(true);
+  row.querySelector("select").value = entry.emotion;
+  row.querySelector("textarea").value = entry.text;
+  row.querySelector("[data-idle-remove]").addEventListener("click", () => {
+    if (elements.idleEntries.childElementCount <= 1) return;
+    row.remove();
+    updateIdleSpeechEntries();
+    elements.addIdleSpeech.focus();
+  });
+  return row;
+}
+function updateIdleSpeechEntries() {
+  [...elements.idleEntries.children].forEach((row, index) => {
+    row.querySelector("legend").textContent = `セリフ候補 ${index + 1}`;
+    const remove = row.querySelector("[data-idle-remove]");
+    remove.disabled = elements.idleEntries.childElementCount <= 1;
+    remove.setAttribute("aria-label", `セリフ候補 ${index + 1}を削除`);
+  });
+}
 function llmConfig() {
   return { api_url: elements.apiUrl.value.trim(), model: elements.model.value.trim(), system_prompt: elements.systemPrompt.value.trim(), food_reaction_prompt: elements.foodPrompt.value.trim(), search_fillers: elements.fillers.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) };
 }
@@ -1098,20 +1118,25 @@ function configForSave(section) {
     tts: section === "tts" ? ttsConfig() : { ...loadedConfig.tts },
     idle_speech: section === "ai" ? {
       enabled: elements.idleEnabled.checked, min_seconds: Number(elements.idleMin.value), max_seconds: Number(elements.idleMax.value),
-      emotion: elements.idleEmotion.value, text: elements.idleText.value.trim(),
+      entries: [...elements.idleEntries.children].map((row) => ({
+        emotion: row.querySelector("select").value, text: row.querySelector("textarea").value.trim(),
+      })),
     } : { ...loadedConfig.idle_speech },
   };
 }
 function validate(form) {
   elements.idleMax.setCustomValidity(Number(elements.idleMin.value) <= Number(elements.idleMax.value) ? "" : "最長待機時間は最短待機時間以上にしてください。");
-  elements.idleText.setCustomValidity(elements.idleText.value.trim() && [...elements.idleText.value.trim()].length <= 300 ? "" : "セリフを1〜300文字で入力してください。");
+  for (const text of elements.idleEntries.querySelectorAll("textarea")) {
+    text.setCustomValidity(text.value.trim() && [...text.value.trim()].length <= 300 ? "" : "セリフを1〜300文字で入力してください。");
+  }
   elements.fillers.setCustomValidity(elements.fillers.value.split(/\r?\n/).some((value) => value.trim()) ? "" : "検索中フィラーを1文以上入力してください。");
   return form.reportValidity();
 }
 function applyConfig(config) {
   elements.idleEnabled.checked = config.idle_speech.enabled;
   elements.idleMin.value = config.idle_speech.min_seconds; elements.idleMax.value = config.idle_speech.max_seconds;
-  elements.idleEmotion.value = config.idle_speech.emotion; elements.idleText.value = config.idle_speech.text;
+  elements.idleEntries.replaceChildren(...config.idle_speech.entries.map(createIdleSpeechEntry));
+  updateIdleSpeechEntries();
   elements.apiUrl.value = config.llm.api_url; elements.model.value = config.llm.model; elements.systemPrompt.value = config.llm.system_prompt;
   elements.foodPrompt.value = config.llm.food_reaction_prompt; elements.fillers.value = config.llm.search_fillers.join("\n");
   elements.engineUrl.value = config.tts.engine_url; selectedSpeakerId = String(config.tts.speaker_id);
@@ -1347,6 +1372,12 @@ elements.speakerList.addEventListener("change", () => {
   }
   selectedSpeakerId = elements.speakerList.value;
   elements.speakersStatus.textContent = "選択した話者を設定に使用します。";
+});
+elements.addIdleSpeech.addEventListener("click", () => {
+  const row = createIdleSpeechEntry();
+  elements.idleEntries.append(row);
+  updateIdleSpeechEntries();
+  row.querySelector("textarea").focus();
 });
 elements.aiForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("ai", elements.aiForm, elements.saveAi, elements.aiStatus, elements.aiError); });
 elements.ttsForm.addEventListener("submit", (event) => { event.preventDefault(); saveConfig("tts", elements.ttsForm, elements.saveTts, elements.ttsStatus, elements.ttsError); });
