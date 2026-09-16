@@ -1000,7 +1000,8 @@ textarea::placeholder {
   margin-top: 18px;
 }
 
-.screen-overlay-scale-control input[type="number"] {
+.screen-overlay-scale-control input[type="number"],
+.camera-fov-control input[type="number"] {
   width: 100%;
   min-width: 0;
 }
@@ -1109,6 +1110,8 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+.camera-fov-control { grid-template-columns: minmax(0, 1fr) 6rem; }
 
 .model-antialias-form {
   margin-top: 24px;

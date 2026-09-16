@@ -1542,6 +1542,12 @@ async fn update_model_layout(
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
+    if !request.camera_fov.is_finite() || !(1.0..=179.0).contains(&request.camera_fov) {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "画角（FOV）は1〜179度の有限値で指定してください",
+        );
+    }
     if request
         .camera_position
         .iter()
@@ -1559,6 +1565,7 @@ async fn update_model_layout(
 
     match state.config.update_and_save(move |config| {
         config.character.camera.position = request.camera_position;
+        config.character.camera.fov = request.camera_fov;
         config.character.food_prop.position = request.food_prop_position;
         config.character.food_prop.rotation_degrees = request.food_prop_rotation_degrees;
         config.character.food_prop.size = request.food_prop_scale;
@@ -2706,6 +2713,7 @@ struct DrawingStabilizationRequest {
 #[derive(Deserialize)]
 struct ModelLayoutRequest {
     camera_position: [f32; 3],
+    camera_fov: f32,
     food_prop_position: [f32; 3],
     food_prop_rotation_degrees: [f32; 3],
     food_prop_scale: f32,
@@ -5731,7 +5739,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_layout_update_validates_and_preserves_camera_target_and_fov() {
+    async fn model_layout_update_validates_fov_and_preserves_camera_target() {
         let (mut state, assets_dir) = state_with_temporary_assets();
         let config_path = assets_dir.join("config.json");
         let mut config = (*state.config.current()).clone();
@@ -5740,7 +5748,7 @@ mod tests {
         std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
         state.config = ConfigStore::new(&config_path, config);
         let app = router(state.clone());
-        let request = r#"{"camera_position":[0.1,1.5,2.8],"food_prop_position":[0.01,0.02,0.03],"food_prop_rotation_degrees":[10.0,20.0,30.0],"food_prop_scale":0.25}"#;
+        let request = r#"{"camera_position":[0.1,1.5,2.8],"camera_fov":20.5,"food_prop_position":[0.01,0.02,0.03],"food_prop_rotation_degrees":[10.0,20.0,30.0],"food_prop_scale":0.25}"#;
 
         let unauthorized = app
             .clone()
@@ -5766,6 +5774,38 @@ mod tests {
             .unwrap();
         assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 
+        for fov in ["0", "-1", "0.9", "179.1", "180", "null", "1e100"] {
+            let invalid = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/model-layout?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(request.replace("20.5", fov)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(invalid.status().is_client_error(), "FOV={fov}");
+            let saved = AppConfig::load_from_path(&config_path).unwrap();
+            assert_eq!(saved.character.camera.fov, 35.0);
+            assert_eq!(state.config.current().character.camera.fov, 35.0);
+        }
+
+        for fov in [1.0, 179.0] {
+            let valid = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/model-layout?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(request.replace("20.5", &fov.to_string())))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(valid.status(), StatusCode::NO_CONTENT);
+            assert_eq!(state.config.current().character.camera.fov, fov);
+        }
+
         let mut events = state.events.subscribe();
         let response = app
             .oneshot(
@@ -5786,7 +5826,7 @@ mod tests {
         let saved = AppConfig::load_from_path(&config_path).unwrap();
         assert_eq!(saved.character.camera.position, [0.1, 1.5, 2.8]);
         assert_eq!(saved.character.camera.target, [0.0, 1.25, 0.0]);
-        assert_eq!(saved.character.camera.fov, 35.0);
+        assert_eq!(saved.character.camera.fov, 20.5);
         assert_eq!(saved.character.food_prop.position, [0.01, 0.02, 0.03]);
         assert_eq!(
             saved.character.food_prop.rotation_degrees,

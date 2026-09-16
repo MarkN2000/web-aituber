@@ -50,6 +50,7 @@ const elements = {
   saveAntialias: document.querySelector("#save-model-antialias"),
   layoutForm: document.querySelector("#model-layout-form"), saveLayout: document.querySelector("#save-model-layout"),
   cameraPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#camera-position-${axis}`)),
+  cameraFov: document.querySelector("#camera-fov"), cameraFovNumber: document.querySelector("#camera-fov-number"),
   foodPosition: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-position-${axis}`)),
   foodRotation: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-rotation-${axis}`)),
   foodScale: document.querySelector("#food-prop-scale"),
@@ -299,6 +300,10 @@ function updateAntialiasControls() {
 }
 function updateLayoutControls() {
   [...elements.layoutForm.elements].forEach((element) => { element.disabled = layoutBusy || !token; });
+}
+function syncCameraFovFromNumber() {
+  const fov = Number(elements.cameraFovNumber.value);
+  if (Number.isFinite(fov) && fov >= 1 && fov <= 179) elements.cameraFov.value = String(fov);
 }
 function updateBrightnessLabel() {
   elements.brightnessValue.value = `${elements.brightness.value}%`;
@@ -555,6 +560,8 @@ async function loadDisplayConfig({ preparation = true, background = true, screen
   if (antialias) elements.antialias.checked = config.antialias !== false;
   if (layout) {
     setVectorInputs(elements.cameraPosition, config.camera?.position);
+    elements.cameraFovNumber.value = String(config.camera?.fov ?? 30);
+    syncCameraFovFromNumber();
     setVectorInputs(elements.foodPosition, config.food_prop?.position);
     setVectorInputs(elements.foodRotation, config.food_prop?.rotation_degrees);
     elements.foodScale.value = String(config.food_prop?.size ?? 0.2);
@@ -814,6 +821,11 @@ async function saveModelLayout(event) {
   event.preventDefault();
   if (!token || layoutBusy) return;
   const cameraPosition = vectorValues(elements.cameraPosition);
+  const cameraFov = Number(elements.cameraFovNumber.value);
+  if (!Number.isFinite(cameraFov) || cameraFov < 1 || cameraFov > 179) {
+    setMessage(elements.vrmStatus, elements.vrmError, "画角（FOV）は1〜179度の数値で入力してください。", true);
+    return;
+  }
   const foodPosition = vectorValues(elements.foodPosition);
   const foodRotation = vectorValues(elements.foodRotation);
   const foodScale = Number(elements.foodScale.value);
@@ -832,16 +844,17 @@ async function saveModelLayout(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         camera_position: cameraPosition,
+        camera_fov: cameraFov,
         food_prop_position: foodPosition,
         food_prop_rotation_degrees: foodRotation,
         food_prop_scale: foodScale,
       }),
     });
-    if (!response.ok) throw new Error(await readError(response, "位置調整を保存できませんでした。"));
-    setMessage(elements.vrmStatus, elements.vrmError, "位置調整を保存しました。接続中のメイン画面は現在の処理後に反映します。");
+    if (!response.ok) throw new Error(await readError(response, "画角・位置調整を保存できませんでした。"));
+    setMessage(elements.vrmStatus, elements.vrmError, "画角・位置調整を保存しました。接続中のメイン画面は待機中ならすぐ、投稿処理中なら終了後に反映します。");
   } catch (error) {
     console.error(error);
-    setMessage(elements.vrmStatus, elements.vrmError, error.message || "位置調整を保存できませんでした。", true);
+    setMessage(elements.vrmStatus, elements.vrmError, error.message || "画角・位置調整を保存できませんでした。", true);
   } finally {
     layoutBusy = false;
     elements.saveLayout.textContent = original;
@@ -1281,6 +1294,8 @@ elements.brightness.addEventListener("input", updateBrightnessLabel);
 elements.brightnessForm.addEventListener("submit", saveModelBrightness);
 elements.antialiasForm.addEventListener("submit", saveModelAntialias);
 elements.layoutForm.addEventListener("submit", saveModelLayout);
+elements.cameraFov.addEventListener("input", () => { elements.cameraFovNumber.value = elements.cameraFov.value; });
+elements.cameraFovNumber.addEventListener("input", syncCameraFovFromNumber);
 updateLayoutControls();
 elements.preparationModeForm.addEventListener("submit", savePreparationMode);
 elements.preparationMode.addEventListener("change", updatePreparationModeControls);

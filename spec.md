@@ -123,7 +123,7 @@
 - 表示設定タブではモデルのアンチエイリアスをON/OFFで設定し、`character.antialias`へ真偽値で保存する。初期値はONとする
 - アンチエイリアスがONの場合は、VRMの`alphaTest`が0より大きいマテリアルへ`alphaToCoverage`を適用する。OFFの場合と`alphaTest`が0のマテリアルには適用しない
 - アンチエイリアスの保存に成功した場合は接続中のメイン画面へ変更を通知する。メイン画面が発話または食事動作を処理中の場合は、現在の処理が終わってからビューアーを再初期化する
-- 表示設定タブではCameraのPosition X・Y・Zと、Food PropのPosition X・Y・Z、Rotation X・Y・Z、Scaleを数値で設定し、一つの保存操作で確定する。CameraのTargetとFOVは変更しない
+- 表示設定タブではCameraのPosition X・Y・ZとFOV、Food PropのPosition X・Y・Z、Rotation X・Y・Z、Scaleを設定し、一つの保存操作で確定する。FOVは垂直画角を度で指定し、1〜179度の有限値を受け付ける。スライダーは0.1度刻みで数値入力と連動し、既定値は30度とする。ラベルは「FOV（画角）」とし、説明文は付けない。CameraのTargetは変更しない
 - 位置調整の保存に成功した場合は接続中のメイン画面へ変更を通知する。メイン画面が発話または食事動作を処理中の場合は、現在の処理が終わってから配置を読み込み直す
 - 表示設定タブでは、現在の背景画像を確認し、端末内のJPEG、PNG、WebP画像を選択して背景画像としてアップロード・上書きできる
 - 選択した背景画像は管理端末のブラウザで長辺1920px以内へ縮小し、品質85%のWebPへ変換する。元画像と変換後画像はそれぞれ10MiB以下とする
@@ -360,7 +360,7 @@
 - VRMモデル管理APIは100MiB以下の`.vrm`ファイルだけを受け付け、GLB 2.0のチャンク構造とJSONチャンク内の`VRM`または`VRMC_vrm`拡張を検証してから、同じディレクトリ内の一時ファイルを使用して`assets/model.vrm`を原子的に置き換える。
 - モデル明るさ管理APIは管理用トークンを必要とする`PUT /api/admin/model-brightness`で`{"brightness": 1.0}`形式を受け付け、0.0〜2.0の有限値だけを保存する。
 - モデルのアンチエイリアス管理APIは管理用トークンを必要とする`PUT /api/admin/model-antialias`で`{"antialias": true}`形式を受け付け、他の設定項目を変更せず`character.antialias`だけを保存する。
-- モデル配置管理APIは管理用トークンを必要とする`PUT /api/admin/model-layout`でCamera Position、Food Prop Position、Rotation、Scaleを受け付け、有限値かつ正のScaleだけを保存する。CameraのTarget、FOVと他の設定項目は変更しない。
+- モデル配置管理APIは管理用トークンを必要とする`PUT /api/admin/model-layout`でCamera Position、必須の`camera_fov`、Food Prop Position、Rotation、Scaleを受け付ける。位置・回転は有限値、FOVは1〜179度の有限値、Scaleは正の有限値だけを保存する。`camera_fov`は`character.camera.fov`へ保存し、CameraのTargetと他の設定項目は変更しない。成功時は表示設定の変更を通知し、接続中のメイン画面へ待機中ならすぐ、投稿処理中なら処理終了後に反映する。
 - 手ブレ補正管理APIは管理用トークンを必要とする`PUT /api/admin/drawing-stabilization`で`{"stabilization": 3}`形式を受け付け、0〜10の整数だけを、他の設定項目を変更せず`drawing.stabilization`へ保存する
 - モーション管理APIは管理用トークンを必要とする。`GET /api/admin/motions`は`files`（`name`と`url`の一覧）、`idle_motions`、`emotion_motions`、`food_motion`だけを返す。ファイル一覧は`assets/motions/`直下の通常ファイルで拡張子が`.vrma`のものとし、URLはエンコードする。設定URLは更新識別子を付けずに返す。既存の外部URLや一覧にない設定URLも表示・保持できる。
 - `PUT /api/admin/motions`は`idle_motions`、`emotion_motions`、`food_motion`を受け付ける。感情名は5種類に限定し、新たなURLは一覧内のファイルから選ぶ。現在設定されているURLも許可し、既存設定を保持できるようにする。`POST /api/admin/motions`はmultipartの`motion`フィールドで1件のVRMAを受け取り、保存した`name`と`url`を返す。候補解除のためのファイル削除APIは設けない。

@@ -68,6 +68,14 @@ function loadContext(initialConfig) {
   return { context, calls };
 }
 
+test("FOVだけの変更もビューアーの再読み込みを予約する", () => {
+  const initial = config();
+  const { context, calls } = loadContext(initial);
+  context.apply(config({ camera: { ...initial.camera, fov: 20 } }));
+  assert.equal(calls.viewerReloads, 1);
+  assert.equal(context.pending().camera.fov, 20);
+});
+
 test("BGM音量と背景だけの変更ではモデルを再読み込みしない", () => {
   const initial = config();
   const { context, calls } = loadContext(initial);
