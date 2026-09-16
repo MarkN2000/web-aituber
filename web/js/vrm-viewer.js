@@ -112,13 +112,17 @@ export class VrmViewer {
         warnings.push(`待機モーションを読み込めませんでした: ${url}`);
       }
     }
-    for (const [emotion, url] of Object.entries(config.emotion_motions || {})) {
-      if (!isEmotion(emotion) || !url) continue;
-      try {
-        this.emotionClips.set(emotion, await this.loadMotion(url));
-      } catch {
-        warnings.push(`感情モーションを読み込めませんでした: ${url}`);
+    for (const [emotion, urls] of Object.entries(config.emotion_motions || {})) {
+      if (!isEmotion(emotion)) continue;
+      const motions = [];
+      for (const url of urls) {
+        try {
+          motions.push(await this.loadMotion(url));
+        } catch {
+          warnings.push(`感情モーションを読み込めませんでした: ${url}`);
+        }
       }
+      this.emotionClips.set(emotion, motions);
     }
     const foodMotionUrl = config.food_motion?.url;
     if (foodMotionUrl?.trim()) {
@@ -216,8 +220,9 @@ export class VrmViewer {
 
   playEmotionMotion(emotion) {
     if (this.foodAction) return;
-    const motion = this.emotionClips.get(emotion);
-    if (!motion || !this.mixer) return;
+    const motions = this.emotionClips.get(emotion);
+    if (!motions?.length || !this.mixer) return;
+    const motion = motions[Math.floor(Math.random() * motions.length)];
     this.playClip(motion, false, 'emotion');
   }
 

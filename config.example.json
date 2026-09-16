@@ -32,10 +32,10 @@
       "/assets/motions/VRMA_03.vrma"
     ],
     "emotion_motions": {
-      "surprised": "/assets/motions/VRMA_07.vrma",
-      "sad": "/assets/motions/VRMA_05.vrma",
-      "happy": "/assets/motions/VRMA_04.vrma",
-      "angry": "/assets/motions/VRMA_06.vrma"
+      "surprised": ["/assets/motions/VRMA_07.vrma"],
+      "sad": ["/assets/motions/VRMA_05.vrma"],
+      "happy": ["/assets/motions/VRMA_04.vrma"],
+      "angry": ["/assets/motions/VRMA_06.vrma"]
     },
     "food_motion": {
       "url": "/assets/motions/eat2.vrma",

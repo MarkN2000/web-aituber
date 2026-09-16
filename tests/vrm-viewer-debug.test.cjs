@@ -331,12 +331,55 @@ test("未設定の食事モーションURLは読み込まず、待機モーシ�
   }
 });
 
+test("感情ごとに読み込めた候補から毎回ランダムで選び、空や未登録なら再生しない", async () => {
+  const viewer = createViewer();
+  const warnings = [];
+  const loaded = [];
+  viewer.report = (message) => warnings.push(message);
+  viewer.loadMotion = async (url) => {
+    loaded.push(url);
+    if (url === "/missing.vrma") throw new Error("読込失敗");
+    return { clip: {}, fileName: url.slice(1) };
+  };
+  await viewer.loadMotions({ emotion_motions: {
+    happy: ["/happy1.vrma", "/missing.vrma", "/happy2.vrma"],
+    sad: [],
+    angry: ["/missing.vrma"],
+    surprised: ["/surprised.vrma"],
+  } });
+  assert.deepEqual(loaded, ["/happy1.vrma", "/missing.vrma", "/happy2.vrma", "/missing.vrma", "/surprised.vrma"]);
+  assert.match(warnings[0], /感情モーションを読み込めませんでした: \/missing.vrma/);
+
+  const originalRandom = vm.runInContext("Math.random", context);
+  try {
+    for (const [random, expected] of [[0, "happy1.vrma"], [0.499, "happy1.vrma"], [0.5, "happy2.vrma"], [0.999, "happy2.vrma"]]) {
+      context.random = () => random;
+      vm.runInContext("Math.random = random", context);
+      viewer.playEmotionMotion("happy");
+      assert.equal(viewer.currentMotion.fileName, expected);
+      assert.equal(viewer.currentMotion.kind, "emotion");
+    }
+    viewer.playEmotionMotion("surprised");
+    assert.equal(viewer.currentMotion.fileName, "surprised.vrma");
+    for (const emotion of ["sad", "angry", "neutral"]) {
+      viewer.playEmotionMotion(emotion);
+      assert.equal(viewer.currentMotion.fileName, "surprised.vrma");
+    }
+    viewer.foodAction = {};
+    viewer.playEmotionMotion("happy");
+    assert.equal(viewer.currentMotion.fileName, "surprised.vrma");
+  } finally {
+    context.random = originalRandom;
+    vm.runInContext("Math.random = random", context);
+  }
+});
+
 test("実際に選択した待機・感情モーションを状態変更時だけ通知する", () => {
   const viewer = createViewer();
   const idle = { clip: {}, fileName: "idle.vrma" };
   const emotion = { clip: {}, fileName: "happy.vrma" };
   viewer.idleClips = [idle];
-  viewer.emotionClips.set("happy", emotion);
+  viewer.emotionClips.set("happy", [emotion]);
 
   viewer.resumeIdle();
   viewer.resumeIdle();
@@ -361,7 +404,7 @@ test("感情モーション終了後は実際に選択した待機モーショ�
   const idle = { clip: {}, fileName: "idle.vrma" };
   const emotion = { clip: {}, fileName: "happy.vrma" };
   viewer.idleClips = [idle];
-  viewer.emotionClips.set("happy", emotion);
+  viewer.emotionClips.set("happy", [emotion]);
   viewer.playEmotionMotion("happy");
   const emotionAction = viewer.currentAction;
 
@@ -390,7 +433,7 @@ test("再生できる身体モーションがない場合はなしを通知す�
 test("待機モーションがない場合も終了したモーションを滑らかに解除する", () => {
   const viewer = createViewer();
   const emotion = { clip: {}, fileName: "happy.vrma" };
-  viewer.emotionClips.set("happy", emotion);
+  viewer.emotionClips.set("happy", [emotion]);
   viewer.playEmotionMotion("happy");
   const emotionAction = viewer.currentAction;
 
@@ -560,7 +603,7 @@ test("食事動作終了後に読み込みが完了した画像は表示しな�
 function configureFoodViewer() {
   const viewer = createViewer();
   viewer.idleClips = [{ clip: {}, fileName: "idle.vrma" }];
-  viewer.emotionClips.set("happy", { clip: {}, fileName: "happy.vrma" });
+  viewer.emotionClips.set("happy", [{ clip: {}, fileName: "happy.vrma" }]);
   viewer.foodAnchor = { add() {}, remove() {} };
   viewer.foodPropSize = 0.2;
   viewer.report = () => {};

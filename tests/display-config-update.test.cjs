@@ -82,12 +82,21 @@ test("BGM音量と背景だけの変更ではモデルを再読み込みしな�
 });
 
 test("感情モーションのJSON順序だけが変わってもモデルを再読み込みしない", () => {
-  const initial = config({ emotion_motions: { happy: "/happy.vrma", sad: "/sad.vrma" } });
+  const initial = config({ emotion_motions: { happy: ["/happy.vrma"], sad: ["/sad.vrma"] } });
   const { context, calls } = loadContext(initial);
 
-  context.apply(config({ emotion_motions: { sad: "/sad.vrma", happy: "/happy.vrma" } }));
+  context.apply(config({ emotion_motions: { sad: ["/sad.vrma"], happy: ["/happy.vrma"] } }));
 
   assert.equal(calls.viewerReloads, 0);
+});
+
+test("感情モーションの候補追加でビューアーの再読み込みを予約する", () => {
+  const initial = config({ emotion_motions: { happy: ["/happy1.vrma"] } });
+  const { context, calls } = loadContext(initial);
+  const changed = config({ emotion_motions: { happy: ["/happy1.vrma", "/happy2.vrma"] } });
+  context.apply(changed);
+  assert.equal(calls.viewerReloads, 1);
+  assert.equal(context.pending().emotion_motions, changed.emotion_motions);
 });
 
 test("VRMのURLが変わった場合だけビューアーの再読み込みを予約する", () => {

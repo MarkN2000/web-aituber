@@ -140,7 +140,7 @@ pub enum ServerEvent {
         sequence: u32,
         text: String,
         emotion: Emotion,
-        motion: Option<String>,
+        motion: Option<Emotion>,
         audio_url: String,
         duration_ms: u64,
         is_last: bool,

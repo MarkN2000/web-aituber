@@ -257,7 +257,8 @@ async fn process_active_submission(
                 .character
                 .emotion_motions
                 .get(segment.emotion.as_str())
-                .cloned()
+                .filter(|motions| !motions.is_empty())
+                .map(|_| segment.emotion)
                 .inspect(|_| motion_sent = true)
         };
 

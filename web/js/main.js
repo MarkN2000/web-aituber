@@ -156,7 +156,7 @@ function viewerConfigKey(config) {
 }
 
 async function createViewer(config) {
-  const { VrmViewer } = await import("./vrm-viewer.js?v=21");
+  const { VrmViewer } = await import("./vrm-viewer.js?v=22");
   return new VrmViewer(elements.canvas, showViewerMessage, {
     antialias: config.antialias !== false,
     showFoodPropGizmo: debugEnabled,
@@ -514,9 +514,9 @@ function onAudioStart(item, analyser) {
   backgroundMusic?.setDucked(true);
   setEmotion(segment.kind === "filler" ? "neutral" : segment.emotion);
   viewer?.startLipSync(analyser);
-  if (segment.kind !== "filler" && motionPlayedForTurn !== segment.turn_id && segment.motion && isEmotion(segment.emotion)) {
+  if (segment.kind !== "filler" && motionPlayedForTurn !== segment.turn_id && isEmotion(segment.motion)) {
     motionPlayedForTurn = segment.turn_id;
-    viewer?.playEmotionMotion(segment.emotion);
+    viewer?.playEmotionMotion(segment.motion);
   }
 }
 

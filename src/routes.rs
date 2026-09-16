@@ -565,7 +565,7 @@ async fn version_character_asset_urls(
     for url in &mut character.idle_motions {
         *url = version_local_asset_url(assets_dir, url).await;
     }
-    for url in character.emotion_motions.values_mut() {
+    for url in character.emotion_motions.values_mut().flatten() {
         *url = version_local_asset_url(assets_dir, url).await;
     }
     if let Some(food_motion) = &mut character.food_motion {
@@ -2324,7 +2324,7 @@ struct DisplayCharacterConfig {
     vrm_url: String,
     antialias: bool,
     idle_motions: Vec<String>,
-    emotion_motions: HashMap<String, String>,
+    emotion_motions: HashMap<String, Vec<String>>,
     food_motion: Option<crate::config::FoodMotionConfig>,
     food_prop: crate::config::FoodPropConfig,
     camera: crate::config::CameraConfig,
@@ -4552,11 +4552,21 @@ mod tests {
 
     #[tokio::test]
     async fn display_config_versions_character_assets_and_sets_cache_headers() {
-        let (state, assets_dir) = state_with_temporary_assets();
+        let (mut state, assets_dir) = state_with_temporary_assets();
         std::fs::create_dir_all(assets_dir.join("motions")).unwrap();
         std::fs::write(assets_dir.join("model.vrm"), b"model").unwrap();
         std::fs::write(assets_dir.join("motions/VRMA_01.vrma"), b"motion").unwrap();
         std::fs::write(assets_dir.join("motions/eat2.vrma"), b"food-motion").unwrap();
+        let mut config = (*state.config.current()).clone();
+        config.character.emotion_motions.insert(
+            "happy".to_owned(),
+            vec![
+                "/assets/motions/VRMA_01.vrma".to_owned(),
+                "/assets/motions/eat2.vrma".to_owned(),
+                "https://example.com/happy.vrma".to_owned(),
+            ],
+        );
+        state.config = ConfigStore::new("config.example.json", config);
         let app = router(state);
 
         let load_config = || async {
@@ -4583,6 +4593,15 @@ mod tests {
         assert_eq!(first["vrm_url"], second["vrm_url"]);
         assert_eq!(first["idle_motions"][0], second["idle_motions"][0]);
         assert_eq!(first["food_motion"]["url"], second["food_motion"]["url"]);
+        assert_eq!(
+            first["emotion_motions"]["happy"],
+            serde_json::json!([
+                motion_url,
+                food_motion_url,
+                "https://example.com/happy.vrma"
+            ])
+        );
+        assert_eq!(first["emotion_motions"], second["emotion_motions"]);
 
         let versioned = app
             .clone()

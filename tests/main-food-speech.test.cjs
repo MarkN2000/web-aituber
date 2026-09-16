@@ -33,6 +33,8 @@ const onAudioEndSource = source.slice(
   source.indexOf("function onAudioEnd"),
   source.indexOf("async function startMain"),
 );
+const onAudioStartSource = source.slice(source.indexOf("function onAudioStart"), source.indexOf("function onAudioEnd"));
+const motionSource = fs.readFileSync(path.join(__dirname, "../web/js/motion.js"), "utf8").replace(/export /g, "");
 
 function loadContext() {
   const calls = [];
@@ -56,6 +58,8 @@ function loadContext() {
       stopLipSync() { calls.push("stopLip"); },
       setIdleExpression() { calls.push("idleExpression"); },
       resumeIdle() { calls.push("idleMotion"); },
+      startLipSync() {},
+      playEmotionMotion(emotion) { calls.push(["motion", emotion]); },
     };
     const queue = {
       cancelTurn(turnId) { calls.push(["cancel", turnId]); },
@@ -78,9 +82,12 @@ function loadContext() {
     function showCurrentSources() {}
     ${handleServerEventSource}
     ${receiveSegmentSource}
+    ${motionSource}
+    ${onAudioStartSource}
     ${onAudioEndSource}
     this.handle = handleServerEvent;
     this.audioEnd = onAudioEnd;
+    this.audioStart = onAudioStart;
     this.currentTurn = () => currentTurn;
     this.received = (turnId) => receivedTurns.has(turnId);
   `, context);
@@ -109,6 +116,19 @@ function segment(turnId) {
 function audioItem(turnId) {
   return { turnId, meta: { is_last: true } };
 }
+
+test("音声開始時に指定感情のモーションを回答あたり最大1回だけ再生する", () => {
+  const { context, calls } = loadContext();
+  const start = (turnId, motion, kind = "answer") => context.audioStart({ meta: { ...segment(turnId), motion, kind } });
+  start("turn-1", null);
+  start("turn-1", "sad", "filler");
+  start("turn-1", "invalid");
+  assert.deepEqual(calls.filter((call) => call[0] === "motion"), []);
+  start("turn-1", "happy");
+  start("turn-1", "sad");
+  start("turn-2", "sad");
+  assert.deepEqual(calls.filter((call) => call[0] === "motion").map((call) => Array.from(call)), [["motion", "happy"], ["motion", "sad"]]);
+});
 
 test("Completeが先でも最終音声の終了まで食事演出を片付けない", () => {
   const { context, calls } = loadContext();

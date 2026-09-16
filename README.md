@@ -111,6 +111,21 @@ http://127.0.0.1:3000/event/イベント識別子?debug
 
 通常運用では`?debug`を付けません。`character.food_prop`を変更した場合は、管理画面で設定を再読み込みしてからメイン画面を再読み込みしてください。
 
+## 感情モーションの設定
+
+`config.json`の`character.emotion_motions`に、感情ごとのVRMAのURLを配列で指定します。たとえば、`happy`に2種類を登録する場合は次のようにします。
+
+```json
+"emotion_motions": {
+  "happy": ["/assets/motions/happy1.vrma", "/assets/motions/happy2.vrma"],
+  "sad": ["/assets/motions/VRMA_05.vrma"]
+}
+```
+
+候補のVRMAを`assets/motions/`へ配置し、管理画面で設定を再読み込みしてください。各メイン画面が読み込みに成功した候補から毎回ランダムで1つ選びます。同じモーションが連続する場合もあります。1回答につき最大1回だけ再生し、終了後は待機に戻ります。空配列`[]`または感情の省略で、その感情のモーションを無効にできます。
+
+以前の`"happy": "/assets/motions/VRMA_04.vrma"`という文字列形式は、`"happy": ["/assets/motions/VRMA_04.vrma"]`のように配列へ変更してください。候補が1つの場合も配列を使います。
+
 ## 開発
 
 ```powershell

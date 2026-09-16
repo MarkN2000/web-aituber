@@ -71,7 +71,7 @@ pub struct CharacterConfig {
     #[serde(default)]
     pub idle_motions: Vec<String>,
     #[serde(default)]
-    pub emotion_motions: HashMap<String, String>,
+    pub emotion_motions: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub food_motion: Option<FoodMotionConfig>,
     #[serde(default)]
@@ -273,6 +273,14 @@ impl AppConfig {
             bail!("設定項目 drawing.stabilization は0から10の整数にしてください");
         }
         required("character.vrm_url", &self.character.vrm_url)?;
+        for (emotion, urls) in &self.character.emotion_motions {
+            for (index, url) in urls.iter().enumerate() {
+                required(
+                    &format!("character.emotion_motions.{emotion}[{index}]"),
+                    url,
+                )?;
+            }
+        }
         if let Some(food_motion) = &self.character.food_motion {
             let minimum_duration = food_motion.consume_at_ms.checked_add(400).ok_or_else(|| {
                 anyhow::anyhow!("設定項目 character.food_motion.consume_at_ms が大きすぎます")
@@ -660,6 +668,34 @@ mod tests {
         let config: AppConfig = serde_json::from_value(value).unwrap();
         config.validate().unwrap();
         assert!(config.character.food_motion.is_none());
+    }
+
+    #[test]
+    fn 感情モーションは複数候補と空配列を受け付け空urlを拒否する() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../config.example.json")).unwrap();
+        value["character"]["emotion_motions"] = serde_json::json!({
+            "happy": ["/happy1.vrma", "/happy2.vrma"], "sad": []
+        });
+        let mut config: AppConfig = serde_json::from_value(value.clone()).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.character.emotion_motions["happy"].len(), 2);
+        assert!(config.character.emotion_motions["sad"].is_empty());
+        config
+            .character
+            .emotion_motions
+            .get_mut("happy")
+            .unwrap()
+            .push(" \t ".to_owned());
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("character.emotion_motions.happy[2]")
+        );
+        value["character"]["emotion_motions"]["happy"] = serde_json::json!("/happy.vrma");
+        assert!(serde_json::from_value::<AppConfig>(value).is_err());
     }
 
     #[test]
