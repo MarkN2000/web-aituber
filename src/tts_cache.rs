@@ -62,7 +62,7 @@ fn context(config: &AppConfig) -> String {
             env!("CARGO_PKG_VERSION"),
             &config.tts,
             &config.ffmpeg_path,
-            "m4a-aac-lc-32k-mono",
+            "webm-opus-32k-mono",
         ))
         .unwrap(),
     )
@@ -166,7 +166,7 @@ impl TtsCache {
     fn read(&self, key: &str) -> Result<CachedAudio> {
         let metadata: Metadata =
             serde_json::from_slice(&fs::read(self.directory.join(format!("{key}.json")))?)?;
-        let bytes = fs::read(self.directory.join(format!("{key}.m4a")))?;
+        let bytes = fs::read(self.directory.join(format!("{key}.webm")))?;
         ensure!(
             !bytes.is_empty() && hash(&bytes) == metadata.audio_sha256,
             "音声キャッシュが破損しています"
@@ -195,7 +195,7 @@ impl TtsCache {
             Err(error) if error.kind() == ErrorKind::NotFound => (),
             Err(error) => return Err(error.into()),
         }
-        fs::write(self.directory.join(format!("{key}.m4a")), &audio.bytes)?;
+        fs::write(self.directory.join(format!("{key}.webm")), &audio.bytes)?;
         fs::write(metadata_path, metadata)?;
         Ok(())
     }
@@ -230,8 +230,8 @@ impl TtsCache {
 /// キャッシュに失敗しても音声を返せるよう、変換先は配信用の一時領域を使う。
 pub async fn convert(ffmpeg: &str, wav: &[u8], temporary_directory: &Path) -> Result<CachedAudio> {
     let temporary =
-        TemporaryAudio(temporary_directory.join(format!("{}-cache.m4a", uuid::Uuid::new_v4())));
-    let duration_ms = audio::transcode_to_aac(ffmpeg, wav, &temporary.0).await?;
+        TemporaryAudio(temporary_directory.join(format!("{}-cache.webm", uuid::Uuid::new_v4())));
+    let duration_ms = audio::transcode_to_opus(ffmpeg, wav, &temporary.0).await?;
     let bytes = tokio::fs::read(&temporary.0).await?;
     Ok(CachedAudio { bytes, duration_ms })
 }
@@ -258,7 +258,7 @@ mod tests {
     }
     async fn generated() -> Result<CachedAudio> {
         Ok(CachedAudio {
-            bytes: b"converted-m4a".to_vec(),
+            bytes: b"converted-webm".to_vec(),
             duration_ms: 2450,
         })
     }
@@ -295,25 +295,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 旧形式キャッシュは同じアプリバージョンでも破棄する() {
+    async fn aacキャッシュは同じアプリバージョンでも破棄する() {
         let cache = cache();
         let config = config();
         cache.get_or_generate("key", generated()).await.unwrap();
         fs::rename(
-            cache.directory.join("key.m4a"),
             cache.directory.join("key.webm"),
+            cache.directory.join("key.m4a"),
         )
         .unwrap();
         let old_context = hash(
-            &serde_json::to_vec(&(env!("CARGO_PKG_VERSION"), &config.tts, &config.ffmpeg_path))
-                .unwrap(),
+            &serde_json::to_vec(&(
+                env!("CARGO_PKG_VERSION"),
+                &config.tts,
+                &config.ffmpeg_path,
+                "m4a-aac-lc-32k-mono",
+            ))
+            .unwrap(),
         );
         fs::write(cache.directory.join("context"), old_context).unwrap();
         let reopened = TtsCache::new(cache.directory.clone(), &config);
         assert!(!reopened.directory.exists());
         reopened.get_or_generate("key", generated()).await.unwrap();
-        assert!(reopened.directory.join("key.m4a").exists());
-        assert!(!reopened.directory.join("key.webm").exists());
+        assert!(reopened.directory.join("key.webm").exists());
+        assert!(!reopened.directory.join("key.m4a").exists());
         reopened.clear().unwrap();
     }
 
@@ -322,14 +327,14 @@ mod tests {
         let cache = cache();
         cache.get_or_generate("key", generated()).await.unwrap();
         for (name, bytes) in [
-            ("key.m4a", b"broken".as_slice()),
+            ("key.webm", b"broken".as_slice()),
             ("key.json", b"{".as_slice()),
         ] {
             fs::write(cache.directory.join(name), bytes).unwrap();
             let audio = cache.get_or_generate("key", generated()).await.unwrap();
-            assert_eq!(audio.bytes, b"converted-m4a");
+            assert_eq!(audio.bytes, b"converted-webm");
         }
-        fs::remove_file(cache.directory.join("key.m4a")).unwrap();
+        fs::remove_file(cache.directory.join("key.webm")).unwrap();
         cache.get_or_generate("key", generated()).await.unwrap();
         fs::remove_file(cache.directory.join("key.json")).unwrap();
         assert!(

@@ -82,7 +82,7 @@ async fn process_idle_speech(
         },
     )
     .await;
-    let file_name = format!("{turn_id}-idle.m4a");
+    let file_name = format!("{turn_id}-idle.webm");
     let output_path = state.audio_dir.join(&file_name);
     let mut next_submission = None;
     let result = tokio::select! {
@@ -290,7 +290,7 @@ async fn process_active_submission(
         })?,
         search = &mut search_started => {
             if search.is_ok() {
-                let file_name = format!("{}-search.m4a", submission.id);
+                let file_name = format!("{}-search.webm", submission.id);
                 let output_path = state.audio_dir.join(&file_name);
                 let filler = state.next_search_filler(&config.llm.search_fillers);
                 match cancellable(
@@ -347,7 +347,7 @@ async fn process_active_submission(
     let mut motion_sent = false;
 
     for (index, segment) in segments.iter().enumerate() {
-        let file_name = format!("{}-{index}.m4a", submission.id);
+        let file_name = format!("{}-{index}.webm", submission.id);
         let output_path = state.audio_dir.join(&file_name);
         audio_files.push(output_path.clone());
         let duration_ms = cancellable(
@@ -840,7 +840,7 @@ mod tests {
                 &config,
                 &config.idle_speech.entries[1],
                 "idle-1",
-                "idle-1.m4a",
+                "idle-1.webm",
                 1500,
             )
             .await;
@@ -1013,7 +1013,7 @@ mod tests {
                         text: "おいしいです。".to_owned(),
                         emotion: Emotion::Happy,
                         motion: None,
-                        audio_url: format!("/audio/food-{index}.m4a"),
+                        audio_url: format!("/audio/food-{index}.webm"),
                         duration_ms,
                         is_last: index + 1 == audio_durations.len(),
                         kind: SegmentKind::Answer,

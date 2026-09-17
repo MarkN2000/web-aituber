@@ -4,7 +4,7 @@ use std::{fs, io::Cursor, path::Path, process::Command};
 
 use web_aituber::{audio, background_music};
 
-fn assert_aac(path: &Path, channels: u64) {
+fn assert_audio(path: &Path, codec: &str, channels: u64) {
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -19,14 +19,13 @@ fn assert_aac(path: &Path, channels: u64) {
         .unwrap();
     assert!(output.status.success());
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(probe["streams"][0]["codec_name"], "aac");
-    assert_eq!(probe["streams"][0]["profile"], "LC");
+    assert_eq!(probe["streams"][0]["codec_name"], codec);
     assert_eq!(probe["streams"][0]["channels"], channels);
     assert!(
         probe["format"]["format_name"]
             .as_str()
             .unwrap()
-            .contains("m4a")
+            .contains(if codec == "aac" { "m4a" } else { "webm" })
     );
     let duration = probe["format"]["duration"]
         .as_str()
@@ -34,15 +33,18 @@ fn assert_aac(path: &Path, channels: u64) {
         .parse::<f64>()
         .unwrap();
     assert!((duration - 1.0).abs() < 0.1);
-    let bytes = fs::read(path).unwrap();
-    let moov = bytes.windows(4).position(|value| value == b"moov").unwrap();
-    let mdat = bytes.windows(4).position(|value| value == b"mdat").unwrap();
-    assert!(moov < mdat, "再生情報は音声データより前に配置する");
+    if codec == "aac" {
+        assert_eq!(probe["streams"][0]["profile"], "LC");
+        let bytes = fs::read(path).unwrap();
+        let moov = bytes.windows(4).position(|value| value == b"moov").unwrap();
+        let mdat = bytes.windows(4).position(|value| value == b"mdat").unwrap();
+        assert!(moov < mdat, "再生情報は音声データより前に配置する");
+    }
 }
 
 #[tokio::test]
 #[ignore = "FFmpegとffprobeがPATHに必要"]
-async fn aac変換と旧bgmの安全な移行() {
+async fn ttsはopusでbgmはaacへ安全に移行する() {
     let directory = std::env::temp_dir().join(format!("audio-format-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&directory).unwrap();
     let mut buffer = Cursor::new(Vec::new());
@@ -64,29 +66,18 @@ async fn aac変換と旧bgmの安全な移行() {
             .unwrap();
     }
     writer.finalize().unwrap();
-    let tts = directory.join("tts.m4a");
+    let tts = directory.join("tts.webm");
     assert_eq!(
-        audio::transcode_to_aac("ffmpeg", buffer.get_ref(), &tts)
+        audio::transcode_to_opus("ffmpeg", buffer.get_ref(), &tts)
             .await
             .unwrap(),
         1000
     );
-    assert_aac(&tts, 1);
+    assert_audio(&tts, "opus", 1);
 
-    let wav = directory.join("input.wav");
-    fs::write(&wav, buffer.get_ref()).unwrap();
-    // 旧版が生成していた形式を移行用の入力として再現する。
+    // 同じWebM/Opus音声を旧BGMの移行用入力に使う。
     let legacy = directory.join("background-music.webm");
-    assert!(
-        Command::new("ffmpeg")
-            .args(["-v", "error", "-i"])
-            .arg(&wav)
-            .args(["-c:a", "libopus"])
-            .arg(&legacy)
-            .status()
-            .unwrap()
-            .success()
-    );
+    fs::copy(&tts, &legacy).unwrap();
     let original = fs::read(&legacy).unwrap();
     assert!(
         background_music::migrate_legacy("存在しないffmpeg", &directory)
@@ -99,7 +90,7 @@ async fn aac変換と旧bgmの安全な移行() {
     background_music::migrate_legacy("ffmpeg", &directory)
         .await
         .unwrap();
-    assert_aac(&music, 2);
+    assert_audio(&music, "aac", 2);
     assert!(!legacy.exists());
     let backups: Vec<_> = fs::read_dir(&directory)
         .unwrap()

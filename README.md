@@ -89,9 +89,9 @@ APIキーと管理用トークンは管理画面に表示されません。`conf
 
 ## 音声キャッシュ
 
-同じエンジン・話者・文章・音声パラメータの読み上げは、変換済みのM4A/AAC-LCを再利用します。通常回答、待機セリフ、検索中フィラー、管理画面の試聴で共通です。
+同じエンジン・話者・文章・音声パラメータの読み上げは、変換済みのWebM/Opusを再利用します。通常回答、待機セリフ、検索中フィラー、管理画面の試聴で共通です。
 
-BGMもM4A/AAC-LCで配信します。旧版の`assets/background-music.webm`は起動時に自動変換し、元音源を`background-music.webm.<一意なID>.bak`へ退避します。既存のM4Aは上書きしません。旧形式の音声キャッシュは削除され、必要時に再生成されます。
+BGMはM4A/AAC-LCで配信します。旧版の`assets/background-music.webm`は起動時に自動変換し、元音源を`background-music.webm.<一意なID>.bak`へ退避します。既存のM4Aは上書きしません。音声キャッシュの形式が異なる場合は削除され、必要時にWebM/Opusで再生成されます。
 
 設定ファイルの横に `config.tts-cache/`（設定ファイル名に合わせた名前）が自動作成され、再起動後も再利用します。保存するのは音声と再生時間・チェックサムです。容量上限は512MiBで、古いファイルから整理します。設定ファイルへの項目追加は不要です。
 
@@ -166,7 +166,7 @@ cargo clippy --all-targets -- -D warnings
 node --test tests/*.test.cjs
 ```
 
-FFmpegとffprobeがPATHにある環境では、`cargo test --test audio-format -- --ignored`でAAC-LC変換、faststart、旧BGMの移行とバックアップも検証できます。
+FFmpegとffprobeがPATHにある環境では、`cargo test --test audio-format -- --ignored`でTTSのOpus変換、BGMのAAC-LC変換、faststart、旧BGMの移行とバックアップも検証できます。
 
 画像変換の実ブラウザ検証は`node tests/webp-browser-server.cjs`で専用サーバーを起動し、
 `http://127.0.0.1:8765/`（通常経路）と`http://127.0.0.1:8765/?wasm=1`（Canvas非対応を再現）を開きます。

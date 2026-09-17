@@ -190,7 +190,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("web-aituber-test-{}", Uuid::new_v4()));
         let previous = root.join("previous");
         tokio::fs::create_dir_all(&previous).await.unwrap();
-        tokio::fs::write(previous.join("audio.m4a"), b"audio")
+        tokio::fs::write(previous.join("audio.webm"), b"audio")
             .await
             .unwrap();
 

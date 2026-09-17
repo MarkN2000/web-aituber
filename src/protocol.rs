@@ -211,7 +211,7 @@ mod tests {
             text: String::new(),
             emotion: Emotion::Neutral,
             motion: None,
-            audio_url: "/audio/filler.m4a".to_owned(),
+            audio_url: "/audio/filler.webm".to_owned(),
             duration_ms: 800,
             is_last: false,
             kind: SegmentKind::Filler,

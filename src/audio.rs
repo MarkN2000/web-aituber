@@ -13,7 +13,7 @@ pub fn wav_duration_ms(wav: &[u8]) -> Result<u64> {
     Ok(samples.saturating_mul(1_000).div_ceil(sample_rate))
 }
 
-pub async fn transcode_to_aac(ffmpeg_path: &str, wav: &[u8], destination: &Path) -> Result<u64> {
+pub async fn transcode_to_opus(ffmpeg_path: &str, wav: &[u8], destination: &Path) -> Result<u64> {
     let duration_ms = wav_duration_ms(wav)?;
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent)
@@ -32,15 +32,11 @@ pub async fn transcode_to_aac(ffmpeg_path: &str, wav: &[u8], destination: &Path)
             "-ac",
             "1",
             "-c:a",
-            "aac",
-            "-profile:a",
-            "aac_low",
+            "libopus",
             "-b:a",
             "32k",
             "-f",
-            "ipod",
-            "-movflags",
-            "+faststart",
+            "webm",
             "-y",
         ])
         .arg(destination)
