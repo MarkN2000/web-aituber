@@ -81,6 +81,12 @@
   margin-bottom: 8px;
 }
 
+.tools-column {
+  width: min(100%, 512px);
+  min-width: 0;
+  margin-inline: auto;
+}
+
 .canvas-actions button {
   min-height: 44px;
   padding: 8px;

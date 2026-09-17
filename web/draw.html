@@ -8,7 +8,7 @@
     <link rel="manifest" href="draw/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/static/icons/draw-180.png">
     <link rel="stylesheet" href="/static/style.css?v=5">
-    <link rel="stylesheet" href="/static/draw.css?v=15">
+    <link rel="stylesheet" href="/static/draw.css?v=16">
   </head>
   <body class="draw-page">
     <main class="draw-card">
@@ -19,11 +19,6 @@
 
       <div id="panel-draw" class="draw-workspace" role="tabpanel" aria-labelledby="tab-draw">
         <section class="canvas-column" aria-label="描画キャンバス">
-          <div class="canvas-actions">
-            <button id="submit-food" class="food-submit" type="button" disabled>食べてもらう</button>
-            <button id="undo-canvas" class="secondary-button" type="button" title="1つ戻す (Ctrl/⌘+Z)" disabled>1つ戻す</button>
-            <button id="clear-canvas" class="secondary-button" type="button" disabled>全消去</button>
-          </div>
           <div class="drawing-surface">
             <canvas id="food-canvas" width="512" height="512" aria-label="食べ物を描くキャンバス"></canvas>
             <div id="draw-cursor" class="draw-cursor" data-tool="pen" aria-hidden="true" hidden>
@@ -40,31 +35,38 @@
           <p id="draw-status" class="status" role="status" aria-live="polite"></p>
         </section>
 
-        <section class="draw-tools" aria-label="描画ツール">
-          <div class="tool-switcher" role="group" aria-label="描画方法">
-            <button class="secondary-button" type="button" data-draw-tool="pen" aria-pressed="true">ペン</button>
-            <button class="secondary-button" type="button" data-draw-tool="bucket" aria-pressed="false">バケツ</button>
-            <button class="secondary-button" type="button" data-draw-tool="eraser" aria-pressed="false">消しゴム</button>
+        <div class="tools-column">
+          <div class="canvas-actions">
+            <button id="submit-food" class="food-submit" type="button" disabled>食べてもらう</button>
+            <button id="undo-canvas" class="secondary-button" type="button" title="1つ戻す (Ctrl/⌘+Z)" disabled>1つ戻す</button>
+            <button id="clear-canvas" class="secondary-button" type="button" disabled>全消去</button>
           </div>
+          <section class="draw-tools" aria-label="描画ツール">
+            <div class="tool-switcher" role="group" aria-label="描画方法">
+              <button class="secondary-button" type="button" data-draw-tool="pen" aria-pressed="true">ペン</button>
+              <button class="secondary-button" type="button" data-draw-tool="bucket" aria-pressed="false">バケツ</button>
+              <button class="secondary-button" type="button" data-draw-tool="eraser" aria-pressed="false">消しゴム</button>
+            </div>
 
-          <div class="brush-sizes" role="group" aria-label="線の太さ">
-            <button class="secondary-button" type="button" data-brush-size="8" aria-label="細い" aria-pressed="false"><span class="brush-dot brush-dot-small"></span></button>
-            <button class="secondary-button" type="button" data-brush-size="20" aria-label="普通" aria-pressed="true"><span class="brush-dot brush-dot-medium"></span></button>
-            <button class="secondary-button" type="button" data-brush-size="40" aria-label="太い" aria-pressed="false"><span class="brush-dot brush-dot-large"></span></button>
-          </div>
+            <div class="brush-sizes" role="group" aria-label="線の太さ">
+              <button class="secondary-button" type="button" data-brush-size="8" aria-label="細い" aria-pressed="false"><span class="brush-dot brush-dot-small"></span></button>
+              <button class="secondary-button" type="button" data-brush-size="20" aria-label="普通" aria-pressed="true"><span class="brush-dot brush-dot-medium"></span></button>
+              <button class="secondary-button" type="button" data-brush-size="40" aria-label="太い" aria-pressed="false"><span class="brush-dot brush-dot-large"></span></button>
+            </div>
 
-          <div class="color-shortcuts" role="group" aria-label="基本色">
-            <button type="button" data-draw-color="#e85d3f" aria-label="赤" aria-pressed="true"></button>
-            <button type="button" data-draw-color="#ef9138" aria-label="オレンジ" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#f2cf45" aria-label="黄色" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#55a868" aria-label="緑" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#4c7fc7" aria-label="青" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#8956ad" aria-label="紫" aria-pressed="false"></button>
-            <button type="button" data-draw-color="#202020" aria-label="黒" aria-pressed="false"></button>
-          </div>
+            <div class="color-shortcuts" role="group" aria-label="基本色">
+              <button type="button" data-draw-color="#e85d3f" aria-label="赤" aria-pressed="true"></button>
+              <button type="button" data-draw-color="#ef9138" aria-label="オレンジ" aria-pressed="false"></button>
+              <button type="button" data-draw-color="#f2cf45" aria-label="黄色" aria-pressed="false"></button>
+              <button type="button" data-draw-color="#55a868" aria-label="緑" aria-pressed="false"></button>
+              <button type="button" data-draw-color="#4c7fc7" aria-label="青" aria-pressed="false"></button>
+              <button type="button" data-draw-color="#8956ad" aria-label="紫" aria-pressed="false"></button>
+              <button type="button" data-draw-color="#202020" aria-label="黒" aria-pressed="false"></button>
+            </div>
 
-          <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
-        </section>
+            <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
+          </section>
+        </div>
       </div>
       <section id="panel-question" role="tabpanel" aria-labelledby="tab-question" hidden>
         <form id="submission-form" novalidate>
