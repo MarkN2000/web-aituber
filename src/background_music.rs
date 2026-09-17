@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 use uuid::Uuid;
 
-pub const FILE_NAME: &str = "background-music.webm";
+pub const FILE_NAME: &str = "background-music.m4a";
 pub const MAX_SOURCE_BYTES: usize = 100 * 1024 * 1024;
 
 /// リクエストのキャンセルや途中エラーでも変換用ファイルを残さない。
@@ -62,8 +62,26 @@ pub async fn convert(ffmpeg_path: &str, input: &Path, output: &Path) -> Result<(
         .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
         .arg(input)
         .args([
-            "-map", "0:a:0", "-vn", "-sn", "-dn", "-ar", "48000", "-ac", "2", "-c:a", "libopus",
-            "-b:a", "128k", "-f", "webm", "-n",
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-profile:a",
+            "aac_low",
+            "-b:a",
+            "128k",
+            "-f",
+            "ipod",
+            "-movflags",
+            "+faststart",
+            "-n",
         ])
         .arg(output)
         .stdin(Stdio::null())
@@ -93,6 +111,24 @@ pub async fn convert(ffmpeg_path: &str, input: &Path, output: &Path) -> Result<(
     file.sync_all()
         .await
         .context("変換後のBGMを同期できません")?;
+    Ok(())
+}
+
+/// 旧BGMを一度だけ変換し、元音源を再移行されないバックアップ名で残す。
+pub async fn migrate_legacy(ffmpeg_path: &str, assets_dir: &Path) -> Result<()> {
+    let legacy = assets_dir.join("background-music.webm");
+    if !legacy.try_exists()? {
+        return Ok(());
+    }
+    let destination = assets_dir.join(FILE_NAME);
+    if !destination.try_exists()? {
+        let temporary = TemporaryFiles::new(assets_dir, "webm");
+        convert(ffmpeg_path, &legacy, temporary.output()).await?;
+        install_atomically(temporary.output(), &destination)?;
+    }
+    let backup = assets_dir.join(format!("background-music.webm.{}.bak", Uuid::new_v4()));
+    fs::rename(&legacy, &backup).context("旧BGMをバックアップへ退避できませんでした")?;
+    tracing::info!(path = %backup.display(), "BGMのM4A移行を完了しました");
     Ok(())
 }
 

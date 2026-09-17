@@ -188,6 +188,21 @@ pub fn router(state: AppState) -> Router {
         .nest_service("/static", ServeDir::new("web"))
         .merge(asset_routes)
         .nest_service("/audio", ServeDir::new(state.audio_dir.as_ref()))
+        .layer(middleware::map_response(
+            |mut response: Response| async move {
+                // 静的配信の拡張子判定を、M4Aの標準MIME型へ揃える。
+                if response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .is_some_and(|value| value == "audio/m4a")
+                {
+                    response
+                        .headers_mut()
+                        .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/mp4"));
+                }
+                response
+            },
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -2251,7 +2266,7 @@ async fn tts_preview(
     .await
     {
         Ok(Ok(audio)) => {
-            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
+            admin_no_store(([(header::CONTENT_TYPE, "audio/mp4")], audio.bytes).into_response())
         }
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSの試聴に失敗しました");
@@ -2393,7 +2408,7 @@ async fn tts_user_dict_preview(
     .await
     {
         Ok(Ok(audio)) => {
-            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
+            admin_no_store(([(header::CONTENT_TYPE, "audio/mp4")], audio.bytes).into_response())
         }
         Ok(Err(tts::UserDictPreviewError::InvalidInput)) => admin_error(
             StatusCode::BAD_REQUEST,
@@ -3130,7 +3145,7 @@ mod tests {
         use std::io::Read;
         let mut wav = Vec::new();
         std::io::stdin().read_to_end(&mut wav).unwrap();
-        std::fs::write(args.last().unwrap(), b"converted-webm").unwrap();
+        std::fs::write(args.last().unwrap(), b"converted-m4a").unwrap();
     } else {
         std::fs::copy(&args[5], args.last().unwrap()).unwrap();
     }
@@ -3209,7 +3224,7 @@ mod tests {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".background-music.webm.")
+                .starts_with(".background-music.m4a.")
         })
     }
 
@@ -3840,10 +3855,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/mp4");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        assert_eq!(&wav[..], b"converted-webm");
+        assert_eq!(&wav[..], b"converted-m4a");
 
         server.abort();
         std::fs::remove_file(&state.config.current().ffmpeg_path).unwrap();
@@ -3981,10 +3996,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/mp4");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        assert_eq!(&wav[..], b"converted-webm");
+        assert_eq!(&wav[..], b"converted-m4a");
 
         server.abort();
         std::fs::remove_dir_all(directory).unwrap();
@@ -5745,6 +5760,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn m4a音声はaudio_mp4で範囲配信する() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        state.audio_dir = Arc::new(assets_dir.clone());
+        std::fs::write(assets_dir.join(background_music::FILE_NAME), b"0123456789").unwrap();
+        std::fs::write(assets_dir.join("tts.m4a"), b"0123456789").unwrap();
+        let app = router(state);
+        for url in ["/assets/background-music.m4a", "/audio/tts.m4a"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(url)
+                        .header(header::RANGE, "bytes=2-5")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/mp4");
+            assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+            assert_eq!(
+                &to_bytes(response.into_body(), 1024).await.unwrap()[..],
+                b"2345"
+            );
+        }
+        std::fs::remove_dir_all(assets_dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn display_config_returns_music_volume_and_stable_version() {
         let (state, assets_dir) = state_with_temporary_assets();
         let app = router(state);
@@ -5779,7 +5823,7 @@ mod tests {
             let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
             let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
             let url = json["background_music_url"].as_str().unwrap().to_owned();
-            assert!(url.starts_with("/assets/background-music.webm?v="));
+            assert!(url.starts_with("/assets/background-music.m4a?v="));
             urls.push(url);
         }
         assert_eq!(urls[0], urls[1]);

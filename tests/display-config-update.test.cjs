@@ -33,7 +33,7 @@ function config(overrides = {}) {
       bottom_left: { image_url: null, scale: 100 },
       bottom_right: { image_url: null, scale: 100 },
     },
-    background_music_url: "/assets/background-music.webm?v=1",
+    background_music_url: "/assets/background-music.m4a?v=1",
     background_music_volume: 0.3,
     background_music_duck_ratio: 0.4,
     ...overrides,

@@ -129,20 +129,20 @@ test("BGMは一時停止位置を保持して再開する", async () => {
   const audio = instances[0];
 
   await music.resume();
-  await music.play("/assets/background-music.webm", 0.3, 0.4);
+  await music.play("/assets/background-music.m4a", 0.3, 0.4);
   audio.currentTime = 12.5;
 
   await music.pause();
 
   assert.equal(audio.paused, true);
   assert.equal(audio.currentTime, 12.5);
-  assert.equal(audio.src, "/assets/background-music.webm");
+  assert.equal(audio.src, "/assets/background-music.m4a");
 
   await music.resumePlayback();
 
   assert.equal(audio.paused, false);
   assert.equal(audio.currentTime, 12.5);
-  assert.equal(audio.src, "/assets/background-music.webm");
+  assert.equal(audio.src, "/assets/background-music.m4a");
 });
 
 test("BGM設定から音源がなくなった場合は現在の再生を停止する", async () => {
@@ -150,7 +150,7 @@ test("BGM設定から音源がなくなった場合は現在の再生を停止�
   const music = new BackgroundMusic();
   const audio = instances[0];
 
-  await music.play("/assets/background-music.webm", 0.3, 0.4);
+  await music.play("/assets/background-music.m4a", 0.3, 0.4);
   const playCalls = audio.playCalls;
   await music.play(null, 0.5, 0.2);
 
@@ -222,7 +222,7 @@ test("BGMの古い再開処理が非表示へ戻った後に再生しない", as
   const audio = instances[0];
   const context = contexts[0];
   music.hasTrack = true;
-  audio.src = "/assets/background-music.webm";
+  audio.src = "/assets/background-music.m4a";
   music.suspended = true;
   const resume = deferred();
   context.resumeHandler = () => resume.promise;
@@ -243,7 +243,7 @@ test("非表示へ切り替わった後に完了したplayはBGMを停止状態�
   const audio = instances[0];
   music.hasTrack = true;
   music.suspended = true;
-  audio.src = "/assets/background-music.webm";
+  audio.src = "/assets/background-music.m4a";
   const play = deferred();
   audio.playHandler = () => play.promise;
 
@@ -265,7 +265,7 @@ test("再表示後に古いBGMのplayが完了しても新しい再生を止め�
   const audio = instances[0];
   music.hasTrack = true;
   music.suspended = true;
-  audio.src = "/assets/background-music.webm";
+  audio.src = "/assets/background-music.m4a";
   const oldPlay = deferred();
   audio.playHandler = () => oldPlay.promise;
 

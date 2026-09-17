@@ -47,6 +47,12 @@ async fn run() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("{bind}で待ち受けできません"))?;
+    web_aituber::background_music::migrate_legacy(
+        &config.current().ffmpeg_path,
+        Path::new("assets"),
+    )
+    .await
+    .context("BGMをM4Aへ移行できませんでした")?;
     let audio_dir = create_audio_directory().await?;
     let (submissions, submission_receiver) = mpsc::channel(SUBMISSION_QUEUE_SIZE);
     let (events, _) = broadcast::channel(DISPLAY_EVENT_BUFFER_SIZE);
@@ -184,7 +190,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("web-aituber-test-{}", Uuid::new_v4()));
         let previous = root.join("previous");
         tokio::fs::create_dir_all(&previous).await.unwrap();
-        tokio::fs::write(previous.join("audio.webm"), b"audio")
+        tokio::fs::write(previous.join("audio.m4a"), b"audio")
             .await
             .unwrap();
 

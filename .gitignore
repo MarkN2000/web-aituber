@@ -2,6 +2,8 @@
 /config.json
 *.tts-cache/
 *.webm
+*.m4a
+/assets/background-music.webm.*.bak
 *.wav
 *.log
 /assets/*.vrm
