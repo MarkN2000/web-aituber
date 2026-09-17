@@ -41,7 +41,7 @@ let previousPoint;
 let previousInputTime;
 let activeTool = "pen";
 let brushSize = 20;
-let selectedColor = "#e85d3f";
+let selectedColor = "#202020";
 let selectedHue = 10;
 let selectedSaturation = 0.76;
 let selectedValue = 0.91;
