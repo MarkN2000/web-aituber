@@ -138,6 +138,8 @@
       </form>
       <p id="tts-config-status" class="status" role="status" aria-live="polite"></p>
       <p id="tts-config-error" class="status" role="alert"></p>
+      <div class="admin-form-actions"><button id="clear-tts-cache" class="secondary-button" type="button">音声キャッシュを削除</button></div>
+      <p class="admin-help">外部で音声モデルや辞書を変更したときに削除してください。次の発話時に音声を生成し直します。</p>
 
       <section class="tts-user-dictionary-section" aria-labelledby="tts-user-dictionary-heading">
         <h3 id="tts-user-dictionary-heading">ユーザー辞書</h3>
@@ -496,6 +498,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=45"></script>
+  <script type="module" src="/static/js/admin.js?v=46"></script>
 </body>
 </html>

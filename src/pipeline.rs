@@ -5,7 +5,6 @@ use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    audio,
     config::{AppConfig, FoodMotionConfig, IdleSpeechConfig, IdleSpeechEntry},
     protocol::{
         ConversationTurn, Emotion, SegmentKind, ServerEvent, SourceLink, Submission, TurnState,
@@ -348,22 +347,15 @@ async fn process_active_submission(
     let mut motion_sent = false;
 
     for (index, segment) in segments.iter().enumerate() {
-        let wav = cancellable(
-            cancel,
-            tts::synthesize(&state.http, &config.tts, &segment.text),
-        )
-        .await
-        .map_err(|error| error.with_files(audio_files.clone()))?;
-
         let file_name = format!("{}-{index}.webm", submission.id);
         let output_path = state.audio_dir.join(&file_name);
+        audio_files.push(output_path.clone());
         let duration_ms = cancellable(
             cancel,
-            audio::transcode_to_opus(&config.ffmpeg_path, &wav, &output_path),
+            prepare_speech(state, config, &segment.text, &output_path),
         )
         .await
         .map_err(|error| error.with_files(audio_files.clone()))?;
-        audio_files.push(output_path);
 
         if index == 0 && !is_food {
             publish_state(
@@ -497,11 +489,13 @@ async fn present_food(
 async fn prepare_speech(
     state: &AppState,
     config: &AppConfig,
-    filler: &str,
+    text: &str,
     output_path: &std::path::Path,
 ) -> Result<u64> {
-    let wav = tts::synthesize(&state.http, &config.tts, filler).await?;
-    audio::transcode_to_opus(&config.ffmpeg_path, &wav, output_path).await
+    let audio = tts::cached_speech(state, config, &config.tts, text, None).await?;
+    tokio::fs::create_dir_all(&*state.audio_dir).await?;
+    tokio::fs::write(output_path, &audio.bytes).await?;
+    Ok(audio.duration_ms)
 }
 
 async fn publish_state(state: &AppState, turn: TurnState) {

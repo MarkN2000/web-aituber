@@ -15,6 +15,7 @@ pub struct ConfigStore {
     current: watch::Sender<Arc<AppConfig>>,
     path: Arc<PathBuf>,
     write_lock: Arc<Mutex<()>>,
+    pub tts_cache: Arc<crate::tts_cache::TtsCache>,
 }
 
 pub struct ConfigReloadResult {
@@ -459,11 +460,17 @@ impl ConfigStore {
     }
 
     pub fn new(path: impl Into<PathBuf>, config: AppConfig) -> Self {
+        let path = path.into();
+        let tts_cache = Arc::new(crate::tts_cache::TtsCache::new(
+            path.with_extension("tts-cache"),
+            &config,
+        ));
         let (current, _) = watch::channel(Arc::new(config));
         Self {
             current,
-            path: Arc::new(path.into()),
+            path: Arc::new(path),
             write_lock: Arc::new(Mutex::new(())),
+            tts_cache,
         }
     }
 
@@ -486,6 +493,7 @@ impl ConfigStore {
         if restart_required {
             replacement.bind.clone_from(&current.bind);
         }
+        self.tts_cache.update_config(&replacement);
         self.current.send_replace(Arc::new(replacement));
         Ok(ConfigReloadResult { restart_required })
     }
@@ -510,6 +518,7 @@ impl ConfigStore {
         if restart_required {
             replacement.bind.clone_from(&current.bind);
         }
+        self.tts_cache.update_config(&replacement);
         self.current.send_replace(Arc::new(replacement));
         Ok(ConfigReloadResult { restart_required })
     }

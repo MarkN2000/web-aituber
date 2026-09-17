@@ -101,6 +101,10 @@ pub fn router(state: AppState) -> Router {
             get(admin_config).put(update_admin_config),
         )
         .route("/api/admin/tts-preview", post(tts_preview))
+        .route(
+            "/api/admin/tts-cache",
+            axum::routing::delete(clear_tts_cache),
+        )
         .route("/api/admin/tts-speakers", post(tts_speakers))
         .route(
             "/api/admin/tts-user-dict-preview",
@@ -2195,6 +2199,22 @@ async fn update_admin_config(
     }
 }
 
+async fn clear_tts_cache(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
+    if !has_valid_admin_token(&state, &auth) {
+        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
+    }
+    match state.config.tts_cache.clear() {
+        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => {
+            tracing::warn!(?error, "音声キャッシュの削除に失敗しました");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "音声キャッシュを削除できませんでした",
+            )
+        }
+    }
+}
+
 async fn tts_preview(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
@@ -2220,11 +2240,19 @@ async fn tts_preview(
     };
     match tokio::time::timeout(
         Duration::from_secs(10),
-        tts::synthesize(&state.http, &config, "こんにちは。音声の試聴です。"),
+        tts::cached_speech(
+            &state,
+            &state.config.current(),
+            &config,
+            "こんにちは。音声の試聴です。",
+            None,
+        ),
     )
     .await
     {
-        Ok(Ok(wav)) => admin_no_store(([(header::CONTENT_TYPE, "audio/wav")], wav).into_response()),
+        Ok(Ok(audio)) => {
+            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
+        }
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSの試聴に失敗しました");
             admin_no_store(
@@ -2354,16 +2382,19 @@ async fn tts_user_dict_preview(
     };
     match tokio::time::timeout(
         Duration::from_secs(10),
-        tts::synthesize_user_dict_preview(
-            &state.http,
+        tts::cached_speech(
+            &state,
+            &state.config.current(),
             &config,
             &request.pronunciation,
-            request.accent_type,
+            Some(request.accent_type),
         ),
     )
     .await
     {
-        Ok(Ok(wav)) => admin_no_store(([(header::CONTENT_TYPE, "audio/wav")], wav).into_response()),
+        Ok(Ok(audio)) => {
+            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
+        }
         Ok(Err(tts::UserDictPreviewError::InvalidInput)) => admin_error(
             StatusCode::BAD_REQUEST,
             "単語の読みまたはアクセント位置を確認してください",
@@ -2393,6 +2424,7 @@ async fn add_tts_user_dict_word(
     if let Err(message) = validate_tts_user_dict_request(&request) {
         return admin_error(StatusCode::BAD_REQUEST, message);
     }
+    let _cache_guard = state.config.tts_cache.before_dictionary_update().await;
     match tokio::time::timeout(
         Duration::from_secs(10),
         tts::add_user_dict_word(&state.http, &request.engine_url, &request.word),
@@ -2435,6 +2467,7 @@ async fn update_tts_user_dict_word(
     let Ok(word_uuid) = Uuid::parse_str(&word_uuid) else {
         return admin_error(StatusCode::BAD_REQUEST, "ユーザー辞書の単語IDが不正です");
     };
+    let _cache_guard = state.config.tts_cache.before_dictionary_update().await;
     match tokio::time::timeout(
         Duration::from_secs(10),
         tts::update_user_dict_word(&state.http, &request.engine_url, word_uuid, &request.word),
@@ -2480,6 +2513,7 @@ async fn delete_tts_user_dict_word(
     let Ok(word_uuid) = Uuid::parse_str(&word_uuid) else {
         return admin_error(StatusCode::BAD_REQUEST, "ユーザー辞書の単語IDが不正です");
     };
+    let _cache_guard = state.config.tts_cache.before_dictionary_update().await;
     match tokio::time::timeout(
         Duration::from_secs(10),
         tts::delete_user_dict_word(&state.http, &request.engine_url, word_uuid),
@@ -3092,7 +3126,14 @@ mod tests {
         let source = if succeeds {
             r#"fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    std::fs::copy(&args[5], args.last().unwrap()).unwrap();
+    if args.iter().any(|arg| arg == "pipe:0") {
+        use std::io::Read;
+        let mut wav = Vec::new();
+        std::io::stdin().read_to_end(&mut wav).unwrap();
+        std::fs::write(args.last().unwrap(), b"converted-webm").unwrap();
+    } else {
+        std::fs::copy(&args[5], args.last().unwrap()).unwrap();
+    }
 }
 "#
         } else {
@@ -3719,17 +3760,42 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    fn preview_test_wav() -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 24000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+        for _ in 0..2400 {
+            writer.write_sample(0_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        bytes.into_inner()
+    }
+
+    fn preview_test_state() -> (AppState, PathBuf) {
+        let directory = std::env::temp_dir().join(format!("tts-preview-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut state = test_state();
+        let mut config = (*state.config.current()).clone();
+        config.ffmpeg_path = fake_ffmpeg(&directory, true).to_string_lossy().into_owned();
+        let path = directory.join("config.json");
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(path, config);
+        state.audio_dir = Arc::new(directory.join("audio"));
+        (state, directory)
+    }
+
     #[tokio::test]
-    async fn tts_preview_requires_token_and_returns_uncached_wav() {
+    async fn tts_preview_requires_token_and_reuses_converted_audio() {
         async fn audio_query() -> Json<serde_json::Value> {
             Json(serde_json::json!({ "query": "ok" }))
         }
         async fn synthesis() -> Response {
-            (
-                [(header::CONTENT_TYPE, "audio/wav")],
-                b"preview-wav".to_vec(),
-            )
-                .into_response()
+            ([(header::CONTENT_TYPE, "audio/wav")], preview_test_wav()).into_response()
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3749,7 +3815,8 @@ mod tests {
         })
         .to_string();
 
-        let app = router(test_state());
+        let (state, directory) = preview_test_state();
+        let app = router(state.clone());
         let unauthorized = app
             .clone()
             .oneshot(
@@ -3763,6 +3830,25 @@ mod tests {
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
         let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/admin/tts-preview?token=test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        assert_eq!(&wav[..], b"converted-webm");
+
+        server.abort();
+        std::fs::remove_file(&state.config.current().ffmpeg_path).unwrap();
+        let response = app
+            .clone()
             .oneshot(
                 Request::post("/api/admin/tts-preview?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -3771,13 +3857,32 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/wav");
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-        let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        assert_eq!(&wav[..], b"preview-wav");
-
-        server.abort();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "TTSも変換器も停止後に再利用できる"
+        );
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/admin/tts-cache")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        let cleared = app
+            .oneshot(
+                Request::delete("/api/admin/tts-cache?token=test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
+        assert!(!directory.join("config.tts-cache").exists());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
@@ -3828,11 +3933,7 @@ mod tests {
             assert_eq!(query["accent_phrases"][0]["moras"][0]["pitch"], 9.0);
             assert_eq!(query["kana"], "タン'/タンメン'");
             assert_eq!(query["tempoDynamicsScale"], 1.2);
-            (
-                [(header::CONTENT_TYPE, "audio/wav")],
-                b"dictionary-preview-wav".to_vec(),
-            )
-                .into_response()
+            ([(header::CONTENT_TYPE, "audio/wav")], preview_test_wav()).into_response()
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3854,7 +3955,8 @@ mod tests {
             "accent_type": 3
         })
         .to_string();
-        let app = router(test_state());
+        let (state, directory) = preview_test_state();
+        let app = router(state.clone());
 
         let unauthorized = app
             .clone()
@@ -3869,21 +3971,23 @@ mod tests {
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
         let response = app
+            .clone()
             .oneshot(
                 Request::post("/api/admin/tts-user-dict-preview?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(body))
+                    .body(Body::from(body.clone()))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/wav");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let wav = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-        assert_eq!(&wav[..], b"dictionary-preview-wav");
+        assert_eq!(&wav[..], b"converted-webm");
 
         server.abort();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
@@ -4125,7 +4229,13 @@ mod tests {
             "priority": 7
         })
         .to_string();
-        let app = router(test_state());
+        let mut state = test_state();
+        let cache_path = std::env::temp_dir().join(format!("dictionary-cache-{}", Uuid::new_v4()));
+        state.config.tts_cache = Arc::new(crate::tts_cache::TtsCache::new(
+            cache_path.clone(),
+            &state.config.current(),
+        ));
+        let app = router(state.clone());
 
         let unauthorized = app
             .clone()
@@ -4197,6 +4307,10 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert!(
+                !cache_path.exists(),
+                "辞書の追加・編集・削除はキャッシュを全削除する"
+            );
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         }
 

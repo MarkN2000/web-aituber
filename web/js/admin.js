@@ -28,6 +28,7 @@ const elements = {
   aiStatus: document.querySelector("#ai-config-status"), aiError: document.querySelector("#ai-config-error"),
   clearHistory: document.querySelector("#clear-conversation-history"),
   ttsStatus: document.querySelector("#tts-config-status"), ttsError: document.querySelector("#tts-config-error"),
+  clearTtsCache: document.querySelector("#clear-tts-cache"),
   saveAi: document.querySelector("#save-ai-config"), saveTts: document.querySelector("#save-tts-config"), preview: document.querySelector("#preview-tts"),
   loadSpeakers: document.querySelector("#load-tts-speakers"), speakerList: document.querySelector("#tts-speaker-list"), speakersStatus: document.querySelector("#tts-speakers-status"),
   apiUrl: document.querySelector("#llm-api-url"), model: document.querySelector("#llm-model"), systemPrompt: document.querySelector("#system-prompt"),
@@ -1290,6 +1291,18 @@ async function checkAndApplyUpdate() {
     }
   }
 }
+async function clearTtsCache() {
+  if (!token || elements.clearTtsCache.disabled) return;
+  elements.clearTtsCache.disabled = true;
+  setMessage(elements.ttsStatus, elements.ttsError);
+  try {
+    const response = await fetch(adminUrl("/api/admin/tts-cache"), { method: "DELETE" });
+    if (!response.ok) throw new Error(await readError(response, "音声キャッシュを削除できませんでした。"));
+    setMessage(elements.ttsStatus, elements.ttsError, "音声キャッシュを削除しました。次の発話時に生成し直します。");
+  } catch (error) {
+    setMessage(elements.ttsStatus, elements.ttsError, error.message || "音声キャッシュを削除できませんでした。", true);
+  } finally { elements.clearTtsCache.disabled = false; }
+}
 function releasePreview() { previewAbortController?.abort(); previewAbortController = undefined; previewAudio?.pause(); previewAudio = undefined; if (previewAudioUrl) URL.revokeObjectURL(previewAudioUrl); previewAudioUrl = undefined; }
 async function previewTts() {
   if (!token || !validate(elements.ttsForm)) return;
@@ -1323,6 +1336,7 @@ elements.eventQrClose.addEventListener("click", () => elements.eventQrDialog.clo
 elements.eventQrDialog.addEventListener("click", (event) => { if (event.target === elements.eventQrDialog) elements.eventQrDialog.close(); });
 elements.eventQrDialog.addEventListener("close", releaseEventQrImage);
 elements.loadSpeakers.addEventListener("click", loadSpeakers);
+elements.clearTtsCache.addEventListener("click", clearTtsCache);
 elements.vrmInput.addEventListener("change", selectVrmModel);
 elements.vrmForm.addEventListener("submit", uploadVrmModel);
 elements.drawingStabilization.addEventListener("input", updateDrawingStabilizationLabel);
@@ -1389,7 +1403,7 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.preparationModeForm.elements, ...elements.preparationForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.preparationModeForm.elements, ...elements.preparationForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...[...screenOverlays.values()].flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate, elements.clearTtsCache].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();

@@ -7,4 +7,5 @@ pub mod protocol;
 pub mod routes;
 pub mod state;
 pub mod tts;
+pub mod tts_cache;
 pub mod update;

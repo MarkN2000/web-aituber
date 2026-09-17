@@ -6,6 +6,32 @@ use uuid::Uuid;
 
 use crate::config::TtsConfig;
 
+pub async fn cached_speech(
+    state: &crate::state::AppState,
+    config: &crate::config::AppConfig,
+    voice: &TtsConfig,
+    text: &str,
+    accent: Option<u32>,
+) -> std::result::Result<crate::tts_cache::CachedAudio, UserDictPreviewError> {
+    let key = crate::tts_cache::key(voice, text, accent);
+    state
+        .config
+        .tts_cache
+        .get_or_generate(&key, async {
+            let wav = if let Some(accent) = accent {
+                synthesize_user_dict_preview(&state.http, voice, text, accent).await?
+            } else {
+                synthesize(&state.http, voice, text)
+                    .await
+                    .map_err(UserDictPreviewError::Engine)?
+            };
+            crate::tts_cache::convert(&config.ffmpeg_path, &wav, &state.audio_dir)
+                .await
+                .map_err(UserDictPreviewError::Engine)
+        })
+        .await
+}
+
 pub async fn synthesize(client: &Client, config: &TtsConfig, text: &str) -> Result<Vec<u8>> {
     let audio_query = create_audio_query(client, config, text).await?;
     synthesize_audio_query(client, config, &audio_query).await
@@ -54,6 +80,16 @@ pub enum UserDictPreviewError {
     InvalidInput,
     Engine(anyhow::Error),
 }
+
+impl std::fmt::Display for UserDictPreviewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput => f.write_str("単語の読みまたはアクセント位置が不正です"),
+            Self::Engine(error) => write!(f, "{error:#}"),
+        }
+    }
+}
+impl std::error::Error for UserDictPreviewError {}
 
 /// 入力中の読みとアクセント位置で、辞書を変更せずに試聴用WAVを生成する。
 pub async fn synthesize_user_dict_preview(
