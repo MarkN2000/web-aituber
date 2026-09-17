@@ -3,19 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Web AITuber | 食べ物を描く</title>
+    <title>Web AITuber | 絵・質問を送る</title>
     <meta name="theme-color" content="#f6f6f4">
     <link rel="manifest" href="draw/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/static/icons/draw-180.png">
     <link rel="stylesheet" href="/static/style.css?v=5">
-    <link rel="stylesheet" href="/static/draw.css?v=13">
+    <link rel="stylesheet" href="/static/draw.css?v=14">
   </head>
   <body class="draw-page">
     <main class="draw-card">
-      <h1>食べ物を描こう</h1>
-      <p class="lead">AIキャラクターに食べてもらいたいものを自由に描いてください。</p>
+      <div class="draw-tabs" role="tablist" aria-label="投稿方法">
+        <button id="tab-draw" type="button" role="tab" aria-selected="true" aria-controls="panel-draw">絵を描く</button>
+        <button id="tab-question" type="button" role="tab" aria-selected="false" aria-controls="panel-question" tabindex="-1">質問する</button>
+      </div>
 
-      <div class="draw-workspace">
+      <div id="panel-draw" class="draw-workspace" role="tabpanel" aria-labelledby="tab-draw">
         <section class="canvas-column" aria-label="描画キャンバス">
           <div class="canvas-actions">
             <button id="undo-canvas" class="secondary-button" type="button" title="1つ戻す (Ctrl/⌘+Z)" disabled>1つ戻す</button>
@@ -64,7 +66,16 @@
           <canvas id="color-picker" class="color-picker" width="256" height="256" tabindex="0" aria-label="色相と彩度・明度。左右キーで色相、上下キーで明度、Shiftキーと上下キーで彩度を変更できます"></canvas>
         </section>
       </div>
+      <section id="panel-question" role="tabpanel" aria-labelledby="tab-question" hidden>
+        <form id="submission-form" novalidate>
+          <textarea id="text" name="text" aria-label="質問" maxlength="2000" required placeholder="AIキャラクターへの質問を入力してください" rows="4"></textarea>
+          <p class="field-note"><span id="text-count">0</span> / 2000文字</p>
+          <button id="submit-button" type="submit" disabled>質問を送る</button>
+        </form>
+        <p id="submission-status" class="status" role="status" aria-live="polite"></p>
+      </section>
     </main>
-    <script type="module" src="/static/js/draw.js?v=20"></script>
+    <script type="module" src="/static/js/input.js?v=10"></script>
+    <script type="module" src="/static/js/draw.js?v=21"></script>
   </body>
 </html>

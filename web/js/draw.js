@@ -33,6 +33,8 @@ const submitButton = document.querySelector("#submit-food");
 const status = document.querySelector("#draw-status");
 const drawCursor = document.querySelector("#draw-cursor");
 const drawingSurface = document.querySelector(".drawing-surface");
+const tabs = [...document.querySelectorAll('.draw-tabs [role="tab"]')];
+const drawPanel = document.querySelector("#panel-draw");
 
 let activePointer;
 let previousPoint;
@@ -52,6 +54,28 @@ let eventEnded = false;
 let drawingStabilization = DEFAULT_DRAWING_STABILIZATION;
 let pendingDrawingStabilization;
 const undoHistory = [];
+
+function activateTab(tab, focus = false) {
+  if (activePointer !== undefined) stopDrawing({ pointerId: activePointer, type: "pointercancel" });
+  if (colorPointer !== undefined) stopColorPicking({ pointerId: colorPointer });
+  drawCursor.hidden = true;
+  tabs.forEach((candidate) => {
+    const selected = candidate === tab;
+    candidate.setAttribute("aria-selected", String(selected));
+    candidate.tabIndex = selected ? 0 : -1;
+    document.getElementById(candidate.getAttribute("aria-controls")).hidden = !selected;
+  });
+  if (focus) tab.focus();
+}
+
+function tabKeydown(event) {
+  const index = tabs.indexOf(event.currentTarget);
+  const lastIndex = tabs.length - 1;
+  const byKey = { ArrowRight: (index + 1) % tabs.length, ArrowLeft: (index + lastIndex) % tabs.length, Home: 0, End: lastIndex };
+  if (!(event.key in byKey)) return;
+  event.preventDefault();
+  activateTab(tabs[byKey[event.key]], true);
+}
 
 async function loadDrawingConfig() {
   const response = await fetch(`${eventBasePath}/api/display-config`, { cache: "no-store" });
@@ -274,6 +298,7 @@ function isUndoShortcut(event) {
 }
 
 function handleUndoShortcut(event) {
+  if (drawPanel.hidden) return;
   if (!isUndoShortcut(event) || activePointer !== undefined || eventEnded || undoButton.disabled) return;
   event.preventDefault();
   undoCanvas();
@@ -728,6 +753,10 @@ async function submitFood() {
   }
 }
 
+tabs.forEach((tab) => {
+  tab.addEventListener("click", () => activateTab(tab));
+  tab.addEventListener("keydown", tabKeydown);
+});
 canvas.addEventListener("pointerdown", startDrawing);
 canvas.addEventListener("pointermove", continueDrawing);
 canvas.addEventListener("pointerup", stopDrawing);
