@@ -574,7 +574,7 @@ function setStatus(message, kind = "") {
 
 function updateSubmitState() {
   submitButton.disabled = eventEnded || isSubmitting || isCoolingDown || !hasDrawing;
-  submitButton.textContent = isSubmitting ? "送信中…" : "キャラクターに食べてもらう";
+  submitButton.textContent = isSubmitting ? "送信中…" : "食べてもらう";
   updateUndoState();
 }
 

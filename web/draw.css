@@ -60,10 +60,6 @@
   margin-top: 0;
 }
 
-#panel-question .status:empty {
-  display: none;
-}
-
 .draw-workspace {
   display: grid;
   grid-template-columns: minmax(280px, 512px) minmax(260px, 320px);
@@ -80,10 +76,20 @@
 
 .canvas-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   width: min(100%, 512px);
   margin-bottom: 8px;
+}
+
+.canvas-actions button {
+  min-height: 44px;
+  padding: 8px;
+  font-size: .9rem;
+  white-space: nowrap;
+}
+
+.food-submit {
+  flex: 1;
 }
 
 #clear-canvas {
@@ -317,22 +323,13 @@
   height: 30px;
 }
 
-.food-submit {
-  display: block;
-  width: min(100%, 512px);
-  min-height: 52px;
-  margin: 16px auto 0;
-  padding: 12px 24px;
-  font-size: 1.05rem;
-}
-
 .draw-card .status {
   width: min(100%, 512px);
   margin: 12px auto 0;
 }
 
 .draw-card .status:empty {
-  margin: 0;
+  display: none;
 }
 
 .draw-card .status[data-kind="success"] {
@@ -389,11 +386,6 @@
   .color-picker {
     width: min(100%, max(150px, calc(100dvh - 190px)));
   }
-
-  .food-submit {
-    min-height: 44px;
-    margin-top: 8px;
-  }
 }
 
 @media (max-width: 560px) {
@@ -404,14 +396,6 @@
   .draw-tools {
     width: min(100%, 512px);
     margin-inline: auto;
-  }
-
-  .canvas-actions {
-    gap: 8px;
-  }
-
-  .canvas-actions .secondary-button {
-    padding-inline: 12px;
   }
 
   .draw-tools {
