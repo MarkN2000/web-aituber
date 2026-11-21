@@ -111,7 +111,7 @@ test("Workerが実WASMで透過WebPを生成し、初期化失敗後も再試行
     self: { postMessage: (data) => replies.push(data) },
   });
   const workerSource = read("js/webp-worker.js")
-    .replace(/^import .*;\n/gm, "")
+    .replace(/^import .*;\r?\n/gm, "")
     .replaceAll("import.meta.url", '"https://example.test/static/js/webp-worker.js"');
   vm.runInContext(workerSource, context);
   const image = { width: 256, height: 256, data: new Uint8ClampedArray(256 * 256 * 4) };
