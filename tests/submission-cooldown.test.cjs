@@ -24,7 +24,7 @@ function canvas() {
 }
 
 for (const question of [true, false]) {
-  test(`${question ? "質問" : "描画"}は送信開始後1秒間の重複投稿を抑止し、次の投稿を受け付ける`, async (t) => {
+  test(`${question ? "質問" : "描画"}は送信中の編集を保持し、1秒間の再送抑止後に次の投稿を受け付ける`, async (t) => {
     const elements = new Map([["#food-canvas", canvas()], ["#color-picker", canvas()]]);
     const document = Object.assign(new EventTarget(), {
       querySelector(id) {
@@ -42,8 +42,12 @@ for (const question of [true, false]) {
     t.after(() => { delete globalThis.document; delete globalThis.window; });
 
     const posts = [];
+    let accept;
     t.mock.method(globalThis, "fetch", async (url, options) => {
-      if (options.method === "POST") posts.push(url);
+      if (options.method === "POST") {
+        posts.push(url);
+        return new Promise((resolve) => { accept = () => resolve(new Response(null, { status: 202 })); });
+      }
       return Response.json({ drawing: { stabilization: 3 } });
     });
     const form = document.querySelector("#submission-form");
@@ -59,9 +63,9 @@ for (const question of [true, false]) {
       await import("../web/js/draw.js");
     }
     const button = document.querySelector(question ? "#submit-button" : "#submit-food");
-    const fill = () => {
+    const fill = (value = "質問") => {
       if (question) {
-        text.value = "質問";
+        text.value = value;
         text.dispatchEvent(new Event("input"));
       } else {
         const drawing = document.querySelector("#food-canvas");
@@ -78,8 +82,17 @@ for (const question of [true, false]) {
     submit();
     await nextTurn();
     assert.deepEqual(posts, [endpoint]);
-    fill();
+    fill("次の質問");
+    accept();
+    await nextTurn();
     assert.equal(button.disabled, true);
+    const undo = document.querySelector("#undo-canvas");
+    if (question) {
+      assert.equal(text.value, "次の質問");
+      assert.equal(document.querySelector("#text-count").textContent, "4");
+    } else {
+      assert.equal(undo.disabled, false);
+    }
     submit();
     await nextTurn();
     assert.deepEqual(posts, [endpoint]);
@@ -87,8 +100,23 @@ for (const question of [true, false]) {
     assert.equal(timers[0].delay, 1000);
     timers[0].callback();
     assert.equal(button.disabled, false);
+    if (!question) {
+      undo.dispatchEvent(new Event("click"));
+      assert.equal(button.disabled, false);
+      assert.equal(undo.disabled, false);
+      undo.dispatchEvent(new Event("click"));
+      assert.equal(button.disabled, true);
+      assert.equal(undo.disabled, true);
+      fill();
+    }
     submit();
     await nextTurn();
     assert.deepEqual(posts, [endpoint, endpoint]);
+    accept();
+    await nextTurn();
+    timers[1].callback();
+    assert.equal(button.disabled, true);
+    if (question) assert.equal(text.value, "");
+    else assert.equal(undo.disabled, true);
   });
 }

@@ -48,6 +48,7 @@ let selectedValue = 0.91;
 let colorPointer;
 let colorPickerRegion;
 let hasDrawing = false;
+let drawingRevision = 0;
 let isSubmitting = false;
 let isCoolingDown = false;
 let eventEnded = false;
@@ -327,10 +328,15 @@ function discardUndoHistory() {
   updateUndoState();
 }
 
+function drawingChanged(drawn) {
+  hasDrawing = drawn;
+  drawingRevision += 1;
+  updateSubmitState();
+}
+
 function clearCanvas() {
   context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-  hasDrawing = false;
-  updateSubmitState();
+  drawingChanged(false);
 }
 
 function canvasPoint(event) {
@@ -363,8 +369,7 @@ function drawLine(from, to) {
   context.strokeStyle = selectedColor;
   context.stroke();
   context.restore();
-  hasDrawing = true;
-  updateSubmitState();
+  drawingChanged(true);
 }
 
 function startDrawing(event) {
@@ -554,17 +559,15 @@ function fillAt(point) {
   if (!changed) return;
   addUndoState(undoHistory, { image: previousImage, hasDrawing }, UNDO_HISTORY_LIMIT);
   context.putImageData(image, 0, 0);
-  hasDrawing = true;
-  updateSubmitState();
+  drawingChanged(true);
 }
 
 function undoCanvas() {
   const previous = undoHistory.pop();
   if (!previous) return;
   context.putImageData(previous.image, 0, 0);
-  hasDrawing = previous.hasDrawing;
   setStatus("");
-  updateSubmitState();
+  drawingChanged(previous.hasDrawing);
 }
 
 function setStatus(message, kind = "") {
@@ -713,6 +716,7 @@ function canvasBlob(canvas) {
 
 async function submitFood() {
   if (!hasDrawing || isSubmitting || isCoolingDown) return;
+  const submittedRevision = drawingRevision;
   isSubmitting = true;
   startSubmissionCooldown();
   updateSubmitState();
@@ -741,8 +745,10 @@ async function submitFood() {
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 
-    discardUndoHistory();
-    clearCanvas();
+    if (drawingRevision === submittedRevision && activePointer === undefined) {
+      discardUndoHistory();
+      clearCanvas();
+    }
     setStatus("送信しました。順番になるとAIキャラクターが食べます。", "success");
   } catch (error) {
     console.error(error);

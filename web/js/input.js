@@ -11,6 +11,7 @@ const eventBasePath = window.location.pathname.match(/^\/event\/[^/]+/)?.[0] || 
 let isSubmitting = false;
 let isCoolingDown = false;
 let eventEnded = false;
+let textRevision = 0;
 
 function setStatus(message, kind = "") {
   status.textContent = message;
@@ -41,7 +42,10 @@ function updateTextCount() {
   updateSubmitState();
 }
 
-text.addEventListener("input", updateTextCount);
+text.addEventListener("input", () => {
+  textRevision += 1;
+  updateTextCount();
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -53,6 +57,7 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  const submittedRevision = textRevision;
   isSubmitting = true;
   startSubmissionCooldown();
   updateSubmitState();
@@ -75,8 +80,10 @@ form.addEventListener("submit", async (event) => {
       throw new Error(body.error || "送信を受け付けられませんでした。");
     }
 
-    form.reset();
-    updateTextCount();
+    if (textRevision === submittedRevision) {
+      form.reset();
+      updateTextCount();
+    }
     setStatus("");
   } catch (error) {
     console.error(error);
