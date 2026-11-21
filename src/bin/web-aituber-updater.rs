@@ -96,6 +96,7 @@ fn run(values: Vec<OsString>, log_path: Option<&Path>) -> Result<()> {
         "web",
         "config.example.json",
         "README.md",
+        "THIRD_PARTY_LICENSES.md",
     ];
     let mut swapped = Vec::new();
     for name in items {
@@ -494,13 +495,18 @@ mod tests {
         fs::create_dir_all(&backup).unwrap();
         fs::write(install.join("README.md"), b"old").unwrap();
         fs::write(package.join("README.md"), b"new").unwrap();
+        let license = "THIRD_PARTY_LICENSES.md";
+        fs::write(package.join(license), b"license").unwrap();
 
         let mut swapped = Vec::new();
         swap_item("README.md", &package, &install, &backup, &mut swapped).unwrap();
+        swap_item(license, &package, &install, &backup, &mut swapped).unwrap();
         assert_eq!(fs::read(install.join("README.md")).unwrap(), b"new");
+        assert_eq!(fs::read(install.join(license)).unwrap(), b"license");
 
         rollback(&install, &backup, &swapped).unwrap();
         assert_eq!(fs::read(install.join("README.md")).unwrap(), b"old");
+        assert!(!install.join(license).exists());
         fs::remove_dir_all(root).unwrap();
     }
 

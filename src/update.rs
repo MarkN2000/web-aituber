@@ -461,6 +461,7 @@ fn validate_package(package_root: &Path) -> Result<()> {
         updater_file_name(),
         "config.example.json",
         "README.md",
+        "THIRD_PARTY_LICENSES.md",
     ];
     if required_files
         .iter()
@@ -606,6 +607,25 @@ mod tests {
         assert!(!systemd_exec_pid_matches(Some("4241"), 4242));
         assert!(!systemd_exec_pid_matches(None, 4242));
         assert!(!systemd_exec_pid_matches(Some("invalid"), 4242));
+    }
+
+    #[test]
+    fn package_requires_third_party_licenses_before_installation() {
+        let root = env::temp_dir().join(format!("web-aituber-package-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        for name in [
+            executable_file_name(),
+            updater_file_name(),
+            "README.md",
+            "config.example.json",
+            "web/admin.html",
+        ] {
+            std::fs::write(root.join(name), b"fixture").unwrap();
+        }
+        assert!(validate_package(&root).is_err());
+        std::fs::write(root.join("THIRD_PARTY_LICENSES.md"), b"license").unwrap();
+        validate_package(&root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

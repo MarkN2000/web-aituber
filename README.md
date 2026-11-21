@@ -159,7 +159,7 @@ FFmpegとffprobeがPATHにある環境では、`cargo test --test audio-format -
 WebP非対応ブラウザ向けのWASMエンコーダーは`web/vendor/jsquash-webp-1.5.0/`にライセンスとともに同梱しています。
 配布時は`web/`全体を含めてください。画像変換時に外部CDNへアクセスする必要はありません。
 
-`v1.0.0`のようなタグをpushすると、Windows版とLinux版のGitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
+`v1.0.0`のようなタグをpushすると、WindowsとLinuxで最低対応Rustによるビルド、Rust・JavaScriptのテスト、Clippyを実行します。両OSの配布物に`THIRD_PARTY_LICENSES.md`が同梱されたことを照合してから、GitHub Releaseを作成します。配布物に`config.json`、VRM・VRMA、FFmpeg、TTSエンジンは含まれません。
 
 管理画面からの自己更新に失敗した場合は、配布フォルダの`update.log`を確認してください。
 
@@ -169,7 +169,7 @@ systemdなどの外部プロセス管理下では、管理画面からの自己�
 
 ```bash
 sudo systemctl stop web-aituber
-# 実行ファイル、web/、web-aituber-updater、config.example.json、README.mdを新しい配布物へ置き換える
+# 実行ファイル、web/、web-aituber-updater、config.example.json、README.md、THIRD_PARTY_LICENSES.mdを新しい配布物へ置き換える
 sudo systemctl start web-aituber
 ```
 
