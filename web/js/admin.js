@@ -101,7 +101,7 @@ let reconnectTimer;
 let previewAudio;
 let previewAudioUrl;
 let previewAbortController;
-let loadedConfig;
+let configLoaded = false;
 let selectedSpeakerId;
 let selectedVrmFile;
 let drawingBusy = false;
@@ -356,15 +356,12 @@ function showSelectedScreenOverlay(overlay, blob) {
   overlay.selectedEmpty.hidden = true;
   updateScreenOverlayControls(overlay);
 }
-async function showCurrentScreenOverlay(overlay, value) {
-  const url = value?.image_url;
+async function showCurrentScreenOverlay(overlay, url) {
   overlay.currentExists = Boolean(url);
   overlay.currentPreview.hidden = true;
   overlay.currentPreview.removeAttribute("src");
   overlay.currentEmpty.hidden = false;
   overlay.currentEmpty.textContent = url ? "現在の画像を読み込み中です…" : "画像は設定されていません。";
-  overlay.scale.value = String(Math.min(100, Math.max(1, Number(value?.scale) || 100)));
-  syncScreenOverlayScaleFromRange(overlay);
   updateScreenOverlayControls(overlay);
   if (!url) return;
   try {
@@ -545,45 +542,45 @@ function setVectorInputs(inputs, values) {
 function vectorValues(inputs) {
   return inputs.map((input) => Number(input.value));
 }
-async function loadDisplayConfig({ preparation = true, background = true, screenOverlays: loadScreenOverlays = true, music = true, volume = true, drawing = true, brightness = true, antialias = true, layout = true } = {}) {
+async function fetchDisplayConfig() {
   const response = await fetch(adminUrl("/api/admin/display-config"), { cache: "no-store" });
   if (!response.ok) throw new Error("現在の表示設定を確認できませんでした。");
-  const config = await response.json();
-  if (music) showCurrentMusic(config.background_music_url);
-  if (drawing) {
-    const stabilization = Number(config.drawing?.stabilization);
-    elements.drawingStabilization.value = String(Number.isInteger(stabilization) ? stabilization : 3);
-    updateDrawingStabilizationLabel();
-  }
-  if (brightness) {
-    const configuredBrightness = Number(config.light?.brightness);
-    elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
-    updateBrightnessLabel();
-  }
-  if (antialias) elements.antialias.checked = config.antialias !== false;
-  if (layout) {
-    setVectorInputs(elements.cameraPosition, config.camera?.position);
-    elements.cameraFovNumber.value = String(config.camera?.fov ?? 30);
-    syncCameraFovFromNumber();
-    setVectorInputs(elements.foodPosition, config.food_prop?.position);
-    setVectorInputs(elements.foodRotation, config.food_prop?.rotation_degrees);
-    elements.foodScale.value = String(config.food_prop?.size ?? 0.2);
-  }
-  if (volume) {
-    const configuredVolume = Number(config.background_music_volume);
-    elements.musicVolume.value = String(Math.round((Number.isFinite(configuredVolume) ? configuredVolume : 0.3) * 100));
-    const configuredDuckRatio = Number(config.background_music_duck_ratio);
-    elements.musicDuckRatio.value = String(Math.round((Number.isFinite(configuredDuckRatio) ? configuredDuckRatio : 0.4) * 100));
-    updateMusicVolumeLabels();
-  }
-  if (preparation) {
-    preparationModeEnabled = config.preparation_mode === true;
-    elements.preparationMode.checked = preparationModeEnabled;
-    await showCurrentImageAsset(preparationImageAsset, config.preparation_image_url);
-    updatePreparationModeControls();
-  }
-  if (background) await showCurrentImageAsset(backgroundImageAsset, config.background_image_url);
-  if (loadScreenOverlays) await Promise.all([...screenOverlays.values()].map((overlay) => showCurrentScreenOverlay(overlay, config.screen_overlays?.[overlay.key])));
+  return response.json();
+}
+async function loadDisplayConfig() {
+  const config = await fetchDisplayConfig();
+  showCurrentMusic(config.background_music_url);
+  const stabilization = Number(config.drawing?.stabilization);
+  elements.drawingStabilization.value = String(Number.isInteger(stabilization) ? stabilization : 3);
+  updateDrawingStabilizationLabel();
+  const configuredBrightness = Number(config.light?.brightness);
+  elements.brightness.value = String(Math.round((Number.isFinite(configuredBrightness) ? configuredBrightness : 1) * 100));
+  updateBrightnessLabel();
+  elements.antialias.checked = config.antialias !== false;
+  setVectorInputs(elements.cameraPosition, config.camera?.position);
+  elements.cameraFovNumber.value = String(config.camera?.fov ?? 30);
+  syncCameraFovFromNumber();
+  setVectorInputs(elements.foodPosition, config.food_prop?.position);
+  setVectorInputs(elements.foodRotation, config.food_prop?.rotation_degrees);
+  elements.foodScale.value = String(config.food_prop?.size ?? 0.2);
+  const configuredVolume = Number(config.background_music_volume);
+  elements.musicVolume.value = String(Math.round((Number.isFinite(configuredVolume) ? configuredVolume : 0.3) * 100));
+  const configuredDuckRatio = Number(config.background_music_duck_ratio);
+  elements.musicDuckRatio.value = String(Math.round((Number.isFinite(configuredDuckRatio) ? configuredDuckRatio : 0.4) * 100));
+  updateMusicVolumeLabels();
+  preparationModeEnabled = config.preparation_mode === true;
+  elements.preparationMode.checked = preparationModeEnabled;
+  updatePreparationModeControls();
+  await Promise.all([
+    showCurrentImageAsset(preparationImageAsset, config.preparation_image_url),
+    showCurrentImageAsset(backgroundImageAsset, config.background_image_url),
+    ...Array.from(screenOverlays.values(), (overlay) => {
+      const value = config.screen_overlays?.[overlay.key];
+      overlay.scale.value = String(Math.min(100, Math.max(1, Number(value?.scale) || 100)));
+      syncScreenOverlayScaleFromRange(overlay);
+      return showCurrentScreenOverlay(overlay, value?.image_url);
+    }),
+  ]);
 }
 async function selectImageAsset(asset) {
   if (asset.busy) return;
@@ -653,7 +650,8 @@ async function uploadScreenOverlay(event, overlay) {
     releaseSelectedScreenOverlay(overlay);
     overlay.input.value = "";
     try {
-      await loadDisplayConfig({ background: false, music: false, volume: false, brightness: false, antialias: false, layout: false });
+      const config = await fetchDisplayConfig();
+      await showCurrentScreenOverlay(overlay, config.screen_overlays?.[overlay.key]?.image_url);
       setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の画面オーバーレイを更新しました。接続中のメイン画面へ反映されます。`);
     } catch (error) {
       console.error(error);
@@ -678,7 +676,7 @@ async function deleteScreenOverlay(overlay) {
   try {
     const response = await fetch(adminUrl(`/api/admin/screen-overlays/${overlay.slot}`), { method: "DELETE" });
     if (!response.ok) throw new Error(await readError(response, "画面オーバーレイを削除できませんでした。"));
-    await showCurrentScreenOverlay(overlay, { scale: Number(overlay.scale.value) });
+    await showCurrentScreenOverlay(overlay, null);
     setMessage(elements.displayStatus, elements.displayError, `${slotLabel(overlay)}の画面オーバーレイを削除しました。接続中のメイン画面へ反映されます。`);
   } catch (error) {
     console.error(error);
@@ -880,7 +878,8 @@ async function uploadImageAsset(event, asset) {
     releaseSelectedImageAsset(asset);
     asset.input.value = "";
     try {
-      await loadDisplayConfig({ music: false, volume: false });
+      const config = await fetchDisplayConfig();
+      await showCurrentImageAsset(asset, asset.preparation ? config.preparation_image_url : config.background_image_url);
       setMessage(asset.status, asset.error, `${asset.label}を更新しました。接続中のメイン画面へ反映されます。`);
     } catch (error) {
       console.error(error);
@@ -907,13 +906,7 @@ async function deleteImageAsset(asset) {
     const response = await fetch(adminUrl(asset.endpoint), { method: "DELETE" });
     if (!response.ok) throw new Error(await readError(response, `${asset.label}を削除できませんでした。`));
     await showCurrentImageAsset(asset, null);
-    try {
-      await loadDisplayConfig({ music: false, volume: false });
-      setMessage(asset.status, asset.error, `${asset.label}を削除しました。`);
-    } catch (error) {
-      console.error(error);
-      setMessage(asset.status, asset.error, `${asset.label}は削除されましたが、現在のプレビューを更新できませんでした。`, true);
-    }
+    setMessage(asset.status, asset.error, `${asset.label}を削除しました。`);
   } catch (error) {
     console.error(error);
     setMessage(asset.status, asset.error, error.message || `${asset.label}を削除できませんでした。`, true);
@@ -973,7 +966,8 @@ async function uploadMusic(event) {
     elements.musicInput.value = "";
     elements.selectedMusic.textContent = "なし";
     try {
-      await loadDisplayConfig({ background: false, volume: false });
+      const config = await fetchDisplayConfig();
+      showCurrentMusic(config.background_music_url);
       setMessage(elements.musicStatus, elements.musicError, "BGMを更新しました。接続中のメイン画面へ反映されます。");
     } catch (error) {
       console.error(error);
@@ -1115,16 +1109,16 @@ function llmConfig() {
   return { api_url: elements.apiUrl.value.trim(), model: elements.model.value.trim(), system_prompt: elements.systemPrompt.value.trim(), food_reaction_prompt: elements.foodPrompt.value.trim(), search_fillers: elements.fillers.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) };
 }
 function configForSave(section) {
-  if (!loadedConfig) throw new Error("設定の読み込みが完了していません。");
+  if (!configLoaded) throw new Error("設定の読み込みが完了していません。");
+  if (section === "tts") return { tts: ttsConfig() };
   return {
-    llm: section === "ai" ? llmConfig() : { ...loadedConfig.llm, search_fillers: [...loadedConfig.llm.search_fillers] },
-    tts: section === "tts" ? ttsConfig() : { ...loadedConfig.tts },
-    idle_speech: section === "ai" ? {
+    llm: llmConfig(),
+    idle_speech: {
       enabled: elements.idleEnabled.checked, min_seconds: Number(elements.idleMin.value), max_seconds: Number(elements.idleMax.value),
       entries: [...elements.idleEntries.children].map((row) => ({
         emotion: row.querySelector("select").value, text: row.querySelector("textarea").value.trim(),
       })),
-    } : { ...loadedConfig.idle_speech },
+    },
   };
 }
 function validate(form) {
@@ -1167,14 +1161,14 @@ async function loadSpeakers() {
   } finally { elements.loadSpeakers.disabled = false; elements.loadSpeakers.textContent = original; }
 }
 async function loadConfig() {
-  try { const response = await fetch(adminUrl("/api/admin/config"), { cache: "no-store" }); if (response.status === 401) throw new Error("管理用トークンを確認してください。"); if (response.status === 404) throw new Error("サーバーが設定画面に対応していません。新しい実行ファイルで再起動してください。"); if (!response.ok) throw new Error(await readError(response, "設定を読み込めませんでした。")); loadedConfig = await response.json(); applyConfig(loadedConfig); await loadSpeakers(); }
+  try { const response = await fetch(adminUrl("/api/admin/config"), { cache: "no-store" }); if (response.status === 401) throw new Error("管理用トークンを確認してください。"); if (response.status === 404) throw new Error("サーバーが設定画面に対応していません。新しい実行ファイルで再起動してください。"); if (!response.ok) throw new Error(await readError(response, "設定を読み込めませんでした。")); applyConfig(await response.json()); configLoaded = true; await loadSpeakers(); }
   catch (error) { console.error(error); setMessage(elements.aiStatus, elements.aiError, error.message || "設定を読み込めませんでした。", true); setMessage(elements.ttsStatus, elements.ttsError, "音声設定も読み込めませんでした。", true); }
 }
 async function saveConfig(section, form, button, status, error) {
   if (!token || !validate(form)) return;
   if (section === "tts" && !hasSelectedSpeaker()) { setMessage(status, error, speakerSelectionError(), true); return; }
   button.disabled = true; const original = button.textContent; button.textContent = "保存中…"; setMessage(status, error);
-  try { const nextConfig = configForSave(section); const response = await fetch(adminUrl("/api/admin/config"), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextConfig) }); if (!response.ok) throw new Error(await readError(response, "設定を保存できませんでした。")); loadedConfig = nextConfig; setMessage(status, error, "保存しました。待機設定はすぐ、回答設定は次の投稿から反映されます。"); }
+  try { const nextConfig = configForSave(section); const response = await fetch(adminUrl("/api/admin/config"), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextConfig) }); if (!response.ok) throw new Error(await readError(response, "設定を保存できませんでした。")); setMessage(status, error, "保存しました。待機設定はすぐ、回答設定は次の投稿から反映されます。"); }
   catch (reason) { console.error(reason); setMessage(status, error, reason.message || "設定を保存できませんでした。", true); }
   finally { button.disabled = false; button.textContent = original; }
 }

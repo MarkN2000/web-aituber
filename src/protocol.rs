@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug)]
 pub struct Submission {
     pub id: String,
+    pub cancel: tokio_util::sync::CancellationToken,
     pub kind: SubmissionKind,
     pub text: String,
 }

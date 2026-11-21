@@ -68,7 +68,7 @@ async fn process_idle_speech(
     config_changes: &mut tokio::sync::watch::Receiver<std::sync::Arc<AppConfig>>,
 ) -> Option<Submission> {
     let turn_id = uuid::Uuid::new_v4().to_string();
-    let cancel = CancellationToken::new();
+    let cancel = config.submission_period.child_token();
     *state.active.lock().await = Some(ActiveTurn {
         turn_id: turn_id.clone(),
         cancel: cancel.clone(),
@@ -155,11 +155,11 @@ async fn present_idle_speech(
 }
 
 async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
-    let cancel = CancellationToken::new();
+    let cancel = &submission.cancel;
     let config = {
         let mut active = state.active.lock().await;
         let config = state.config.current();
-        if config.character.preparation_mode {
+        if config.character.preparation_mode || cancel.is_cancelled() {
             send_event(
                 state,
                 ServerEvent::Cancelled {
@@ -186,7 +186,7 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
     )
     .await;
 
-    let result = process_active_submission(state, &config, &submission, &cancel).await;
+    let result = process_active_submission(state, &config, &submission).await;
 
     {
         let mut active = state.active.lock().await;
@@ -250,8 +250,8 @@ async fn process_active_submission(
     state: &AppState,
     config: &AppConfig,
     submission: &Submission,
-    cancel: &CancellationToken,
 ) -> std::result::Result<CompletedSubmission, ProcessError> {
+    let cancel = &submission.cancel;
     let is_food = submission.is_food();
     let food_presentation = if let Some(image) = submission.food_vrm_image() {
         let motion =
@@ -935,6 +935,7 @@ mod tests {
                 "submission" => sender
                     .send(Submission {
                         id: "next".to_owned(),
+                        cancel: CancellationToken::new(),
                         kind: SubmissionKind::Question,
                         text: "質問".to_owned(),
                     })
@@ -984,6 +985,7 @@ mod tests {
         let events = state.events.subscribe();
         let submission = Submission {
             id: "food-turn".to_owned(),
+            cancel: cancel.clone(),
             kind: SubmissionKind::Food {
                 vrm_image: crate::protocol::InputImage {
                     mime_type: "image/webp".to_owned(),
@@ -1135,6 +1137,7 @@ mod tests {
             &state,
             Submission {
                 id: "queued-turn".to_owned(),
+                cancel: CancellationToken::new(),
                 kind: SubmissionKind::Question,
                 text: "処理しない質問".to_owned(),
             },

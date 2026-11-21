@@ -27,8 +27,8 @@ use uuid::Uuid;
 use crate::{
     background_music,
     config::{
-        CharacterConfig, FoodMotionConfig, TtsConfig, validate_event_identifier, validate_http_url,
-        validate_public_base_url,
+        AppConfig, CharacterConfig, ConfigReloadResult, FoodMotionConfig, TtsConfig,
+        validate_event_identifier, validate_http_url, validate_public_base_url,
     },
     protocol::{AdminSkipRequest, InputImage, ServerEvent, Submission, SubmissionKind},
     state::AppState,
@@ -338,13 +338,13 @@ async fn submit(
     if text.chars().count() > MAX_TEXT_CHARS {
         return Err(ApiError::bad_request("質問は2000文字以下にしてください"));
     }
-    require_accepting_submissions(&state, &event_identifier)?;
-
+    let config = require_accepting_submissions(&state, &event_identifier)?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
         .try_send(Submission {
             id: id.clone(),
+            cancel: config.submission_period.child_token(),
             kind: SubmissionKind::Question,
             text,
         })
@@ -358,8 +358,8 @@ async fn submit_food(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmitResponse>), ApiError> {
-    require_accepting_submissions(&state, &event_identifier)?;
-    require_food_motion(&state)?;
+    let config = require_accepting_submissions(&state, &event_identifier)?;
+    require_food_motion(&config.character)?;
     let mut vrm_image = None;
     let mut ai_image = None;
 
@@ -383,13 +383,14 @@ async fn submit_food(
         vrm_image.ok_or_else(|| ApiError::bad_request("VRM表示用の食事画像がありません"))?;
     let ai_image =
         ai_image.ok_or_else(|| ApiError::bad_request("AI入力用の食事画像がありません"))?;
-    require_accepting_submissions(&state, &event_identifier)?;
-    require_food_motion(&state)?;
+    let config = require_accepting_submissions(&state, &event_identifier)?;
+    require_food_motion(&config.character)?;
     let id = Uuid::new_v4().to_string();
     state
         .submissions
         .try_send(Submission {
             id: id.clone(),
+            cancel: config.submission_period.child_token(),
             kind: SubmissionKind::Food {
                 vrm_image,
                 ai_image,
@@ -401,14 +402,8 @@ async fn submit_food(
     Ok((StatusCode::ACCEPTED, Json(SubmitResponse { id })))
 }
 
-fn require_food_motion(state: &AppState) -> Result<(), ApiError> {
-    if state
-        .config
-        .current()
-        .character
-        .configured_food_motion()
-        .is_none()
-    {
+fn require_food_motion(character: &CharacterConfig) -> Result<(), ApiError> {
+    if character.configured_food_motion().is_none() {
         return Err(ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: "食事モーションが設定されていません",
@@ -458,8 +453,23 @@ fn notify_display_config_changed(state: &AppState) {
     let _ = state.events.send(ServerEvent::DisplayConfigChanged);
 }
 
-fn notify_event_access_changed(state: &AppState) {
-    let _ = state.events.send(ServerEvent::EventAccessChanged);
+fn notify_config_changes(state: &AppState, changes: &ConfigReloadResult, refresh_display: bool) {
+    if changes.event_identifier_changed {
+        let _ = state.events.send(ServerEvent::EventAccessChanged);
+    }
+    if refresh_display || changes.display_changed {
+        notify_display_config_changed(state);
+    }
+}
+
+fn save_config(
+    state: &AppState,
+    refresh_display: bool,
+    update: impl FnOnce(&mut AppConfig),
+) -> anyhow::Result<ConfigReloadResult> {
+    let changes = state.config.update_and_save(update)?;
+    notify_config_changes(state, &changes, refresh_display);
+    Ok(changes)
 }
 
 async fn event_display_config(
@@ -807,15 +817,12 @@ async fn update_motions(
             "演出終了は食べ物の消去開始から0.4秒後以降にしてください",
         );
     }
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.idle_motions = request.idle_motions;
         config.character.emotion_motions = request.emotion_motions;
         config.character.food_motion = request.food_motion;
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "モーション設定を保存できませんでした");
             admin_error(
@@ -1298,7 +1305,7 @@ async fn update_screen_overlay_scale(
         );
     }
 
-    match state.config.update_and_save(move |config| match slot {
+    match save_config(&state, true, move |config| match slot {
         ScreenOverlaySlot::TopLeft => {
             config.character.screen_overlays.top_left.scale = request.scale
         }
@@ -1312,10 +1319,7 @@ async fn update_screen_overlay_scale(
             config.character.screen_overlays.bottom_right.scale = request.scale
         }
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "画面オーバーレイの表示倍率を保存できませんでした");
             admin_error(
@@ -1512,14 +1516,11 @@ async fn update_background_music_volume(
         );
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.background_music_volume = request.volume;
         config.character.background_music_duck_ratio = request.duck_ratio;
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "BGM音量を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "BGM音量を保存できませんでした")
@@ -1542,13 +1543,10 @@ async fn update_model_brightness(
         );
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.light.brightness = request.brightness;
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "モデルの明るさを保存できませんでした");
             admin_error(
@@ -1568,13 +1566,10 @@ async fn update_model_antialias(
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.antialias = request.antialias;
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "アンチエイリアス設定を保存できませんでした");
             admin_error(
@@ -1594,19 +1589,10 @@ async fn update_preparation_mode(
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.preparation_mode = request.enabled;
     }) {
-        Ok(_) => {
-            if request.enabled {
-                let active = state.active.lock().await;
-                if let Some(active) = active.as_ref() {
-                    active.cancel.cancel();
-                }
-            }
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "準備中モードを保存できませんでした");
             admin_error(
@@ -1632,7 +1618,7 @@ async fn update_drawing_stabilization(
         );
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, false, move |config| {
         config.drawing.stabilization = request.stabilization;
     }) {
         Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
@@ -1672,17 +1658,14 @@ async fn update_model_layout(
         );
     }
 
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, true, move |config| {
         config.character.camera.position = request.camera_position;
         config.character.camera.fov = request.camera_fov;
         config.character.food_prop.position = request.food_prop_position;
         config.character.food_prop.rotation_degrees = request.food_prop_rotation_degrees;
         config.character.food_prop.size = request.food_prop_scale;
     }) {
-        Ok(_) => {
-            notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
-        }
+        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => {
             tracing::warn!(error = ?error, "モデル配置を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "モデル配置を保存できませんでした")
@@ -1956,22 +1939,9 @@ async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAu
     }
 
     let _guard = state.motion_files_lock.lock().await;
-    let previous = state.config.current();
-    let previous_event_identifier = previous.event_identifier.clone();
-    let previous_preparation_mode = previous.character.preparation_mode;
     match state.config.reload() {
         Ok(result) => {
-            let current = state.config.current();
-            if current.event_identifier != previous_event_identifier {
-                notify_event_access_changed(&state);
-            }
-            if current.character.preparation_mode && !previous_preparation_mode {
-                let active = state.active.lock().await;
-                if let Some(active) = active.as_ref() {
-                    active.cancel.cancel();
-                }
-            }
-            notify_display_config_changed(&state);
+            notify_config_changes(&state, &result, true);
             admin_no_store(
                 Json(AdminReloadResponse {
                     restart_required: result.restart_required,
@@ -2111,22 +2081,18 @@ async fn update_admin_event_access(
                 .into_response(),
         );
     }
-    let previous_event_identifier = state.config.current().event_identifier.clone();
     let next_event_identifier = request.event_identifier;
     let next_public_base_url = request.public_base_url.trim_end_matches('/').to_owned();
-    match state.config.update_and_save(move |config| {
+    match save_config(&state, false, move |config| {
         config.event_identifier = next_event_identifier;
         config.public_base_url = next_public_base_url;
     }) {
         Ok(_) => {
-            let event_identifier = state.config.current().event_identifier.clone();
-            if event_identifier != previous_event_identifier {
-                notify_event_access_changed(&state);
-            }
+            let config = state.config.current();
             admin_no_store(
                 Json(AdminEventAccessDto {
-                    public_base_url: state.config.current().public_base_url.clone(),
-                    event_identifier,
+                    public_base_url: config.public_base_url.clone(),
+                    event_identifier: config.event_identifier.clone(),
                 })
                 .into_response(),
             )
@@ -2189,20 +2155,31 @@ async fn admin_config(State(state): State<AppState>, Query(auth): Query<AdminAut
 async fn update_admin_config(
     State(state): State<AppState>,
     Query(auth): Query<AdminAuth>,
-    Json(request): Json<AdminConfigDto>,
+    Json(request): Json<AdminConfigUpdate>,
 ) -> Response {
     if !has_valid_admin_token(&state, &auth) {
         return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
     }
-    match state.config.update_and_save(move |config| {
-        config.llm.api_url = request.llm.api_url;
-        config.llm.model = request.llm.model;
-        config.llm.system_prompt = request.llm.system_prompt;
-        config.llm.food_reaction_prompt = request.llm.food_reaction_prompt;
-        config.llm.search_fillers = request.llm.search_fillers;
-        config.tts.engine_url = request.tts.engine_url;
-        config.tts.speaker_id = request.tts.speaker_id;
-        config.idle_speech = request.idle_speech;
+    match save_config(&state, false, move |config| {
+        let tts = match request {
+            AdminConfigUpdate::Ai {
+                llm,
+                idle_speech,
+                tts,
+            } => {
+                config.llm.api_url = llm.api_url;
+                config.llm.model = llm.model;
+                config.llm.system_prompt = llm.system_prompt;
+                config.llm.food_reaction_prompt = llm.food_reaction_prompt;
+                config.llm.search_fillers = llm.search_fillers;
+                config.idle_speech = idle_speech;
+                tts
+            }
+            AdminConfigUpdate::Tts { tts } => Some(tts),
+        };
+        if let Some(tts) = tts {
+            config.tts = tts;
+        }
     }) {
         Ok(result) => admin_no_store(
             Json(AdminReloadResponse {
@@ -2600,12 +2577,17 @@ async fn handle_websocket(
     let (mut sender, mut receiver) = socket.split();
     let mut events = state.events.subscribe();
     let mut shutdown = state.shutdown.subscribe();
-    if let WebsocketAudience::Public(event_identifier) = &audience
-        && !has_valid_event_identifier(&state, event_identifier)
-    {
-        let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
-        return;
-    }
+    let public_generation = match &audience {
+        WebsocketAudience::Public(event_identifier) => {
+            let config = state.config.current();
+            if *event_identifier != config.event_identifier {
+                let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
+                return;
+            }
+            Some(config.event_generation)
+        }
+        WebsocketAudience::Admin => None,
+    };
     let current = state.current.read().await.clone();
     let history = state.history.lock().await.snapshot();
 
@@ -2632,13 +2614,13 @@ async fn handle_websocket(
                 }
             }
             event = events.recv() => {
+                if public_generation.is_some_and(|generation| generation != state.config.current().event_generation) {
+                    let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
+                    break;
+                }
                 match event {
                     Ok(event) => {
                         if matches!(event, ServerEvent::EventAccessChanged) {
-                            if matches!(&audience, WebsocketAudience::Public(_)) {
-                                let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
-                                break;
-                            }
                             continue;
                         }
                         if send_json(&mut sender, &event).await.is_err() {
@@ -2646,12 +2628,6 @@ async fn handle_websocket(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        if let WebsocketAudience::Public(event_identifier) = &audience
-                            && !has_valid_event_identifier(&state, event_identifier)
-                        {
-                            let _ = send_json(&mut sender, &ServerEvent::EventEnded).await;
-                            break;
-                        }
                         let current = state.current.read().await.clone();
                         let history = state.history.lock().await.snapshot();
                         if send_json(&mut sender, &ServerEvent::Snapshot { current, history }).await.is_err() {
@@ -2682,23 +2658,17 @@ fn has_valid_event_identifier(state: &AppState, event_identifier: &str) -> bool 
     state.config.current().event_identifier == event_identifier
 }
 
-fn require_valid_event_identifier(
+fn require_accepting_submissions(
     state: &AppState,
     event_identifier: &str,
-) -> Result<(), ApiError> {
-    if has_valid_event_identifier(state, event_identifier) {
-        Ok(())
-    } else {
+) -> Result<std::sync::Arc<crate::config::AppConfig>, ApiError> {
+    let config = state.config.current();
+    if config.event_identifier != event_identifier {
         Err(ApiError::not_found("このURLは使用できません。"))
-    }
-}
-
-fn require_accepting_submissions(state: &AppState, event_identifier: &str) -> Result<(), ApiError> {
-    require_valid_event_identifier(state, event_identifier)?;
-    if state.config.current().character.preparation_mode {
+    } else if config.character.preparation_mode {
         Err(ApiError::unavailable("現在は準備中です"))
     } else {
-        Ok(())
+        Ok(config)
     }
 }
 
@@ -2882,6 +2852,19 @@ struct AdminConfigDto {
     llm: AdminLlmConfigDto,
     tts: AdminTtsConfigDto,
     idle_speech: crate::config::IdleSpeechConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum AdminConfigUpdate {
+    Ai {
+        llm: AdminLlmConfigDto,
+        idle_speech: crate::config::IdleSpeechConfig,
+        tts: Option<TtsConfig>,
+    },
+    Tts {
+        tts: TtsConfig,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3737,6 +3720,55 @@ mod tests {
         assert_eq!(state.config.current().llm.model, "updated-model");
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn saving_each_admin_tab_preserves_the_other_and_applies_external_changes() {
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let path = assets_dir.join("config.json");
+        let mut external = (*state.config.current()).clone();
+        state.config = ConfigStore::new(&path, external.clone());
+        state.events = tokio::sync::broadcast::channel(8).0;
+        let app = router(state.clone());
+        let mut events = state.events.subscribe();
+        let submission = state.config.current().submission_period.child_token();
+
+        let mut ai = serde_json::to_value(AdminConfigDto::from_config(&external)).unwrap();
+        ai.as_object_mut().unwrap().remove("tts");
+        ai["llm"]["model"] = serde_json::json!("new-model");
+        let tts = serde_json::json!({ "tts": { "engine_url": "http://localhost:50121", "speaker_id": 42 } });
+        external.event_identifier = "new-event".to_owned();
+        external.character.preparation_mode = true;
+        std::fs::write(&path, serde_json::to_vec(&external).unwrap()).unwrap();
+
+        for body in [tts, ai] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/config?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let saved = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(saved.tts.speaker_id, 42);
+        assert_eq!(saved.llm.model, "new-model");
+        assert_eq!(state.config.current().event_identifier, "new-event");
+        assert!(submission.is_cancelled());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            ServerEvent::EventAccessChanged
+        ));
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            ServerEvent::DisplayConfigChanged
+        ));
+        assert!(events.try_recv().is_err());
+        std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]
@@ -5067,6 +5099,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_question_stays_cancelled_after_preparation_mode_ends() {
+        let (mut state, directory) = state_with_temporary_assets();
+        let path = directory.join("config.json");
+        let mut config = state.config.current().as_ref().clone();
+        config.llm.api_url = "http://127.0.0.1:1/unused".to_owned();
+        let (sender, mut queued) = mpsc::channel(1);
+        state.submissions = sender;
+        state.events = broadcast::channel(8).0;
+        state.config = ConfigStore::new(&path, config.clone());
+        let app = router(state.clone());
+        let question = || {
+            Request::post("/event/event-8k2m4q7x9p/api/submissions")
+                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=q")
+                .body(Body::from(
+                    "--q\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n質問\r\n--q--\r\n",
+                ))
+                .unwrap()
+        };
+        let accepted = app.clone().oneshot(question()).await.unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(accepted.into_body(), 1024).await.unwrap();
+        let id = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["id"].clone();
+
+        config.character.preparation_mode = true;
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        state.config.reload().unwrap();
+        state
+            .config
+            .update_and_save(|c| c.character.preparation_mode = false)
+            .unwrap();
+
+        queued.close();
+        let mut events = state.events.subscribe();
+        crate::pipeline::run(state.clone(), queued).await;
+        assert!(
+            matches!(events.try_recv().unwrap(), ServerEvent::Cancelled { turn_id } if id == turn_id)
+        );
+        assert!(matches!(events.try_recv().unwrap(), ServerEvent::Idle));
+        assert!(state.history.lock().await.snapshot().is_empty());
+        assert!(!state.config.current().submission_period.is_cancelled());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
     async fn preparation_mode_allows_without_image_and_rejects_submissions() {
         let (mut state, assets_dir) = state_with_temporary_assets();
         let config_path = assets_dir.join("config.json");
@@ -5074,7 +5150,7 @@ mod tests {
         std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
         state.config = ConfigStore::new(&config_path, config);
         let app = router(state.clone());
-        let cancel = CancellationToken::new();
+        let cancel = state.config.current().submission_period.child_token();
         *state.active.lock().await = Some(crate::state::ActiveTurn {
             turn_id: "active-turn".to_owned(),
             cancel: cancel.clone(),

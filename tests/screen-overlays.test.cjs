@@ -29,7 +29,6 @@ test("管理画面は四隅の画面オーバーレイスロットと倍率操�
   assert.match(adminScript, /body: JSON\.stringify\(\{ scale \}\)/);
   assert.match(adminScript, /syncScreenOverlayScaleFromRange/);
   assert.match(adminScript, /syncScreenOverlayScaleFromNumber/);
-  assert.match(adminScript, /showCurrentScreenOverlay\(overlay, \{ scale: Number\(overlay\.scale\.value\) \}\)/);
 });
 
 test("メイン画面はVRMより前、UIより後ろのオーバーレイレイヤーを持つ", () => {

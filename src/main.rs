@@ -5,6 +5,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -60,7 +61,7 @@ async fn run() -> Result<()> {
 
     let state = AppState {
         config,
-        http: reqwest::Client::new(),
+        http: http_client()?,
         submissions,
         events,
         current: Arc::new(RwLock::new(None)),
@@ -93,6 +94,15 @@ async fn run() -> Result<()> {
         tracing::warn!(path = %audio_dir.display(), error = ?error, "一時音声ディレクトリを削除できませんでした");
     }
     Ok(())
+}
+
+fn http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(90))
+        .timeout(Duration::from_secs(300))
+        .build()
+        .context("HTTPクライアントを初期化できませんでした")
 }
 
 fn append_update_error(message: &str) {
@@ -184,6 +194,37 @@ async fn wait_for_requested_shutdown(mut shutdown: watch::Receiver<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stalled_tts_request_expires() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let voice = web_aituber::config::TtsConfig {
+            engine_url: format!("http://{}", listener.local_addr().unwrap()),
+            speaker_id: 0,
+        };
+        let client = http_client().unwrap();
+        let request = tokio::spawn(async move {
+            web_aituber::tts::synthesize(&client, &voice, "テスト。").await
+        });
+        let socket = tokio::time::timeout(Duration::from_secs(5), async {
+            let (socket, _) = listener.accept().await.unwrap();
+            socket.readable().await.unwrap();
+            socket
+        })
+        .await
+        .unwrap();
+
+        tokio::time::pause();
+        let error = tokio::time::timeout(Duration::from_secs(95), request)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+        drop(socket);
+    }
 
     #[tokio::test]
     async fn startup_removes_previous_audio_sessions() {

@@ -126,15 +126,13 @@ async fn read_stream(
     let mut chunks = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut fallback_text = String::new();
-    let mut completed_response = None;
-    let mut output_limit_reached = false;
     let mut search_started = Some(search_started);
 
-    while let Some(chunk) = chunks.next().await {
+    'stream: while let Some(chunk) = chunks.next().await {
         buffer.extend_from_slice(&chunk.context("LLM API の応答を読み取れません")?);
         for data in take_sse_data(&mut buffer)? {
             if data == "[DONE]" {
-                continue;
+                break 'stream;
             }
             let event: Value =
                 serde_json::from_str(&data).context("LLM API のストリーム応答を解釈できません")?;
@@ -146,20 +144,15 @@ async fn read_stream(
                 let _ = sender.send(());
             }
 
-            match event_type {
+            let output_limit_reached = match event_type {
                 "response.output_text.delta" => {
                     if let Some(delta) = event["delta"].as_str() {
                         fallback_text.push_str(delta);
                     }
+                    continue;
                 }
-                "response.completed" => {
-                    completed_response = event.get("response").cloned();
-                    output_limit_reached = false;
-                }
-                "response.incomplete" if is_output_limit_incomplete(&event) => {
-                    completed_response = event.get("response").cloned();
-                    output_limit_reached = true;
-                }
+                "response.completed" => false,
+                "response.incomplete" if is_output_limit_incomplete(&event) => true,
                 "response.failed" | "response.incomplete" | "error" => {
                     let message = event
                         .pointer("/response/error/message")
@@ -169,28 +162,20 @@ async fn read_stream(
                         .unwrap_or("詳細はありません");
                     bail!("LLM API の回答生成に失敗しました: {message}");
                 }
-                _ => {}
+                _ => continue,
+            };
+            let mut result = extract_response(&event["response"])?;
+            if result.answer.is_empty() {
+                result.answer = fallback_text.trim().to_owned();
             }
+            if result.answer.is_empty() {
+                bail!("LLM API の応答に回答テキストがありません");
+            }
+            result.output_limit_reached = output_limit_reached;
+            return Ok(result);
         }
     }
-
-    let mut result = completed_response
-        .as_ref()
-        .map(extract_response)
-        .transpose()?
-        .unwrap_or_else(|| LlmResponse {
-            answer: fallback_text.trim().to_owned(),
-            sources: Vec::new(),
-            output_limit_reached: false,
-        });
-    if result.answer.is_empty() {
-        result.answer = fallback_text.trim().to_owned();
-    }
-    if result.answer.is_empty() {
-        bail!("LLM API の応答に回答テキストがありません");
-    }
-    result.output_limit_reached = output_limit_reached;
-    Ok(result)
+    bail!("LLM API の回答完了前にストリームが終了しました")
 }
 
 fn is_output_limit_incomplete(event: &Value) -> bool {
@@ -388,6 +373,7 @@ mod tests {
         }];
         let submission = Submission {
             id: "turn-2".to_owned(),
+            cancel: tokio_util::sync::CancellationToken::new(),
             kind: SubmissionKind::Question,
             text: "今回の質問".to_owned(),
         };
@@ -448,6 +434,7 @@ mod tests {
         }];
         let submission = Submission {
             id: "turn-2".to_owned(),
+            cancel: tokio_util::sync::CancellationToken::new(),
             kind: SubmissionKind::Food {
                 vrm_image: InputImage {
                     mime_type: "image/webp".to_owned(),
@@ -574,6 +561,46 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(events[0].contains("response.output_text.delta"));
         assert!(buffer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_delta_without_a_terminal_response() {
+        let delta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"途中\"}\n\n";
+        for end in ["", "data: [DONE]\n\n"] {
+            let response = axum::http::Response::new(format!("{delta}{end}")).into();
+            let (search, _) = oneshot::channel();
+            assert!(read_stream(response, search).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_completed_and_output_limited_responses_before_eof() {
+        let delta = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"本文\"}\n\n";
+        for (terminal, output_limit_reached) in [
+            (json!({ "type": "response.completed" }), false),
+            (
+                json!({
+                    "type": "response.incomplete",
+                    "response": { "incomplete_details": { "reason": "max_output_tokens" } }
+                }),
+                true,
+            ),
+        ] {
+            let frame = format!("{delta}data: {terminal}\n\n");
+            let stream = futures_util::stream::iter([Ok::<_, std::io::Error>(frame)])
+                .chain(futures_util::stream::pending());
+            let response = axum::http::Response::new(reqwest::Body::wrap_stream(stream)).into();
+            let (search, _) = oneshot::channel();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                read_stream(response, search),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.answer, "本文");
+            assert_eq!(result.output_limit_reached, output_limit_reached);
+        }
     }
 
     #[test]

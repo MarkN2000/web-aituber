@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct ConfigStore {
@@ -20,10 +21,16 @@ pub struct ConfigStore {
 
 pub struct ConfigReloadResult {
     pub restart_required: bool,
+    pub(crate) event_identifier_changed: bool,
+    pub(crate) display_changed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppConfig {
+    #[serde(skip)]
+    pub(crate) submission_period: CancellationToken,
+    #[serde(skip)]
+    pub(crate) event_generation: u64,
     pub bind: String,
     pub admin_token: String,
     pub public_base_url: String,
@@ -91,7 +98,7 @@ impl Default for IdleSpeechConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct CharacterConfig {
     #[serde(default)]
     pub preparation_mode: bool,
@@ -121,7 +128,7 @@ pub struct CharacterConfig {
     pub light: LightConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct ScreenOverlaysConfig {
     #[serde(default)]
     pub top_left: ScreenOverlayConfig,
@@ -133,20 +140,20 @@ pub struct ScreenOverlaysConfig {
     pub bottom_right: ScreenOverlayConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ScreenOverlayConfig {
     #[serde(default = "default_screen_overlay_scale")]
     pub scale: u8,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct CameraConfig {
     pub fov: f32,
     pub position: [f32; 3],
     pub target: [f32; 3],
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct LightConfig {
     pub color: String,
     pub intensity: f32,
@@ -156,14 +163,14 @@ pub struct LightConfig {
     pub brightness: f32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct FoodPropConfig {
     pub position: [f32; 3],
     pub rotation_degrees: [f32; 3],
     pub size: f32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct FoodMotionConfig {
     pub url: String,
     pub consume_at_ms: u64,
@@ -487,15 +494,8 @@ impl ConfigStore {
             .write_lock
             .lock()
             .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
-        let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
-        let current = self.current();
-        let restart_required = replacement.bind != current.bind;
-        if restart_required {
-            replacement.bind.clone_from(&current.bind);
-        }
-        self.tts_cache.update_config(&replacement);
-        self.current.send_replace(Arc::new(replacement));
-        Ok(ConfigReloadResult { restart_required })
+        let replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        Ok(self.apply(replacement))
     }
 
     /// 変更を永続化できた場合だけ、実行中の設定を更新する。
@@ -507,20 +507,39 @@ impl ConfigStore {
             .write_lock
             .lock()
             .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
-        let current = self.current();
         // 画面に出さない項目を外部編集で変更していても、古い実行中設定で上書きしない。
         let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
         update(&mut replacement);
         replacement.validate()?;
         write_config_atomically(self.path.as_ref(), &replacement)?;
 
-        let restart_required = replacement.bind != current.bind;
-        if restart_required {
+        Ok(self.apply(replacement))
+    }
+
+    fn apply(&self, mut replacement: AppConfig) -> ConfigReloadResult {
+        let current = self.current();
+        let result = ConfigReloadResult {
+            restart_required: replacement.bind != current.bind,
+            event_identifier_changed: replacement.event_identifier != current.event_identifier,
+            display_changed: replacement.character != current.character,
+        };
+        if result.restart_required {
             replacement.bind.clone_from(&current.bind);
+        }
+        replacement.event_generation =
+            current.event_generation + u64::from(result.event_identifier_changed);
+        replacement.submission_period =
+            if current.character.preparation_mode && !replacement.character.preparation_mode {
+                CancellationToken::new()
+            } else {
+                current.submission_period.clone()
+            };
+        if !current.character.preparation_mode && replacement.character.preparation_mode {
+            current.submission_period.cancel();
         }
         self.tts_cache.update_config(&replacement);
         self.current.send_replace(Arc::new(replacement));
-        Ok(ConfigReloadResult { restart_required })
+        result
     }
 }
 

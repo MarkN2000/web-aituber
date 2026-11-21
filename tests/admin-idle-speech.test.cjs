@@ -33,7 +33,7 @@ test("待機候補を追加・削除・再読込でき各候補を検証し保�
     tts: { engine_url: "http://localhost", speaker_id: 1 },
     idle_speech: { enabled: false, min_seconds: 30, max_seconds: 90, entries: [{ emotion: "neutral", text: "ひと休み" }] },
   };
-  const context = vm.createContext({ elements, loadedConfig, resetSpeakerList() {}, ttsConfig: () => loadedConfig.tts });
+  const context = vm.createContext({ elements, configLoaded: true, resetSpeakerList() {}, ttsConfig: () => loadedConfig.tts });
   vm.runInContext(`let selectedSpeakerId; ${functions}\n${addListener}`, context);
   context.applyConfig(loadedConfig);
   const first = elements.idleEntries.children[0];
@@ -54,7 +54,8 @@ test("待機候補を追加・削除・再読込でき各候補を検証し保�
     enabled: true, min_seconds: 40, max_seconds: 40,
     entries: [{ emotion: "neutral", text: "ひと休み" }, { emotion: "happy", text: "こんにちは\nお元気ですか" }],
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(context.configForSave("tts").idle_speech)), loadedConfig.idle_speech);
+  assert.deepEqual(Object.keys(context.configForSave("ai")).sort(), ["idle_speech", "llm"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.configForSave("tts"))), { tts: loadedConfig.tts });
   const form = { reportValidity: () => !elements.idleMax.error && elements.idleEntries.querySelectorAll("textarea").every((text) => !text.error) };
   assert.equal(context.validate(form), true);
   elements.idleMin.value = "41";
