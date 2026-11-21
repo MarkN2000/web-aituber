@@ -105,13 +105,13 @@ export class AudioQueue {
     }
   }
 
-  enqueue({ url, turnId, sequence, durationMs, meta = {} }) {
+  enqueue({ url, turnId, sequence, meta = {} }) {
     if (this.disposed || !url || !turnId || !Number.isInteger(sequence)) return;
     this.activateTurn(turnId);
     const key = this.itemKey(turnId, sequence);
     if (this.pending.has(key) || this.current?.key === key) return;
 
-    const item = { key, url, turnId, sequence, durationMs, meta, objectUrl: null, ready: false, failed: false, started: false };
+    const item = { key, url, turnId, sequence, meta, objectUrl: null, ready: false, failed: false, started: false };
     this.pending.set(key, item);
     if (this.nextSequence === null) this.nextSequence = sequence;
     this.fetchAudio(item);
@@ -142,7 +142,7 @@ export class AudioQueue {
     if (this.current?.turnId === turnId) this.stopCurrent();
     if (this.activeTurnId === turnId) {
       this.activeTurnId = null;
-      this.resetNextSequence();
+      this.nextSequence = null;
     }
     this.playNext();
   }
@@ -234,13 +234,6 @@ export class AudioQueue {
     if (!item) return;
     this.pending.delete(key);
     this.revoke(item);
-  }
-
-  resetNextSequence() {
-    const sequences = [...this.pending.values()]
-      .filter((item) => item.turnId === this.activeTurnId)
-      .map((item) => item.sequence);
-    this.nextSequence = sequences.length ? Math.min(...sequences) : null;
   }
 
   activateTurn(turnId) {

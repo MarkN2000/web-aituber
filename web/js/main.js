@@ -1,4 +1,4 @@
-import { AudioQueue } from "./audio-queue.js?v=4";
+import { AudioQueue } from "./audio-queue.js?v=5";
 import { BackgroundMusic } from "./background-music.js?v=7";
 import { ConversationHistory } from "./history.js?v=9";
 import { INVALID_EVENT_MESSAGE, showInvalidEventScreen } from "./invalid-event.js?v=1";
@@ -567,7 +567,6 @@ function receiveSegment(segment) {
     url: segment.audio_url,
     turnId: segment.turn_id,
     sequence: segment.sequence,
-    durationMs: segment.duration_ms,
     meta: segment,
   });
 }

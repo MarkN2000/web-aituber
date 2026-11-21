@@ -169,8 +169,8 @@ test("TTSは再生位置と待機列を保持して再開する", async () => {
   const audio = instances[0];
 
   await queue.unlock();
-  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0, durationMs: 1000 });
-  queue.enqueue({ url: "/audio/1", turnId: "turn-1", sequence: 1, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0 });
+  queue.enqueue({ url: "/audio/1", turnId: "turn-1", sequence: 1 });
   await flushAsyncWork();
   audio.currentTime = 0.75;
 
@@ -196,12 +196,12 @@ test("非表示中に別の投稿へ切り替わっても復帰まで再生し�
   const audio = instances[0];
 
   await queue.unlock();
-  queue.enqueue({ url: "/audio/old", turnId: "turn-1", sequence: 0, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/old", turnId: "turn-1", sequence: 0 });
   await flushAsyncWork();
   await queue.suspend();
   const playCallsWhileSuspended = audio.playCalls;
 
-  queue.enqueue({ url: "/audio/new", turnId: "turn-2", sequence: 0, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/new", turnId: "turn-2", sequence: 0 });
   await flushAsyncWork();
 
   assert.equal(queue.current, null);
@@ -292,7 +292,7 @@ test("TTSの古い再開処理が非表示へ戻った後に再生しない", as
 
   await queue.unlock();
   const context = contexts[0];
-  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0 });
   await flushAsyncWork();
   await queue.suspend();
   const playCallsBeforeResume = audio.playCalls;
@@ -319,7 +319,7 @@ test("非表示へ切り替わった後に完了したplayはTTS開始を通知�
   await queue.unlock();
   const play = deferred();
   audio.playHandler = () => play.promise;
-  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0 });
   await flushAsyncWork();
   const suspend = queue.suspend();
   play.resolve();
@@ -345,7 +345,7 @@ test("再表示後に古いTTSのplayが完了しても新しい再生を止め�
   await queue.unlock();
   const oldPlay = deferred();
   audio.playHandler = () => oldPlay.promise;
-  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0, durationMs: 1000 });
+  queue.enqueue({ url: "/audio/0", turnId: "turn-1", sequence: 0 });
   await flushAsyncWork();
   await queue.suspend();
   audio.playHandler = undefined;

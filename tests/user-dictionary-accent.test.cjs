@@ -39,7 +39,6 @@ test("読みはIME確定時とフォーカス離脱時にカタカナへ変換�
     engineUrl: otherElement,
     adminUrl: () => "",
     readError: () => "",
-    stopOtherPreview: () => {},
   });
 
   pronunciation.value = "かいづか";

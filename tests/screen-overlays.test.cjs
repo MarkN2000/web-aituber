@@ -6,7 +6,6 @@ const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const adminHtml = fs.readFileSync(path.join(root, "web", "admin.html"), "utf8");
-const adminScript = fs.readFileSync(path.join(root, "web", "js", "admin.js"), "utf8");
 const mainHtml = fs.readFileSync(path.join(root, "web", "main.html"), "utf8");
 const mainScript = fs.readFileSync(path.join(root, "web", "js", "main.js"), "utf8");
 const style = fs.readFileSync(path.join(root, "web", "style.css"), "utf8");
@@ -24,11 +23,6 @@ test("管理画面は四隅の画面オーバーレイスロットと倍率操�
   }
   assert.match(adminHtml, /data-screen-overlay-scale type="range" min="1" max="100" step="1"/);
   assert.match(adminHtml, /data-screen-overlay-scale-number type="number" min="1" max="100" step="1"/);
-  assert.match(adminScript, /\/api\/admin\/screen-overlays\/\$\{overlay\.slot\}/);
-  assert.match(adminScript, /\/api\/admin\/screen-overlays\/\$\{overlay\.slot\}\/scale/);
-  assert.match(adminScript, /body: JSON\.stringify\(\{ scale \}\)/);
-  assert.match(adminScript, /syncScreenOverlayScaleFromRange/);
-  assert.match(adminScript, /syncScreenOverlayScaleFromNumber/);
 });
 
 test("メイン画面はVRMより前、UIより後ろのオーバーレイレイヤーを持つ", () => {

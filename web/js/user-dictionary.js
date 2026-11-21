@@ -48,19 +48,17 @@ export function sliderValueToAccentType(moraCount, sliderValue) {
 }
 
 export class UserDictionaryEditor {
-  constructor({ token, engineUrl, adminUrl, readError, stopOtherPreview }) {
+  constructor({ token, engineUrl, adminUrl, readError, playPreview, stopPreview }) {
     this.token = token;
     this.engineUrl = engineUrl;
     this.adminUrl = adminUrl;
     this.readError = readError;
-    this.stopOtherPreview = stopOtherPreview;
+    this.playPreview = playPreview;
+    this.stopPreview = stopPreview;
     this.loadedEngineUrl = undefined;
     this.words = new Map();
     this.editingUuid = undefined;
     this.busy = false;
-    this.previewAudio = undefined;
-    this.previewAudioUrl = undefined;
-    this.previewAbortController = undefined;
     this.elements = {
       load: document.querySelector("#load-tts-user-dictionary"),
       add: document.querySelector("#add-tts-user-dictionary-word"),
@@ -212,7 +210,6 @@ export class UserDictionaryEditor {
   invalidate(message = "エンジンURLを変更しました。辞書を読み直してください。") {
     this.loadedEngineUrl = undefined;
     this.words.clear();
-    this.releasePreview();
     this.closeEditor();
     this.elements.list.replaceChildren();
     this.elements.empty.hidden = false;
@@ -316,17 +313,8 @@ export class UserDictionaryEditor {
 
   closeEditor() {
     this.editingUuid = undefined;
-    this.releasePreview();
+    this.stopPreview(this.elements.preview);
     this.elements.form.hidden = true;
-  }
-
-  releasePreview() {
-    this.previewAbortController?.abort();
-    this.previewAbortController = undefined;
-    this.previewAudio?.pause();
-    this.previewAudio = undefined;
-    if (this.previewAudioUrl) URL.revokeObjectURL(this.previewAudioUrl);
-    this.previewAudioUrl = undefined;
   }
 
   async preview() {
@@ -341,39 +329,19 @@ export class UserDictionaryEditor {
     this.elements.preview.textContent = "試聴を準備中…";
     this.setMessage();
     this.updateControls();
-    this.stopOtherPreview();
-    this.releasePreview();
-    const controller = new AbortController();
-    this.previewAbortController = controller;
     try {
-      const response = await fetch(this.adminUrl("/api/admin/tts-user-dict-preview"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
+      await this.playPreview({
+        button: this.elements.preview,
+        path: "/api/admin/tts-user-dict-preview",
+        body: {
           tts: { engine_url: this.loadedEngineUrl, speaker_id: speakerId },
           pronunciation: this.elements.pronunciation.value.trim(),
           accent_type: Number(this.elements.accentType.value),
-        }),
+        },
+        errorMessage: "ユーザー辞書を試聴できませんでした。",
+        playingMessage: "入力中の読みとアクセントで試聴しています。辞書には保存されていません。",
+        report: (message, error) => this.setMessage(message, error),
       });
-      if (!response.ok) throw new Error(await this.readError(response, "ユーザー辞書を試聴できませんでした。"));
-      const blob = await response.blob();
-      if (this.previewAbortController !== controller) return;
-      this.previewAudioUrl = URL.createObjectURL(blob);
-      this.previewAudio = new Audio(this.previewAudioUrl);
-      this.previewAudio.addEventListener("ended", () => this.releasePreview(), { once: true });
-      this.previewAudio.addEventListener("error", () => {
-        this.releasePreview();
-        this.setMessage("試聴音声を再生できませんでした。", true);
-      }, { once: true });
-      await this.previewAudio.play();
-      if (this.previewAbortController !== controller) return;
-      this.setMessage("入力中の読みとアクセントで試聴しています。辞書には保存されていません。");
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      console.error(error);
-      this.releasePreview();
-      this.setMessage(error.message || "ユーザー辞書を試聴できませんでした。", true);
     } finally {
       this.busy = false;
       this.elements.preview.textContent = "この読みで試聴";
