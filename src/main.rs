@@ -1,7 +1,9 @@
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::{
     collections::HashMap,
-    fs::OpenOptions,
-    io::{ErrorKind, Write},
+    fs::{self, File, OpenOptions, TryLockError},
+    io::{self, ErrorKind, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
@@ -54,7 +56,8 @@ async fn run() -> Result<()> {
     )
     .await
     .context("BGMをM4Aへ移行できませんでした")?;
-    let audio_dir = create_audio_directory().await?;
+    let audio_session =
+        AudioSession::create(&audio_root()).context("一時音声の保存先を初期化できません")?;
     let (submissions, submission_receiver) = mpsc::channel(SUBMISSION_QUEUE_SIZE);
     let (events, _) = broadcast::channel(DISPLAY_EVENT_BUFFER_SIZE);
     let (shutdown, shutdown_receiver) = watch::channel(false);
@@ -68,7 +71,7 @@ async fn run() -> Result<()> {
         active: Arc::new(Mutex::new(None)),
         history: Arc::new(Mutex::new(ConversationHistory::default())),
         food_images: Arc::new(RwLock::new(HashMap::new())),
-        audio_dir: Arc::new(audio_dir.clone()),
+        audio_dir: Arc::new(audio_session.directory.clone()),
         assets_dir: Arc::new(PathBuf::from("assets")),
         motion_files_lock: Arc::new(Mutex::new(())),
         vrm_model_lock: Arc::new(Mutex::new(())),
@@ -81,19 +84,20 @@ async fn run() -> Result<()> {
         search_filler_rotation: Arc::new(SearchFillerRotation::default()),
     };
 
-    tokio::spawn(pipeline::run(state.clone(), submission_receiver));
+    let worker = tokio::spawn(pipeline::run(state.clone(), submission_receiver));
 
     tracing::info!(address = %bind, "サーバーを開始しました");
 
-    axum::serve(listener, routes::router(state))
+    let result = axum::serve(listener, routes::router(state))
         .with_graceful_shutdown(shutdown_signal(shutdown_receiver))
         .await
-        .context("HTTPサーバーが終了しました")?;
-
-    if let Err(error) = tokio::fs::remove_dir_all(&audio_dir).await {
-        tracing::warn!(path = %audio_dir.display(), error = ?error, "一時音声ディレクトリを削除できませんでした");
+        .context("HTTPサーバーが終了しました");
+    worker.abort();
+    let _ = worker.await;
+    if let Err(error) = audio_session.remove() {
+        tracing::warn!(error = ?error, "一時音声ディレクトリを削除できませんでした");
     }
-    Ok(())
+    result
 }
 
 fn http_client() -> Result<reqwest::Client> {
@@ -120,29 +124,102 @@ fn append_update_error_to(path: &Path, message: &str) {
     let _ = file.flush();
 }
 
-async fn create_audio_directory() -> Result<PathBuf> {
-    create_audio_directory_in(std::env::temp_dir().join("web-aituber")).await
+fn audio_root() -> PathBuf {
+    #[cfg(unix)]
+    let name = format!("web-aituber-audio-{}", unsafe { libc::geteuid() });
+    #[cfg(not(unix))]
+    let name = "web-aituber-audio";
+    std::env::temp_dir().join(name)
 }
 
-async fn create_audio_directory_in(root: PathBuf) -> Result<PathBuf> {
-    remove_previous_audio_sessions(&root).await;
-    let directory = root.join(Uuid::new_v4().to_string());
-    tokio::fs::create_dir_all(&directory)
-        .await
-        .with_context(|| {
+struct AudioSession {
+    directory: PathBuf,
+    owner: File,
+}
+
+impl AudioSession {
+    fn create(root: &Path) -> Result<Self> {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder
+            .create(root)
+            .with_context(|| format!("一時音声の保存先を作成できません: {}", root.display()))?;
+        #[cfg(unix)]
+        {
+            let metadata = fs::symlink_metadata(root)?;
+            anyhow::ensure!(
+                metadata.is_dir()
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.mode() & 0o077 == 0,
+                "一時音声の保存先には実行ユーザーが所有する専用ディレクトリが必要です: {}",
+                root.display()
+            );
+        }
+        // ponytail: 起動時の回収と所有ロックの作成を直列化する。回収が重くなれば削除対象を先に退避する。
+        let startup = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("startup.lock"))?;
+        startup.lock()?;
+        for entry in fs::read_dir(root)?.flatten() {
+            let path = entry.path();
+            if entry
+                .file_name()
+                .to_str()
+                .is_none_or(|name| Uuid::try_parse(name).is_err())
+                || !entry.file_type().is_ok_and(|ty| ty.is_file())
+            {
+                continue;
+            }
+            if let Err(error) = Self::remove_if_inactive(&path)
+                && error.kind() != ErrorKind::NotFound
+            {
+                tracing::warn!(path = %path.display(), error = ?error, "過去の一時音声を削除できませんでした");
+            }
+        }
+
+        let marker = root.join(Uuid::new_v4().to_string());
+        let owner = File::create_new(&marker)?;
+        owner.lock()?;
+        let directory = marker.with_extension("audio");
+        fs::create_dir(&directory).with_context(|| {
             format!(
                 "一時音声ディレクトリを作成できません: {}",
                 directory.display()
             )
         })?;
-    Ok(directory)
-}
+        Ok(Self { directory, owner })
+    }
 
-async fn remove_previous_audio_sessions(root: &Path) {
-    if let Err(error) = tokio::fs::remove_dir_all(root).await
-        && error.kind() != ErrorKind::NotFound
-    {
-        tracing::warn!(path = %root.display(), error = ?error, "過去の一時音声を削除できませんでした");
+    fn remove_if_inactive(marker: &Path) -> io::Result<()> {
+        let owner = OpenOptions::new().read(true).write(true).open(marker)?;
+        match owner.try_lock() {
+            Ok(()) => Self {
+                directory: marker.with_extension("audio"),
+                owner,
+            }
+            .remove(),
+            Err(TryLockError::WouldBlock) => Ok(()),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+
+    fn remove(self) -> io::Result<()> {
+        if let Err(error) = fs::remove_dir_all(&self.directory)
+            && error.kind() != ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+        drop(self.owner);
+        let marker = self.directory.with_extension("");
+        match fs::remove_file(marker) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 }
 
@@ -226,22 +303,67 @@ mod tests {
         drop(socket);
     }
 
-    #[tokio::test]
-    async fn startup_removes_previous_audio_sessions() {
+    #[test]
+    fn startup_reclaims_crashed_sessions_and_keeps_live_audio() {
         let root = std::env::temp_dir().join(format!("web-aituber-test-{}", Uuid::new_v4()));
-        let previous = root.join("previous");
-        tokio::fs::create_dir_all(&previous).await.unwrap();
-        tokio::fs::write(previous.join("audio.webm"), b"audio")
-            .await
+        let live = AudioSession::create(&root).unwrap();
+        #[cfg(unix)]
+        assert_eq!(fs::metadata(&root).unwrap().mode() & 0o077, 0);
+        let live_audio = live.directory.join("live.webm");
+        fs::write(&live_audio, b"live").unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::exit_with_an_audio_session", "--ignored"])
+            .env("WEB_AITUBER_TEST_AUDIO_ROOT", &root)
+            .status()
             .unwrap();
+        assert!(status.success());
 
-        let current = create_audio_directory_in(root.clone()).await.unwrap();
+        let crashed = root.join(fs::read_to_string(root.join("child-session")).unwrap());
+        assert!(crashed.join("child.webm").is_file());
+        let next = AudioSession::create(&root).unwrap();
+        assert_eq!(fs::read(live_audio).unwrap(), b"live");
+        assert!(!crashed.exists());
+        assert!(!crashed.with_extension("").exists());
+        let next_dir = next.directory.clone();
+        next.remove().unwrap();
+        assert!(!next_dir.exists());
+        assert!(!next_dir.with_extension("").exists());
+        live.remove().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
-        assert!(!previous.exists());
-        assert!(current.exists());
-        assert_eq!(current.parent(), Some(root.as_path()));
+    #[cfg(unix)]
+    #[test]
+    fn audio_session_rejects_a_symlink_root() {
+        let parent = std::env::temp_dir().join(format!("web-aituber-test-{}", Uuid::new_v4()));
+        let other = parent.join("other");
+        let link = parent.join("link");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&other)
+            .unwrap();
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        assert!(AudioSession::create(&link).is_err());
+        assert_eq!(fs::read_dir(other).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
+    }
 
-        tokio::fs::remove_dir_all(root).await.unwrap();
+    #[test]
+    #[ignore = "異常終了した音声セッションを作る別プロセス用"]
+    fn exit_with_an_audio_session() {
+        let Some(root) = std::env::var_os("WEB_AITUBER_TEST_AUDIO_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        let session = AudioSession::create(root).unwrap();
+        fs::write(session.directory.join("child.webm"), b"child").unwrap();
+        fs::write(
+            root.join("child-session"),
+            session.directory.file_name().unwrap().to_str().unwrap(),
+        )
+        .unwrap();
+        std::process::exit(0);
     }
 
     #[test]
