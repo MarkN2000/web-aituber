@@ -53,7 +53,9 @@ pub fn router(state: AppState) -> Router {
     let asset_routes = Router::new()
         .nest_service("/assets", ServeDir::new(state.assets_dir.as_ref()))
         .layer(middleware::from_fn(add_asset_cache_headers));
-    let admin_api = Router::new()
+    let admin = Router::new()
+        .route("/admin", get(admin_page))
+        .route("/ws", get(admin_websocket))
         .route("/api/admin/skip", post(skip))
         .route(
             "/api/admin/conversation-history",
@@ -67,7 +69,7 @@ pub fn router(state: AppState) -> Router {
             get(admin_event_access).put(update_admin_event_access),
         )
         .route("/api/admin/qr-code", post(admin_qr_code))
-        .route("/api/admin/display-config", get(admin_display_config))
+        .route("/api/admin/display-config", get(display_config))
         .route(
             "/api/admin/motions",
             get(admin_motions)
@@ -155,6 +157,8 @@ pub fn router(state: AppState) -> Router {
             "/api/admin/background-music-volume",
             axum::routing::put(update_background_music_volume),
         )
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_admin))
+        .method_not_allowed_fallback(|| async { StatusCode::METHOD_NOT_ALLOWED })
         .layer(middleware::map_response(add_admin_response_headers));
 
     let public_event = Router::new()
@@ -180,10 +184,8 @@ pub fn router(state: AppState) -> Router {
         .route("/event/{event_identifier}/ws", get(event_websocket));
 
     Router::new()
-        .route("/admin", get(admin_page))
         .merge(public_event)
-        .merge(admin_api)
-        .route("/ws", get(admin_websocket))
+        .merge(admin)
         .route("/food-images/{id}", get(food_image))
         .nest_service("/static", ServeDir::new("web"))
         .merge(asset_routes)
@@ -275,11 +277,8 @@ async fn draw_manifest(
         .into_response()
 }
 
-async fn admin_page(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-    admin_no_store(html_file("web/admin.html").await)
+async fn admin_page() -> Response {
+    html_file("web/admin.html").await
 }
 
 async fn html_file(path: &str) -> Response {
@@ -479,20 +478,10 @@ async fn event_display_config(
     if !has_valid_event_identifier(&state, &event_identifier) {
         return event_ended_response();
     }
-    display_config_response(&state).await
+    no_store(display_config(State(state)).await)
 }
 
-async fn admin_display_config(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-    admin_no_store(display_config_response(&state).await)
-}
-
-async fn display_config_response(state: &AppState) -> Response {
+async fn display_config(State(state): State<AppState>) -> Response {
     let config = state.config.current();
     let background_image_path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
     let background_image_url = existing_versioned_asset_url(
@@ -518,14 +507,14 @@ async fn display_config_response(state: &AppState) -> Response {
     let character =
         version_character_asset_urls(config.character.clone(), state.assets_dir.as_ref()).await;
     let response = DisplayConfigDto {
-        screen_overlays: screen_overlays_display_config(state, &character).await,
+        screen_overlays: screen_overlays_display_config(&state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
         preparation_image_url,
         background_image_url,
         background_music_url,
     };
-    no_store(Json(response).into_response())
+    Json(response).into_response()
 }
 
 async fn screen_overlays_display_config(
@@ -721,10 +710,7 @@ async fn motion_files(assets_dir: &FilePath) -> std::io::Result<Vec<MotionFile>>
     Ok(files)
 }
 
-async fn admin_motions(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn admin_motions(State(state): State<AppState>) -> Response {
     let files = match motion_files(&state.assets_dir).await {
         Ok(files) => files,
         Err(error) => {
@@ -736,25 +722,19 @@ async fn admin_motions(State(state): State<AppState>, Query(auth): Query<AdminAu
         }
     };
     let config = state.config.current();
-    admin_no_store(
-        Json(serde_json::json!({
-            "files": files,
-            "idle_motions": config.character.idle_motions,
-            "emotion_motions": config.character.emotion_motions,
-            "food_motion": config.character.food_motion,
-        }))
-        .into_response(),
-    )
+    Json(serde_json::json!({
+        "files": files,
+        "idle_motions": config.character.idle_motions,
+        "emotion_motions": config.character.emotion_motions,
+        "food_motion": config.character.food_motion,
+    }))
+    .into_response()
 }
 
 async fn update_motions(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<MotionSettings>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     let _guard = state.motion_files_lock.lock().await;
     if request
         .emotion_motions
@@ -822,7 +802,7 @@ async fn update_motions(
         config.character.emotion_motions = request.emotion_motions;
         config.character.food_motion = request.food_motion;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "モーション設定を保存できませんでした");
             admin_error(
@@ -840,12 +820,8 @@ struct DeleteMotionRequest {
 
 async fn delete_motion(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<DeleteMotionRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     let _guard = state.motion_files_lock.lock().await;
     let files = match motion_files(&state.assets_dir).await {
         Ok(files) => files,
@@ -904,7 +880,7 @@ async fn delete_motion(
         );
     }
     match tokio::fs::remove_file(path).await {
-        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "モーションを削除できませんでした");
             admin_error(
@@ -915,14 +891,7 @@ async fn delete_motion(
     }
 }
 
-async fn upload_motion(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    mut multipart: Multipart,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn upload_motion(State(state): State<AppState>, mut multipart: Multipart) -> Response {
     let mut upload = None;
     while let Some(field) = match multipart.next_field().await {
         Ok(field) => field,
@@ -977,7 +946,7 @@ async fn upload_motion(
     };
     let path = state.assets_dir.join("motions").join(&file.name);
     match tokio::task::spawn_blocking(move || write_file_atomically(&path, &bytes)).await {
-        Ok(Ok(())) => admin_no_store((StatusCode::CREATED, Json(file)).into_response()),
+        Ok(Ok(())) => (StatusCode::CREATED, Json(file)).into_response(),
         result => {
             tracing::warn!(error = ?result, "モーションを保存できませんでした");
             admin_error(
@@ -988,14 +957,7 @@ async fn upload_motion(
     }
 }
 
-async fn upload_vrm_model(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    mut multipart: Multipart,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn upload_vrm_model(State(state): State<AppState>, mut multipart: Multipart) -> Response {
     if state.config.current().character.vrm_url != "/assets/model.vrm" {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1043,7 +1005,7 @@ async fn upload_vrm_model(
     match tokio::task::spawn_blocking(move || write_file_atomically(&path, &model)).await {
         Ok(Ok(())) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Ok(Err(error)) => {
             tracing::error!(error = ?error, "VRMモデルを保存できませんでした");
@@ -1062,18 +1024,10 @@ async fn upload_vrm_model(
     }
 }
 
-async fn upload_background_image(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    multipart: Multipart,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn upload_background_image(State(state): State<AppState>, multipart: Multipart) -> Response {
     let image = match read_webp_image(multipart, "背景画像").await {
         Ok(image) => image,
-        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
+        Err(message) => return admin_error(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,
@@ -1085,18 +1039,10 @@ async fn upload_background_image(
     .await
 }
 
-async fn upload_preparation_image(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    multipart: Multipart,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn upload_preparation_image(State(state): State<AppState>, multipart: Multipart) -> Response {
     let image = match read_webp_image(multipart, "準備中画像").await {
         Ok(image) => image,
-        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
+        Err(message) => return admin_error(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,
@@ -1120,18 +1066,18 @@ async fn save_webp_image(
     match tokio::task::spawn_blocking(move || write_file_atomically(&path, &image)).await {
         Ok(Ok(())) => {
             notify_display_config_changed(state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Ok(Err(error)) => {
             tracing::error!(asset = label, error = ?error, "画像を保存できませんでした");
-            admin_error_owned(
+            admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("{label}を保存できませんでした"),
             )
         }
         Err(error) => {
             tracing::error!(asset = label, error = ?error, "画像の保存処理を実行できませんでした");
-            admin_error_owned(
+            admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("{label}を保存できませんでした"),
             )
@@ -1139,24 +1085,17 @@ async fn save_webp_image(
     }
 }
 
-async fn delete_preparation_image(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn delete_preparation_image(State(state): State<AppState>) -> Response {
     let _guard = state.preparation_image_lock.lock().await;
     let path = state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME);
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => {
             tracing::error!(path = %path.display(), error = ?error, "準備中画像を削除できませんでした");
@@ -1197,24 +1136,17 @@ async fn read_webp_image(mut multipart: Multipart, label: &str) -> Result<Bytes,
     image.ok_or_else(|| format!("{label}がありません"))
 }
 
-async fn delete_background_image(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn delete_background_image(State(state): State<AppState>) -> Response {
     let _guard = state.background_image_lock.lock().await;
     let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => {
             tracing::error!(path = %path.display(), error = ?error, "背景画像を削除できませんでした");
@@ -1229,19 +1161,15 @@ async fn delete_background_image(
 async fn upload_screen_overlay(
     Path(slot): Path<String>,
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     multipart: Multipart,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
         return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
     };
 
     let image = match read_webp_image(multipart, "画面オーバーレイ").await {
         Ok(image) => image,
-        Err(message) => return admin_error_owned(StatusCode::BAD_REQUEST, message),
+        Err(message) => return admin_error(StatusCode::BAD_REQUEST, message),
     };
     save_webp_image(
         &state,
@@ -1256,11 +1184,7 @@ async fn upload_screen_overlay(
 async fn delete_screen_overlay(
     Path(slot): Path<String>,
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
         return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
     };
@@ -1270,11 +1194,11 @@ async fn delete_screen_overlay(
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => {
             tracing::error!(path = %path.display(), error = ?error, "画面オーバーレイを削除できませんでした");
@@ -1289,12 +1213,8 @@ async fn delete_screen_overlay(
 async fn update_screen_overlay_scale(
     Path(slot): Path<String>,
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<ScreenOverlayScaleRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
         return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
     };
@@ -1319,7 +1239,7 @@ async fn update_screen_overlay_scale(
             config.character.screen_overlays.bottom_right.scale = request.scale
         }
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "画面オーバーレイの表示倍率を保存できませんでした");
             admin_error(
@@ -1332,13 +1252,8 @@ async fn update_screen_overlay_scale(
 
 async fn upload_background_music(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     mut multipart: Multipart,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
     let guard = state.background_music_lock.clone().lock_owned().await;
     if let Err(error) = tokio::fs::create_dir_all(state.assets_dir.as_ref()).await {
         tracing::error!(error = ?error, "BGMの保存先を作成できませんでした");
@@ -1450,7 +1365,7 @@ async fn upload_background_music(
     match background_music::install_atomically(&source, &destination) {
         Ok(()) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => {
             tracing::error!(error = ?error, "BGMを保存できませんでした");
@@ -1468,24 +1383,17 @@ fn checked_background_music_size(current: usize, chunk: usize) -> Option<usize> 
         .filter(|size| *size <= background_music::MAX_SOURCE_BYTES)
 }
 
-async fn delete_background_music(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn delete_background_music(State(state): State<AppState>) -> Response {
     let _guard = state.background_music_lock.lock().await;
     let path = state.assets_dir.join(background_music::FILE_NAME);
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             notify_display_config_changed(&state);
-            admin_no_store(StatusCode::NO_CONTENT.into_response())
+            StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => {
             tracing::error!(path = %path.display(), error = ?error, "BGMを削除できませんでした");
@@ -1499,12 +1407,8 @@ async fn delete_background_music(
 
 async fn update_background_music_volume(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<BackgroundMusicVolumeRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if !request.volume.is_finite()
         || !(0.0..=1.0).contains(&request.volume)
         || !request.duck_ratio.is_finite()
@@ -1520,7 +1424,7 @@ async fn update_background_music_volume(
         config.character.background_music_volume = request.volume;
         config.character.background_music_duck_ratio = request.duck_ratio;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "BGM音量を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "BGM音量を保存できませんでした")
@@ -1530,12 +1434,8 @@ async fn update_background_music_volume(
 
 async fn update_model_brightness(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<ModelBrightnessRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if !request.brightness.is_finite() || !(0.0..=2.0).contains(&request.brightness) {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1546,7 +1446,7 @@ async fn update_model_brightness(
     match save_config(&state, true, move |config| {
         config.character.light.brightness = request.brightness;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "モデルの明るさを保存できませんでした");
             admin_error(
@@ -1559,17 +1459,12 @@ async fn update_model_brightness(
 
 async fn update_model_antialias(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<ModelAntialiasRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
     match save_config(&state, true, move |config| {
         config.character.antialias = request.antialias;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "アンチエイリアス設定を保存できませんでした");
             admin_error(
@@ -1582,17 +1477,12 @@ async fn update_model_antialias(
 
 async fn update_preparation_mode(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<PreparationModeRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
     match save_config(&state, true, move |config| {
         config.character.preparation_mode = request.enabled;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "準備中モードを保存できませんでした");
             admin_error(
@@ -1605,12 +1495,8 @@ async fn update_preparation_mode(
 
 async fn update_drawing_stabilization(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<DrawingStabilizationRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if request.stabilization > 10 {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1621,7 +1507,7 @@ async fn update_drawing_stabilization(
     match save_config(&state, false, move |config| {
         config.drawing.stabilization = request.stabilization;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "手ブレ補正を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "手ブレ補正を保存できませんでした")
@@ -1631,12 +1517,8 @@ async fn update_drawing_stabilization(
 
 async fn update_model_layout(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<ModelLayoutRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if !request.camera_fov.is_finite() || !(1.0..=179.0).contains(&request.camera_fov) {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1665,7 +1547,7 @@ async fn update_model_layout(
         config.character.food_prop.rotation_degrees = request.food_prop_rotation_degrees;
         config.character.food_prop.size = request.food_prop_scale;
     }) {
-        Ok(_) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "モデル配置を保存できませんでした");
             admin_error(StatusCode::BAD_REQUEST, "モデル配置を保存できませんでした")
@@ -1802,52 +1684,13 @@ fn write_file_atomically(path: &FilePath, bytes: &[u8]) -> anyhow::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        replace_or_create_file(&temporary, path)?;
+        crate::atomic_file::install(&temporary, path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
     result
-}
-
-#[cfg(not(windows))]
-fn replace_or_create_file(temporary: &FilePath, path: &FilePath) -> anyhow::Result<()> {
-    fs::rename(temporary, path)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn replace_or_create_file(temporary: &FilePath, path: &FilePath) -> anyhow::Result<()> {
-    if !path.exists() {
-        fs::rename(temporary, path)?;
-        return Ok(());
-    }
-
-    use anyhow::bail;
-    use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
-
-    fn wide(value: &OsStr) -> Vec<u16> {
-        value.encode_wide().chain(Some(0)).collect()
-    }
-
-    let destination = wide(path.as_os_str());
-    let replacement = wide(temporary.as_os_str());
-    let result = unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-    if result == 0 {
-        bail!("背景画像を原子的に置き換えられません: {}", path.display());
-    }
-    Ok(())
 }
 
 async fn food_image(Path(id): Path<String>, State(state): State<AppState>) -> Response {
@@ -1883,31 +1726,11 @@ async fn event_websocket(
     })
 }
 
-async fn admin_websocket(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    request: axum::extract::Request,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    let (mut parts, _) = request.into_parts();
-    let websocket = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-        Ok(websocket) => websocket,
-        Err(rejection) => return rejection.into_response(),
-    };
+async fn admin_websocket(State(state): State<AppState>, websocket: WebSocketUpgrade) -> Response {
     websocket.on_upgrade(move |socket| handle_websocket(socket, state, WebsocketAudience::Admin))
 }
 
-async fn skip(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    Json(request): Json<AdminSkipRequest>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn skip(State(state): State<AppState>, Json(request): Json<AdminSkipRequest>) -> Response {
     let active = state.active.lock().await;
     if let Some(active) = active.as_ref()
         && active.turn_id == request.turn_id
@@ -1915,65 +1738,43 @@ async fn skip(
     {
         active.cancel.cancel();
     }
-    admin_no_store(StatusCode::NO_CONTENT.into_response())
+    StatusCode::NO_CONTENT.into_response()
 }
 
-async fn clear_conversation_history(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn clear_conversation_history(State(state): State<AppState>) -> Response {
     state.history.lock().await.clear();
     let _ = state
         .events
         .send(ServerEvent::History { turns: Vec::new() });
-    admin_no_store(StatusCode::NO_CONTENT.into_response())
+    StatusCode::NO_CONTENT.into_response()
 }
 
-async fn reload_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn reload_config(State(state): State<AppState>) -> Response {
     let _guard = state.motion_files_lock.lock().await;
     match state.config.reload() {
         Ok(result) => {
             notify_config_changes(&state, &result, true);
-            admin_no_store(
-                Json(AdminReloadResponse {
-                    restart_required: result.restart_required,
-                })
-                .into_response(),
-            )
+            Json(AdminReloadResponse {
+                restart_required: result.restart_required,
+            })
+            .into_response()
         }
         Err(error) => {
             tracing::warn!(error = ?error, "設定の再読み込みに失敗しました");
-            admin_no_store(
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!("設定を再読み込みできません: {error}"),
-                    })),
-                )
-                    .into_response(),
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                format!("設定を再読み込みできません: {error}"),
             )
         }
     }
 }
 
-async fn check_update(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-
+async fn check_update(State(state): State<AppState>) -> Response {
     match update::check(&state.http).await {
-        Ok(result) => admin_no_store(Json(result).into_response()),
+        Ok(result) => Json(result).into_response(),
         Err(error) => {
             tracing::warn!(error = ?error, "アップデートを確認できませんでした");
-            admin_error_owned(
+            admin_error(
                 StatusCode::BAD_GATEWAY,
                 "アップデートを確認できませんでした。通信状態を確認してください。",
             )
@@ -1981,34 +1782,26 @@ async fn check_update(State(state): State<AppState>, Query(auth): Query<AdminAut
     }
 }
 
-async fn admin_version(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn admin_version() -> Response {
     let unsupported_reason = update::unsupported_reason();
-    admin_no_store(
-        Json(AdminVersionResponse {
-            current_version: env!("CARGO_PKG_VERSION"),
-            self_update_supported: unsupported_reason.is_none(),
-            unsupported_reason,
-        })
-        .into_response(),
-    )
+    Json(AdminVersionResponse {
+        current_version: env!("CARGO_PKG_VERSION"),
+        self_update_supported: unsupported_reason.is_none(),
+        unsupported_reason,
+    })
+    .into_response()
 }
 
-async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn apply_update(State(state): State<AppState>) -> Response {
     if let Some(reason) = update::unsupported_reason() {
-        return admin_error_owned(StatusCode::CONFLICT, reason);
+        return admin_error(StatusCode::CONFLICT, reason);
     }
     if state
         .update_in_progress
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        return admin_error_owned(StatusCode::CONFLICT, "別のアップデート処理が進行中です");
+        return admin_error(StatusCode::CONFLICT, "別のアップデート処理が進行中です");
     }
 
     match update::prepare_and_launch(&state.http).await {
@@ -2018,20 +1811,18 @@ async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAut
                 std::thread::sleep(UPDATE_SHUTDOWN_DELAY);
                 let _ = shutdown.send(true);
             });
-            admin_no_store(
-                (
-                    StatusCode::ACCEPTED,
-                    Json(AdminUpdateResponse {
-                        version: prepared.version,
-                    }),
-                )
-                    .into_response(),
+            (
+                StatusCode::ACCEPTED,
+                Json(AdminUpdateResponse {
+                    version: prepared.version,
+                }),
             )
+                .into_response()
         }
         Err(error) => {
             state.update_in_progress.store(false, Ordering::Release);
             tracing::error!(error = ?error, "アップデートを準備できませんでした");
-            admin_error_owned(
+            admin_error(
                 StatusCode::BAD_GATEWAY,
                 "アップデートを準備できませんでした。現在のバージョンは変更されていません。",
             )
@@ -2039,47 +1830,23 @@ async fn apply_update(State(state): State<AppState>, Query(auth): Query<AdminAut
     }
 }
 
-async fn admin_event_access(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
-    admin_no_store(
-        Json(AdminEventAccessDto {
-            public_base_url: state.config.current().public_base_url.clone(),
-            event_identifier: state.config.current().event_identifier.clone(),
-        })
-        .into_response(),
-    )
+async fn admin_event_access(State(state): State<AppState>) -> Response {
+    Json(AdminEventAccessDto {
+        public_base_url: state.config.current().public_base_url.clone(),
+        event_identifier: state.config.current().event_identifier.clone(),
+    })
+    .into_response()
 }
 
 async fn update_admin_event_access(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminEventAccessDto>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if let Err(error) = validate_event_identifier(&request.event_identifier) {
-        return admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response(),
-        );
+        return admin_error(StatusCode::BAD_REQUEST, error.to_string());
     }
     if let Err(error) = validate_public_base_url(&request.public_base_url) {
-        return admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response(),
-        );
+        return admin_error(StatusCode::BAD_REQUEST, error.to_string());
     }
     let next_event_identifier = request.event_identifier;
     let next_public_base_url = request.public_base_url.trim_end_matches('/').to_owned();
@@ -2089,32 +1856,20 @@ async fn update_admin_event_access(
     }) {
         Ok(_) => {
             let config = state.config.current();
-            admin_no_store(
-                Json(AdminEventAccessDto {
-                    public_base_url: config.public_base_url.clone(),
-                    event_identifier: config.event_identifier.clone(),
-                })
-                .into_response(),
-            )
+            Json(AdminEventAccessDto {
+                public_base_url: config.public_base_url.clone(),
+                event_identifier: config.event_identifier.clone(),
+            })
+            .into_response()
         }
-        Err(error) => admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("公開URLを保存できません: {error}") })),
-            )
-                .into_response(),
+        Err(error) => admin_error(
+            StatusCode::BAD_REQUEST,
+            format!("公開URLを保存できません: {error}"),
         ),
     }
 }
 
-async fn admin_qr_code(
-    State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
-    Json(request): Json<AdminQrCodeRequest>,
-) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn admin_qr_code(Json(request): Json<AdminQrCodeRequest>) -> Response {
     if request.url.len() > 2_048 || validate_http_url("QRコードURL", &request.url).is_err() {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -2135,74 +1890,55 @@ async fn admin_qr_code(
         .min_dimensions(320, 320)
         .quiet_zone(true)
         .build();
-    admin_no_store(
-        (
-            [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
-            svg,
-        )
-            .into_response(),
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        svg,
     )
+        .into_response()
 }
 
-async fn admin_config(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn admin_config(State(state): State<AppState>) -> Response {
     let config = state.config.current();
-    admin_no_store(Json(AdminConfigDto::from_config(&config)).into_response())
+    Json(AdminConfigDto::from_config(&config)).into_response()
 }
 
 async fn update_admin_config(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminConfigUpdate>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     match save_config(&state, false, move |config| {
-        let tts = match request {
-            AdminConfigUpdate::Ai {
-                llm,
-                idle_speech,
-                tts,
-            } => {
-                config.llm.api_url = llm.api_url;
-                config.llm.model = llm.model;
-                config.llm.system_prompt = llm.system_prompt;
-                config.llm.food_reaction_prompt = llm.food_reaction_prompt;
-                config.llm.search_fillers = llm.search_fillers;
-                config.idle_speech = idle_speech;
-                tts
-            }
-            AdminConfigUpdate::Tts { tts } => Some(tts),
+        let (ai, tts) = match request {
+            AdminConfigUpdate::Full(all) => (Some((all.llm, all.idle_speech)), Some(all.tts)),
+            AdminConfigUpdate::Ai { llm, idle_speech } => (Some((llm, idle_speech)), None),
+            AdminConfigUpdate::Tts { tts } => (None, Some(tts)),
         };
+        if let Some((llm, idle_speech)) = ai {
+            config.llm.api_url = llm.api_url;
+            config.llm.model = llm.model;
+            config.llm.system_prompt = llm.system_prompt;
+            config.llm.food_reaction_prompt = llm.food_reaction_prompt;
+            config.llm.search_fillers = llm.search_fillers;
+            config.idle_speech = idle_speech;
+        }
         if let Some(tts) = tts {
-            config.tts = tts;
+            config.tts.engine_url = tts.engine_url;
+            config.tts.speaker_id = tts.speaker_id;
         }
     }) {
-        Ok(result) => admin_no_store(
-            Json(AdminReloadResponse {
-                restart_required: result.restart_required,
-            })
-            .into_response(),
-        ),
-        Err(error) => admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("設定を保存できません: {error}") })),
-            )
-                .into_response(),
+        Ok(result) => Json(AdminReloadResponse {
+            restart_required: result.restart_required,
+        })
+        .into_response(),
+        Err(error) => admin_error(
+            StatusCode::BAD_REQUEST,
+            format!("設定を保存できません: {error}"),
         ),
     }
 }
 
-async fn clear_tts_cache(State(state): State<AppState>, Query(auth): Query<AdminAuth>) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
+async fn clear_tts_cache(State(state): State<AppState>) -> Response {
     match state.config.tts_cache.clear() {
-        Ok(()) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
             tracing::warn!(?error, "音声キャッシュの削除に失敗しました");
             admin_error(
@@ -2215,21 +1951,12 @@ async fn clear_tts_cache(State(state): State<AppState>, Query(auth): Query<Admin
 
 async fn tts_preview(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsPreviewRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if validate_http_url("tts.engine_url", &request.tts.engine_url).is_err() {
-        return admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "TTSの接続先はHTTP(S) URLにしてください"
-                })),
-            )
-                .into_response(),
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "TTSの接続先はHTTP(S) URLにしてください",
         );
     }
     let config = TtsConfig {
@@ -2248,46 +1975,26 @@ async fn tts_preview(
     )
     .await
     {
-        Ok(Ok(audio)) => {
-            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
-        }
+        Ok(Ok(audio)) => ([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSの試聴に失敗しました");
-            admin_no_store(
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(serde_json::json!({ "error": "TTSの試聴に失敗しました" })),
-                )
-                    .into_response(),
-            )
+            admin_error(StatusCode::BAD_GATEWAY, "TTSの試聴に失敗しました")
         }
-        Err(_) => admin_no_store(
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(serde_json::json!({ "error": "TTSの試聴が時間切れになりました" })),
-            )
-                .into_response(),
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSの試聴が時間切れになりました",
         ),
     }
 }
 
 async fn tts_speakers(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsSpeakersRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
-        return admin_no_store(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "TTSの接続先はHTTP(S) URLにしてください"
-                })),
-            )
-                .into_response(),
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "TTSの接続先はHTTP(S) URLにしてください",
         );
     }
     match tokio::time::timeout(
@@ -2296,37 +2003,22 @@ async fn tts_speakers(
     )
     .await
     {
-        Ok(Ok(speakers)) => {
-            admin_no_store(Json(AdminTtsSpeakersResponse { speakers }).into_response())
-        }
+        Ok(Ok(speakers)) => Json(AdminTtsSpeakersResponse { speakers }).into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSの話者一覧取得に失敗しました");
-            admin_no_store(
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(serde_json::json!({ "error": "TTSの話者一覧を取得できません" })),
-                )
-                    .into_response(),
-            )
+            admin_error(StatusCode::BAD_GATEWAY, "TTSの話者一覧を取得できません")
         }
-        Err(_) => admin_no_store(
-            (
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(serde_json::json!({ "error": "TTSの話者一覧取得が時間切れになりました" })),
-            )
-                .into_response(),
+        Err(_) => admin_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "TTSの話者一覧取得が時間切れになりました",
         ),
     }
 }
 
 async fn tts_user_dict(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsEngineRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -2339,7 +2031,7 @@ async fn tts_user_dict(
     )
     .await
     {
-        Ok(Ok(dictionary)) => admin_no_store(Json(dictionary).into_response()),
+        Ok(Ok(dictionary)) => Json(dictionary).into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSのユーザー辞書取得に失敗しました");
             admin_error(
@@ -2356,12 +2048,8 @@ async fn tts_user_dict(
 
 async fn tts_user_dict_preview(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsUserDictPreviewRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if validate_http_url("tts.engine_url", &request.tts.engine_url).is_err() {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -2390,9 +2078,7 @@ async fn tts_user_dict_preview(
     )
     .await
     {
-        Ok(Ok(audio)) => {
-            admin_no_store(([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response())
-        }
+        Ok(Ok(audio)) => ([(header::CONTENT_TYPE, "audio/webm")], audio.bytes).into_response(),
         Ok(Err(tts::UserDictPreviewError::InvalidInput)) => admin_error(
             StatusCode::BAD_REQUEST,
             "単語の読みまたはアクセント位置を確認してください",
@@ -2413,12 +2099,8 @@ async fn tts_user_dict_preview(
 
 async fn add_tts_user_dict_word(
     State(state): State<AppState>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsUserDictWordRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if let Err(message) = validate_tts_user_dict_request(&request) {
         return admin_error(StatusCode::BAD_REQUEST, message);
     }
@@ -2429,7 +2111,7 @@ async fn add_tts_user_dict_word(
     )
     .await
     {
-        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSのユーザー辞書追加に失敗しました");
             if tts::is_user_dict_input_error(&error) {
@@ -2453,12 +2135,8 @@ async fn add_tts_user_dict_word(
 async fn update_tts_user_dict_word(
     State(state): State<AppState>,
     Path(word_uuid): Path<String>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsUserDictWordRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if let Err(message) = validate_tts_user_dict_request(&request) {
         return admin_error(StatusCode::BAD_REQUEST, message);
     }
@@ -2472,7 +2150,7 @@ async fn update_tts_user_dict_word(
     )
     .await
     {
-        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSのユーザー辞書更新に失敗しました");
             if tts::is_user_dict_input_error(&error) {
@@ -2496,12 +2174,8 @@ async fn update_tts_user_dict_word(
 async fn delete_tts_user_dict_word(
     State(state): State<AppState>,
     Path(word_uuid): Path<String>,
-    Query(auth): Query<AdminAuth>,
     Json(request): Json<AdminTtsEngineRequest>,
 ) -> Response {
-    if !has_valid_admin_token(&state, &auth) {
-        return admin_no_store(StatusCode::UNAUTHORIZED.into_response());
-    }
     if validate_http_url("tts.engine_url", &request.engine_url).is_err() {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -2518,7 +2192,7 @@ async fn delete_tts_user_dict_word(
     )
     .await
     {
-        Ok(Ok(())) => admin_no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
         Ok(Err(error)) => {
             tracing::warn!(error = ?error, "TTSのユーザー辞書削除に失敗しました");
             if tts::is_user_dict_input_error(&error) {
@@ -2588,13 +2262,7 @@ async fn handle_websocket(
         }
         WebsocketAudience::Admin => None,
     };
-    let current = state.current.read().await.clone();
-    let history = state.history.lock().await.snapshot();
-
-    if send_json(&mut sender, &ServerEvent::Snapshot { current, history })
-        .await
-        .is_err()
-    {
+    if !send_snapshot(&mut sender, &state, public_generation).await {
         return;
     }
 
@@ -2628,9 +2296,7 @@ async fn handle_websocket(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let current = state.current.read().await.clone();
-                        let history = state.history.lock().await.snapshot();
-                        if send_json(&mut sender, &ServerEvent::Snapshot { current, history }).await.is_err() {
+                        if !send_snapshot(&mut sender, &state, public_generation).await {
                             break;
                         }
                     }
@@ -2641,6 +2307,24 @@ async fn handle_websocket(
     }
 }
 
+async fn send_snapshot(
+    sender: &mut futures_util::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    state: &AppState,
+    public_generation: Option<u64>,
+) -> bool {
+    let current = state.current.read().await.clone();
+    let history = state.history.lock().await.snapshot();
+    if public_generation
+        .is_some_and(|generation| generation != state.config.current().event_generation)
+    {
+        let _ = send_json(sender, &ServerEvent::EventEnded).await;
+        return false;
+    }
+    send_json(sender, &ServerEvent::Snapshot { current, history })
+        .await
+        .is_ok()
+}
+
 async fn send_json(
     sender: &mut futures_util::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
     event: &ServerEvent,
@@ -2649,9 +2333,17 @@ async fn send_json(
     sender.send(Message::Text(json.into())).await
 }
 
-fn has_valid_admin_token(state: &AppState, auth: &AdminAuth) -> bool {
-    let config = state.config.current();
-    auth.token.as_deref() == Some(config.admin_token.as_str())
+async fn require_admin(
+    State(state): State<AppState>,
+    Query(auth): Query<AdminAuth>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    if auth.token.as_deref() == Some(state.config.current().admin_token.as_str()) {
+        next.run(request).await
+    } else {
+        StatusCode::UNAUTHORIZED.into_response()
+    }
 }
 
 fn has_valid_event_identifier(state: &AppState, event_identifier: &str) -> bool {
@@ -2857,13 +2549,13 @@ struct AdminConfigDto {
 #[derive(Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 enum AdminConfigUpdate {
+    Full(AdminConfigDto),
     Ai {
         llm: AdminLlmConfigDto,
         idle_speech: crate::config::IdleSpeechConfig,
-        tts: Option<TtsConfig>,
     },
     Tts {
-        tts: TtsConfig,
+        tts: AdminTtsConfigDto,
     },
 }
 
@@ -2935,18 +2627,6 @@ struct AdminTtsUserDictWordRequest {
     word: tts::UserDictWordInput,
 }
 
-fn admin_no_store(mut response: Response) -> Response {
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    response.headers_mut().insert(
-        header::REFERRER_POLICY,
-        header::HeaderValue::from_static("no-referrer"),
-    );
-    response
-}
-
 fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -2955,16 +2635,20 @@ fn no_store(mut response: Response) -> Response {
     response
 }
 
-fn admin_error(status: StatusCode, message: &'static str) -> Response {
-    admin_no_store((status, Json(serde_json::json!({ "error": message }))).into_response())
+fn admin_error(status: StatusCode, message: impl AsRef<str>) -> Response {
+    (
+        status,
+        Json(serde_json::json!({ "error": message.as_ref() })),
+    )
+        .into_response()
 }
 
-fn admin_error_owned(status: StatusCode, message: impl Into<String>) -> Response {
-    admin_no_store((status, Json(serde_json::json!({ "error": message.into() }))).into_response())
-}
-
-async fn add_admin_response_headers(response: Response) -> Response {
-    admin_no_store(response)
+async fn add_admin_response_headers(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    no_store(response)
 }
 
 struct ApiError {
@@ -3639,20 +3323,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_admin_json_is_not_cached() {
-        let response = router(test_state())
+    async fn admin_auth_precedes_body_validation_and_protects_error_responses() {
+        let app = router(test_state());
+        for (query, status) in [
+            ("", StatusCode::UNAUTHORIZED),
+            ("?token=wrong", StatusCode::UNAUTHORIZED),
+            ("?token=test-token", StatusCode::BAD_REQUEST),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put(format!("/api/admin/config{query}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from("{"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        }
+        let unsupported = app
             .oneshot(
-                Request::put("/api/admin/config?token=test-token")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from("{"))
+                Request::delete("/api/admin/config")
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
+        assert_eq!(unsupported.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert!(unsupported.headers().contains_key(header::ALLOW));
+    }
 
-        assert!(response.status().is_client_error());
+    async fn upgrade_websocket(address: std::net::SocketAddr, path: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .get(format!("http://{address}{path}"))
+            .header(header::CONNECTION, "upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header(header::SEC_WEBSOCKET_VERSION, "13")
+            .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn admin_websocket_upgrades_with_response_headers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router(test_state())).await.unwrap();
+        });
+        let response = upgrade_websocket(address, "/ws?token=test-token").await;
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response.headers()[header::SEC_WEBSOCKET_ACCEPT],
+            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        );
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn public_websocket_ends_if_event_changes_while_snapshot_is_pending() {
+        use tokio::io::AsyncReadExt;
+        let (mut state, assets_dir) = state_with_temporary_assets();
+        let config = (*state.config.current()).clone();
+        let path = assets_dir.join("config.json");
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let url = format!("/event/{}/ws", config.event_identifier);
+        state.config = ConfigStore::new(&path, config);
+        let history = state.history.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = router(state.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = upgrade_websocket(address, &url).await;
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while state.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        save_config(&state, false, |config| {
+            config.event_identifier = "next-event".into()
+        })
+        .unwrap();
+        drop(history);
+        let mut connection = response.upgrade().await.unwrap();
+        let mut frames = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), connection.read_to_end(&mut frames))
+            .await
+            .unwrap()
+            .unwrap();
+        let messages = String::from_utf8_lossy(&frames);
+        assert!(messages.contains(r#""type":"event_ended""#));
+        assert!(!messages.contains(r#""type":"snapshot""#));
+        server.abort();
+        std::fs::remove_dir_all(assets_dir).unwrap();
     }
 
     #[tokio::test]
@@ -3686,9 +3458,27 @@ mod tests {
                 "engine_url": "http://127.0.0.1:50021",
                 "speaker_id": 42
             },
-            "idle_speech": {"enabled": true, "min_seconds": 30, "max_seconds": 90, "entries": [{"emotion": "happy", "text": "こんにちは。"}, {"emotion": "sad", "text": "静かですね。"}]}
+            "idle_speech": {"enabled": true, "min_seconds": 30, "max_seconds": 90, "entries": [{"emotion": "happy", "text": "こんにちは。"}, {"emotion": "sad", "text": "静かですね。"}]},
+            "client_version": 1
         });
-        let response = router(state.clone())
+        let app = router(state.clone());
+        for invalid_field in ["llm", "tts"] {
+            let mut invalid = body.clone();
+            invalid.as_object_mut().unwrap().remove("client_version");
+            invalid[invalid_field] = serde_json::Value::Null;
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::put("/api/admin/config?token=test-token")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(invalid.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let response = app
             .oneshot(
                 Request::put("/api/admin/config?token=test-token")
                     .header(header::CONTENT_TYPE, "application/json")

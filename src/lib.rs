@@ -1,3 +1,4 @@
+mod atomic_file;
 pub mod audio;
 pub mod background_music;
 pub mod config;

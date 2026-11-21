@@ -274,6 +274,7 @@ fn default_drawing_stabilization() -> u8 {
 }
 
 impl AppConfig {
+    #[deprecated(note = "設定ファイルの読み込みには AppConfig::load_from_path を使用してください")]
     pub fn load() -> Result<Self> {
         let path = env::var("APP_CONFIG_FILE").unwrap_or_else(|_| "config.json".to_owned());
         Self::load_from_path(path)
@@ -466,8 +467,10 @@ impl ConfigStore {
         Ok(Self::new(path, config))
     }
 
-    pub fn new(path: impl Into<PathBuf>, config: AppConfig) -> Self {
+    pub fn new(path: impl Into<PathBuf>, mut config: AppConfig) -> Self {
         let path = path.into();
+        config.submission_period = CancellationToken::new();
+        config.event_generation = 0;
         let tts_cache = Arc::new(crate::tts_cache::TtsCache::new(
             path.with_extension("tts-cache"),
             &config,
@@ -616,49 +619,17 @@ fn write_config_atomically(path: &Path, config: &impl Serialize) -> Result<()> {
         file.sync_all()
             .context("一時設定ファイルを同期できません")?;
         drop(file);
-        replace_file(&temporary, path)
+        crate::atomic_file::replace(&temporary, path).with_context(|| {
+            format!(
+                "設定ファイルを原子的に置き換えられません: {}",
+                path.display()
+            )
+        })
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
     result
-}
-
-#[cfg(not(windows))]
-fn replace_file(temporary: &Path, path: &Path) -> Result<()> {
-    fs::rename(temporary, path)
-        .with_context(|| format!("設定ファイルを置き換えられません: {}", path.display()))
-}
-
-#[cfg(windows)]
-fn replace_file(temporary: &Path, path: &Path) -> Result<()> {
-    use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
-
-    fn wide(value: &OsStr) -> Vec<u16> {
-        value.encode_wide().chain(Some(0)).collect()
-    }
-
-    let destination = wide(path.as_os_str());
-    let replacement = wide(temporary.as_os_str());
-    // 設定ファイルは起動時に必ず存在するため、既存ファイルを原子的に置換する。
-    let result = unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-    if result == 0 {
-        bail!(
-            "設定ファイルを原子的に置き換えられません: {}",
-            path.display()
-        );
-    }
-    Ok(())
 }
 
 pub fn validate_http_url(name: &str, value: &str) -> Result<()> {

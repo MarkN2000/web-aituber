@@ -133,45 +133,8 @@ pub async fn migrate_legacy(ffmpeg_path: &str, assets_dir: &Path) -> Result<()> 
 }
 
 pub fn install_atomically(temporary: &Path, destination: &Path) -> Result<()> {
-    replace_or_create_file(temporary, destination)
-}
-
-#[cfg(not(windows))]
-fn replace_or_create_file(temporary: &Path, destination: &Path) -> Result<()> {
-    fs::rename(temporary, destination)
-        .with_context(|| format!("BGMを原子的に置き換えられません: {}", destination.display()))
-}
-
-#[cfg(windows)]
-fn replace_or_create_file(temporary: &Path, destination: &Path) -> Result<()> {
-    if !destination.exists() {
-        return fs::rename(temporary, destination)
-            .with_context(|| format!("BGMを原子的に作成できません: {}", destination.display()));
-    }
-
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
-
-    fn wide(value: &OsStr) -> Vec<u16> {
-        value.encode_wide().chain(Some(0)).collect()
-    }
-
-    let destination_wide = wide(destination.as_os_str());
-    let replacement_wide = wide(temporary.as_os_str());
-    let result = unsafe {
-        ReplaceFileW(
-            destination_wide.as_ptr(),
-            replacement_wide.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-    if result == 0 {
-        bail!("BGMを原子的に置き換えられません: {}", destination.display());
-    }
-    Ok(())
+    crate::atomic_file::install(temporary, destination)
+        .with_context(|| format!("BGMを原子的に保存できません: {}", destination.display()))
 }
 
 #[cfg(test)]

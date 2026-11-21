@@ -42,10 +42,8 @@ pub async fn run(state: AppState, mut submissions: mpsc::Receiver<Submission>) {
                 process_idle_speech(&state, &config, &mut submissions, &mut config_changes).await
             },
         };
-        if let Some(submission) = submission
-            && let Err(error) = process_submission(&state, submission).await
-        {
-            tracing::error!(error = ?error, "投稿の処理に失敗しました");
+        if let Some(submission) = submission {
+            process_submission(&state, submission).await;
         }
     }
 }
@@ -154,7 +152,7 @@ async fn present_idle_speech(
     tokio::time::sleep(Duration::from_millis(duration_ms)).await;
 }
 
-async fn process_submission(state: &AppState, submission: Submission) -> Result<()> {
+async fn process_submission(state: &AppState, submission: Submission) {
     let cancel = &submission.cancel;
     let config = {
         let mut active = state.active.lock().await;
@@ -167,7 +165,7 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
                 },
             );
             send_event(state, ServerEvent::Idle);
-            return Ok(());
+            return;
         }
         *active = Some(ActiveTurn {
             turn_id: submission.id.clone(),
@@ -243,7 +241,6 @@ async fn process_submission(state: &AppState, submission: Submission) -> Result<
     }
 
     send_event(state, ServerEvent::Idle);
-    Ok(())
 }
 
 async fn process_active_submission(
@@ -1142,8 +1139,7 @@ mod tests {
                 text: "処理しない質問".to_owned(),
             },
         )
-        .await
-        .unwrap();
+        .await;
 
         assert!(matches!(
             events.recv().await.unwrap(),
