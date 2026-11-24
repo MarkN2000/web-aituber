@@ -1,5 +1,7 @@
 /target/
 /config.json
+/venue.json
+/assets/venue-map.webp
 *.tts-cache/
 *.webm
 *.m4a

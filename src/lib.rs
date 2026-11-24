@@ -10,3 +10,4 @@ pub mod state;
 pub mod tts;
 pub mod tts_cache;
 pub mod update;
+pub mod venue;

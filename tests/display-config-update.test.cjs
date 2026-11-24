@@ -55,6 +55,7 @@ function loadContext(initialConfig) {
     };
     function applyBackground(value) { calls.backgrounds.push(value); }
     function applyScreenOverlays(value) { calls.overlays.push(value); }
+    function applyVenueMap() {}
     function applyPendingViewerConfig() { calls.viewerReloads += 1; }
     function enterPreparationMode(value) {
       calls.preparation.push(["enter", value.preparation_image_url]);

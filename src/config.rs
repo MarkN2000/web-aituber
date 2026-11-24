@@ -28,6 +28,8 @@ pub struct ConfigReloadResult {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppConfig {
     #[serde(skip)]
+    pub(crate) venue: Option<Arc<crate::venue::Venue>>,
+    #[serde(skip)]
     pub(crate) submission_period: CancellationToken,
     #[serde(skip)]
     pub(crate) event_generation: u64,
@@ -452,6 +454,7 @@ impl ConfigStore {
         let mut config: AppConfig = serde_json::from_value(document.clone())
             .with_context(|| format!("設定ファイルの形式が不正です: {}", path.display()))?;
         config.validate()?;
+        config.venue = crate::venue::Venue::load(&path.with_file_name("venue.json"))?.map(Arc::new);
 
         if config.character.food_motion.is_none() {
             let motion = FoodMotionConfig::default();
@@ -497,7 +500,9 @@ impl ConfigStore {
             .write_lock
             .lock()
             .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
-        let replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        replacement.venue =
+            crate::venue::Venue::load(&self.path.with_file_name("venue.json"))?.map(Arc::new);
         Ok(self.apply(replacement))
     }
 
@@ -512,6 +517,7 @@ impl ConfigStore {
             .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
         // 画面に出さない項目を外部編集で変更していても、古い実行中設定で上書きしない。
         let mut replacement = AppConfig::load_from_path(self.path.as_ref())?;
+        replacement.venue = self.current().venue.clone();
         update(&mut replacement);
         replacement.validate()?;
         write_config_atomically(self.path.as_ref(), &replacement)?;

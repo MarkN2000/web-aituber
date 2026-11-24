@@ -114,6 +114,8 @@ pub struct TurnState {
     pub turn_id: String,
     pub question: String,
     pub status: TurnStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<crate::venue::Destination>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,6 +181,7 @@ mod tests {
                 turn_id: "turn-1".to_owned(),
                 question: "質問".to_owned(),
                 status: TurnStatus::Generating,
+                destination: None,
             },
         };
         let value = serde_json::to_value(event).unwrap();

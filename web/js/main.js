@@ -17,6 +17,10 @@ const elements = {
   preparationImage: document.querySelector("#preparation-image"),
   canvas: document.querySelector("#vrm-canvas"),
   screenOverlays: document.querySelector("#screen-overlays"),
+  venueMap: document.querySelector("#venue-map"),
+  venueMapImage: document.querySelector("#venue-map-image"),
+  venuePin: document.querySelector("#venue-pin"),
+  venueDestination: document.querySelector("#venue-destination"),
   viewerMessage: document.querySelector("#viewer-message"),
   debugOverlay: document.querySelector("#debug-overlay"),
   debugPanel: document.querySelector("#debug-panel"),
@@ -148,6 +152,24 @@ function calculateScreenOverlayCoverSize(viewportWidth, viewportHeight, imageWid
   };
 }
 
+function showDestination(destination) {
+  elements.venuePin.hidden = !destination;
+  elements.venueDestination.hidden = !destination;
+  elements.venueDestination.textContent = destination?.label || "";
+  if (destination) {
+    elements.venuePin.style.left = destination.pin.x + "%";
+    elements.venuePin.style.top = destination.pin.y + "%";
+  }
+}
+
+function applyVenueMap(url) {
+  if (elements.venueMapImage.getAttribute("src") === (url || null)) return;
+  showDestination(null);
+  elements.venueMap.hidden = !url;
+  if (url) elements.venueMapImage.src = url;
+  else elements.venueMapImage.removeAttribute("src");
+}
+
 function fitScreenOverlay(image) {
   if (!image.naturalWidth || !image.naturalHeight) return;
   const { clientWidth, clientHeight } = elements.screenOverlays;
@@ -274,6 +296,7 @@ function enterPreparationMode(config) {
     elements.preparationImage.removeAttribute("src");
   }
   elements.screenOverlays.replaceChildren();
+  showDestination(null);
   pendingViewerConfig = undefined;
   appliedViewerConfigKey = undefined;
   viewer?.dispose();
@@ -316,6 +339,7 @@ function applyUpdatedDisplayConfig(config) {
   leavePreparationMode();
   applyBackground(config);
   applyScreenOverlays(config);
+  applyVenueMap(config.venue_map_url);
   if (viewerConfigKey(config) !== appliedViewerConfigKey) {
     pendingViewerConfig = config;
     void applyPendingViewerConfig();
@@ -382,6 +406,7 @@ function handleVisibilityChange() {
 function setTurn(turn) {
   const isNewTurn = turn?.turn_id !== currentTurn?.turn_id;
   currentTurn = turn;
+  if (turn?.destination || turn?.status === "generating") showDestination(turn.destination);
   if (turn && viewer?.motionPreview) viewer.resumeIdle();
   updateDebugMotionControls();
   if (!turn) {
@@ -454,6 +479,7 @@ function handleServerEvent(event) {
     && event.type !== "event_ended") return;
   switch (event.type) {
     case "snapshot":
+      if (displayConfig?.venue_map_url && !event.current?.destination) showDestination(null);
       historyView.render(event.history || []);
       if (currentTurn && currentTurn.turn_id !== event.current?.turn_id) {
         cancelTurnAudio(currentTurn.turn_id);
@@ -507,11 +533,13 @@ function handleServerEvent(event) {
       if (!receivedTurns.has(event.turn_id)) cleanTurn(event.turn_id);
       break;
     case "cancelled":
+      if (currentTurn?.destination && currentTurn.turn_id === event.turn_id) showDestination(null);
       cancelTurnAudio(event.turn_id);
       receivedTurns.delete(event.turn_id);
       cleanTurn(event.turn_id);
       break;
     case "error":
+      if (currentTurn?.destination && currentTurn.turn_id === event.turn_id) showDestination(null);
       cancelTurnAudio(event.turn_id);
       receivedTurns.delete(event.turn_id);
       if (currentTurn?.turn_id === event.turn_id) {
@@ -641,6 +669,7 @@ async function startMain() {
       leavePreparationMode();
       applyBackground(config);
       applyScreenOverlays(config);
+      applyVenueMap(config.venue_map_url);
       viewer = await createViewer(config);
       await viewer.load(config);
       appliedViewerConfigKey = viewerConfigKey(config);

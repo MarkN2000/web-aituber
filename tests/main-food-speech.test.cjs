@@ -13,6 +13,7 @@ const setTurnSource = source.slice(
   source.indexOf("function setTurn"),
   source.indexOf("function setEmotion"),
 );
+const destinationSource = source.slice(source.indexOf("function showDestination"), source.indexOf("function applyVenueMap"));
 const cleanTurnSource = source.slice(
   source.indexOf("function cleanTurn"),
   source.indexOf("function cancelTurnAudio"),
@@ -52,6 +53,8 @@ function loadContext() {
       loader: { hidden: false },
       answer: { hidden: true },
       answerText: { textContent: "" },
+      venuePin: { hidden: true, style: {} },
+      venueDestination: { hidden: true, textContent: "" },
     };
     const viewer = {
       clearFoodProp() { calls.push("clearFood"); },
@@ -73,6 +76,7 @@ function loadContext() {
     function updateDebugMotionControls() {}
     function applyPendingViewerConfig() { calls.push("config"); }
     ${clearAnswerSource}
+    ${destinationSource}
     ${setTurnSource}
     ${cleanTurnSource}
     ${cancelTurnAudioSource}
@@ -88,6 +92,7 @@ function loadContext() {
     ${onAudioStartSource}
     ${onAudioEndSource}
     this.handle = handleServerEvent;
+    this.elements = elements;
     this.audioEnd = onAudioEnd;
     this.audioStart = onAudioStart;
     this.currentTurn = () => currentTurn;
@@ -99,6 +104,24 @@ function loadContext() {
 function state(turnId) {
   return { type: "state", turn: { turn_id: turnId, question: "質問", status: "speaking" } };
 }
+
+test("案内先を発話時に表示し、読み終わっても次の質問までピンを保持する", () => {
+  const { context } = loadContext();
+  const speaking = state("guide");
+  const { venuePin, venueDestination } = context.elements;
+  speaking.turn.destination = { label: "東館 2階 203号室", pin: { x: 68, y: 32 } };
+  context.handle(speaking);
+  assert.equal(venuePin.hidden, false);
+  assert.equal(venuePin.style.left, "68%");
+  assert.equal(venuePin.style.top, "32%");
+  assert.equal(venueDestination.textContent, "東館 2階 203号室");
+  context.handle({ type: "complete", turn_id: "guide" });
+  assert.equal(venuePin.hidden, false);
+  context.handle({ type: "state", turn: { turn_id: "clarify", status: "generating" } });
+  context.handle(state("clarify"));
+  assert.equal(venuePin.hidden, true);
+  assert.equal(venueDestination.textContent, "");
+});
 
 function segment(turnId) {
   return {

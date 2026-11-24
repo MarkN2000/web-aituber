@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
 use crate::{
-    config::LlmConfig,
+    config::AppConfig,
     protocol::{ConversationTurn, SourceLink, Submission},
 };
 
@@ -19,21 +19,22 @@ const OUTPUT_LENGTH_INSTRUCTIONS: &str = "回答本文は日本語で300文字�
 #[derive(Debug, PartialEq, Eq)]
 pub struct LlmResponse {
     pub answer: String,
+    pub event_id: Option<String>,
     pub sources: Vec<SourceLink>,
     pub output_limit_reached: bool,
 }
 
 pub async fn generate(
     client: &Client,
-    config: &LlmConfig,
+    config: &AppConfig,
     submission: &Submission,
     history: &[ConversationTurn],
     search_started: oneshot::Sender<()>,
 ) -> Result<LlmResponse> {
     let request = build_request(config, submission, history, &current_japan_time());
     let response = client
-        .post(&config.api_url)
-        .bearer_auth(&config.api_key)
+        .post(&config.llm.api_url)
+        .bearer_auth(&config.llm.api_key)
         .json(&request)
         .send()
         .await
@@ -54,22 +55,22 @@ pub async fn generate(
 }
 
 fn build_request(
-    config: &LlmConfig,
+    config: &AppConfig,
     submission: &Submission,
     history: &[ConversationTurn],
     current_time: &str,
 ) -> Value {
     let is_food = submission.is_food();
-    let instructions = if is_food {
+    let mut instructions = if is_food {
         format!(
             "{}\n\n{OUTPUT_LENGTH_INSTRUCTIONS}\n\n現在日時（日本時間）: {current_time}\n\n食事投稿への追加指示:\n{}",
-            config.system_prompt.trim_end(),
-            config.food_reaction_prompt.trim()
+            config.llm.system_prompt.trim_end(),
+            config.llm.food_reaction_prompt.trim()
         )
     } else {
         format!(
             "{}\n\n{OUTPUT_LENGTH_INSTRUCTIONS}\n\n現在日時（日本時間）: {current_time}\n検索した場合も、回答本文にはURLや出典一覧を含めないでください。出典は画面側で別に表示します。",
-            config.system_prompt.trim_end()
+            config.llm.system_prompt.trim_end()
         )
     };
     let mut input = Vec::with_capacity(history.len() * 2 + 1);
@@ -96,18 +97,49 @@ fn build_request(
     }
     input.push(json!({ "role": "user", "content": content }));
 
+    let venue = config.venue.as_deref().filter(|_| !is_food);
+    let mut tools = vec![json!({ "type": "web_search", "search_context_size": "low" })];
+    if let Some(venue) = venue {
+        let catalog = venue.catalog();
+        instructions.push_str(concat!(
+            "\n会場内の企画・場所には次の登録情報だけを使い、Web検索や推測で補わないでください。",
+            "名前のほか紹介文と直前の聞き返しへの返答を考慮してください。",
+            "企画が一つに決まったら、参加条件など場所を直接聞かれていない場合も毎回 guide_to_event を使ってください。",
+            "reply には企画名を含め、質問へキャラクターの口調で簡潔に答えてください。",
+            "棟・階・部屋・道順はシステムが続けて読むので reply に含めないでください。",
+            "候補が複数なら違いを示して一つだけ聞き返し、該当なしなら確認できない旨を伝えてください。",
+            "これらの場合や会場と無関係な会話では guide_to_event を使わず普通に回答してください。\n企画一覧:\n"
+        ));
+        tools.push(json!({
+            "type": "function", "name": "guide_to_event",
+            "description": "登録された企画を一つ案内し、返事と会場の道順を読み上げて地図に表示する。",
+            "strict": true,
+            "parameters": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "event_id": { "type": "string", "enum": catalog.keys().collect::<Vec<_>>() },
+                    "reply": { "type": "string" }
+                },
+                "required": ["event_id", "reply"]
+            }
+        }));
+        instructions.push_str(&Value::Object(catalog).to_string());
+    }
     let mut request = json!({
-        "model": config.model,
+        "model": config.llm.model,
         "instructions": instructions,
         "input": input,
-        "reasoning": { "effort": "low" },
+        "reasoning": { "effort": if venue.is_some() { "medium" } else { "low" } },
         "text": { "verbosity": "low" },
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "store": false,
         "stream": true
     });
     if !is_food {
-        request["tools"] = json!([{ "type": "web_search", "search_context_size": "low" }]);
+        request["tools"] = json!(tools);
+        if venue.is_some() {
+            request["parallel_tool_calls"] = json!(false);
+        }
         request["tool_choice"] = json!("auto");
         request["max_tool_calls"] = json!(1);
         request["include"] = json!(["web_search_call.action.sources"]);
@@ -233,6 +265,22 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
     let mut sources = Vec::new();
 
     for item in response["output"].as_array().into_iter().flatten() {
+        if item["type"] == "function_call" && item["name"] == "guide_to_event" {
+            #[derive(Deserialize)]
+            struct GuideCall {
+                event_id: String,
+                reply: String,
+            }
+            let call: GuideCall =
+                serde_json::from_str(item["arguments"].as_str().unwrap_or_default())
+                    .context("会場案内の応答を解釈できません")?;
+            return Ok(LlmResponse {
+                answer: call.reply,
+                event_id: Some(call.event_id),
+                sources: Vec::new(),
+                output_limit_reached: false,
+            });
+        }
         if item["type"].as_str() == Some("web_search_call") {
             for source in item
                 .pointer("/action/sources")
@@ -274,6 +322,7 @@ fn extract_response(response: &Value) -> Result<LlmResponse> {
 
     Ok(LlmResponse {
         answer: answer_parts.join("\n"),
+        event_id: None,
         sources,
         output_limit_reached: false,
     })
@@ -378,12 +427,7 @@ mod tests {
             text: "今回の質問".to_owned(),
         };
 
-        let request = build_request(
-            &config.llm,
-            &submission,
-            &history,
-            "2026-08-07T03:00:00+09:00",
-        );
+        let request = build_request(&config, &submission, &history, "2026-08-07T03:00:00+09:00");
 
         assert_eq!(request["model"], "gpt-5.6-luna");
         assert_eq!(request["tools"][0]["type"], "web_search");
@@ -448,12 +492,7 @@ mod tests {
             text: "食べ物の絵を送りました".to_owned(),
         };
 
-        let request = build_request(
-            &config.llm,
-            &submission,
-            &history,
-            "2026-08-22T12:00:00+09:00",
-        );
+        let request = build_request(&config, &submission, &history, "2026-08-22T12:00:00+09:00");
 
         assert_eq!(request["input"].as_array().unwrap().len(), 1);
         assert_eq!(request["input"][0]["content"][1]["type"], "input_image");

@@ -77,6 +77,7 @@ async fn process_idle_speech(
             turn_id: turn_id.clone(),
             question: String::new(),
             status: TurnStatus::IdleSpeaking,
+            destination: None,
         },
     )
     .await;
@@ -180,6 +181,7 @@ async fn process_submission(state: &AppState, submission: Submission) {
             turn_id: submission.id.clone(),
             question: submission.text.clone(),
             status: TurnStatus::Generating,
+            destination: None,
         },
     )
     .await;
@@ -270,13 +272,7 @@ async fn process_active_submission(
 
     let history = state.history.lock().await.snapshot();
     let (search_sender, mut search_started) = tokio::sync::oneshot::channel();
-    let llm = crate::llm::generate(
-        &state.http,
-        &config.llm,
-        submission,
-        &history,
-        search_sender,
-    );
+    let llm = crate::llm::generate(&state.http, config, submission, &history, search_sender);
     tokio::pin!(llm);
 
     let generated = tokio::select! {
@@ -333,7 +329,24 @@ async fn process_active_submission(
         }
     };
 
-    let segments = limited_answer_segments(&generated.answer, generated.output_limit_reached);
+    let mut segments = limited_answer_segments(&generated.answer, generated.output_limit_reached);
+    let mut destination = None;
+    if let Some(id) = &generated.event_id {
+        if let Some((place, directions)) = config.venue.as_ref().and_then(|v| v.guide(id)) {
+            segments.push(AnswerSegment {
+                emotion: Emotion::Neutral,
+                text: format!("場所は{}です。", place.label),
+            });
+            segments.push(AnswerSegment {
+                emotion: Emotion::Neutral,
+                text: directions.to_owned(),
+            });
+            destination = Some(place);
+        } else {
+            segments =
+                split_answer("案内先を確認できませんでした。企画名をもう少し教えてください。");
+        }
+    }
     if segments.is_empty() {
         return Err(ProcessError::Failed {
             error: anyhow!("LLMの回答が空です"),
@@ -361,6 +374,7 @@ async fn process_active_submission(
                     turn_id: submission.id.clone(),
                     question: submission.text.clone(),
                     status: TurnStatus::Speaking,
+                    destination: destination.take(),
                 },
             )
             .await;
@@ -447,6 +461,7 @@ async fn present_food(
             turn_id: submission.id.clone(),
             question: submission.text.clone(),
             status: TurnStatus::Eating,
+            destination: None,
         },
     )
     .await;
@@ -469,6 +484,7 @@ async fn present_food(
             turn_id: submission.id.clone(),
             question: submission.text.clone(),
             status: TurnStatus::Speaking,
+            destination: None,
         },
     )
     .await;

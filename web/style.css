@@ -163,6 +163,7 @@ textarea::placeholder {
 
 .preparation-mode #vrm-canvas,
 .preparation-mode #screen-overlays,
+.preparation-mode #venue-map,
 .preparation-mode #viewer-message,
 .preparation-mode #debug-panel,
 .preparation-mode .conversation-history,
@@ -185,6 +186,40 @@ textarea::placeholder {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+#venue-map {
+  position: absolute;
+  z-index: 2;
+  top: max(20px, env(safe-area-inset-top));
+  right: max(20px, env(safe-area-inset-right));
+  margin: 0;
+  pointer-events: none;
+  background: white;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 20%);
+}
+
+#venue-map-image {
+  display: block;
+  max-width: 46vw;
+  max-height: 45dvh;
+}
+
+#venue-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  font-size: clamp(20px, 3vw, 36px);
+  line-height: 1;
+}
+
+#venue-destination {
+  position: absolute;
+  inset: 100% 0 auto;
+  padding: .4em .6em;
+  background: #fff;
+  color: #202632;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .screen-overlay {

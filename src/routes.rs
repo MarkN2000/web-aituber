@@ -507,6 +507,16 @@ async fn display_config(State(state): State<AppState>) -> Response {
     let character =
         version_character_asset_urls(config.character.clone(), state.assets_dir.as_ref()).await;
     let response = DisplayConfigDto {
+        venue_map_url: if config.venue.is_some() {
+            existing_versioned_asset_url(
+                &state.assets_dir.join("venue-map.webp"),
+                "/assets/venue-map.webp",
+                "会場地図",
+            )
+            .await
+        } else {
+            None
+        },
         screen_overlays: screen_overlays_display_config(&state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
@@ -2391,6 +2401,7 @@ struct AdminQrCodeRequest {
 
 #[derive(Serialize)]
 struct DisplayConfigDto {
+    venue_map_url: Option<String>,
     #[serde(flatten)]
     character: DisplayCharacterConfig,
     preparation_image_url: Option<String>,
@@ -3630,6 +3641,109 @@ mod tests {
         state.config = ConfigStore::new(path, config);
         state.audio_dir = Arc::new(directory.join("audio"));
         (state, directory)
+    }
+
+    #[tokio::test]
+    async fn venue_answer_reads_location_and_directions_in_one_turn_and_pins_the_building() {
+        use serde_json::{Value, json};
+        async fn respond(Json(request): Json<Value>) -> String {
+            assert_eq!(request["reasoning"]["effort"], "medium");
+            assert!(
+                request["instructions"]
+                    .as_str()
+                    .unwrap()
+                    .contains("ブロックで遊ぶ")
+            );
+            assert_eq!(
+                request["tools"][1]["parameters"]["properties"]["event_id"]["enum"],
+                json!(["game"])
+            );
+            let response = json!({"type": "response.completed", "response": {"output": [{
+                "type": "function_call", "name": "guide_to_event",
+                "arguments": json!({"event_id": "game", "reply": "[happy]ゲーム制作は小学生も参加できるよ！"}).to_string()
+            }]}});
+            format!("data: {response}\n\n")
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (texts, mut spoken) = mpsc::unbounded_channel();
+        let mock = Router::new()
+            .route("/responses", post(respond))
+            .route(
+                "/audio_query",
+                post(move |Query(q): Query<HashMap<String, String>>| async move {
+                    texts.send(q["text"].clone()).unwrap();
+                    Json(json!({}))
+                }),
+            )
+            .route("/synthesis", post(|| async { preview_test_wav() }));
+        let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+
+        let (mut state, directory) = preview_test_state();
+        let venue_path = directory.join("venue.json");
+        std::fs::write(&venue_path, json!({
+            "buildings": {"east": {"name": "東館", "directions": "渡り廊下を渡ってね。", "pin": {"x": 68, "y": 32}}},
+            "events": {"game": {"name": "ゲーム制作", "description": "ブロックで遊ぶ", "building": "east", "floor": "2階", "room": "203号室"}}
+        }).to_string()).unwrap();
+        state.config.reload().unwrap();
+        state
+            .config
+            .update_and_save(|cfg| {
+                cfg.llm.api_url = format!("{base}/responses");
+                cfg.tts.engine_url = base;
+            })
+            .unwrap();
+        state.assets_dir = Arc::new(directory.clone());
+        std::fs::write(directory.join("venue-map.webp"), b"test map").unwrap();
+        let display = display_config(State(state.clone())).await;
+        let display: Value =
+            serde_json::from_slice(&to_bytes(display.into_body(), 65536).await.unwrap()).unwrap();
+        assert!(
+            display["venue_map_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("/assets/venue-map.webp?v=")
+        );
+
+        let (queue, receiver) = mpsc::channel(1);
+        queue
+            .send(Submission {
+                id: "guide".into(),
+                cancel: CancellationToken::new(),
+                kind: SubmissionKind::Question,
+                text: "小学生でも参加できる？".into(),
+            })
+            .await
+            .unwrap();
+        drop(queue);
+        let (events, mut observed) = broadcast::channel(16);
+        state.events = events;
+        crate::pipeline::run(state.clone(), receiver).await;
+        let mut destination = None;
+        while let Ok(event) = observed.try_recv() {
+            if let ServerEvent::State { turn } = event
+                && turn.destination.is_some()
+            {
+                destination = turn.destination;
+            }
+        }
+        let destination = serde_json::to_value(destination).unwrap();
+        assert_eq!(destination["label"], "東館 2階 203号室");
+        assert_eq!(destination["pin"], json!({"x": 68.0, "y": 32.0}));
+        let expected = [
+            "ゲーム制作は小学生も参加できるよ！",
+            "場所は東館 2階 203号室です。",
+            "渡り廊下を渡ってね。",
+        ];
+        for text in expected {
+            assert_eq!(spoken.try_recv().unwrap(), text);
+        }
+        assert_eq!(
+            state.history.lock().await.snapshot()[0].answer,
+            expected.concat()
+        );
+        server.abort();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
