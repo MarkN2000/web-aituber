@@ -47,6 +47,7 @@ const MAX_BACKGROUND_MUSIC_REQUEST_BYTES: usize = background_music::MAX_SOURCE_B
 const VRM_MODEL_FILE_NAME: &str = "model.vrm";
 const BACKGROUND_IMAGE_FILE_NAME: &str = "background.webp";
 const PREPARATION_IMAGE_FILE_NAME: &str = "preparation.webp";
+const VENUE_MAP_FILE_NAME: &str = "venue-map.webp";
 const UPDATE_SHUTDOWN_DELAY: Duration = Duration::from_millis(750);
 
 pub fn router(state: AppState) -> Router {
@@ -62,6 +63,13 @@ pub fn router(state: AppState) -> Router {
             axum::routing::delete(clear_conversation_history),
         )
         .route("/api/admin/reload-config", post(reload_config))
+        .route("/api/admin/venue", get(admin_venue).put(save_venue))
+        .route(
+            "/api/admin/venue-map",
+            post(upload_venue_map)
+                .delete(delete_venue_map)
+                .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
+        )
         .route("/api/admin/version", get(admin_version))
         .route("/api/admin/update", get(check_update).post(apply_update))
         .route(
@@ -507,16 +515,12 @@ async fn display_config(State(state): State<AppState>) -> Response {
     let character =
         version_character_asset_urls(config.character.clone(), state.assets_dir.as_ref()).await;
     let response = DisplayConfigDto {
-        venue_map_url: if config.venue.is_some() {
-            existing_versioned_asset_url(
-                &state.assets_dir.join("venue-map.webp"),
-                "/assets/venue-map.webp",
-                "会場地図",
-            )
-            .await
-        } else {
-            None
-        },
+        venue_map_url: existing_versioned_asset_url(
+            &state.assets_dir.join(VENUE_MAP_FILE_NAME),
+            "/assets/venue-map.webp",
+            "会場地図",
+        )
+        .await,
         screen_overlays: screen_overlays_display_config(&state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
@@ -1049,6 +1053,49 @@ async fn upload_background_image(State(state): State<AppState>, multipart: Multi
     .await
 }
 
+async fn admin_venue(State(state): State<AppState>) -> Response {
+    Json(state.config.current().venue.as_deref()).into_response()
+}
+
+async fn save_venue(
+    State(state): State<AppState>,
+    Json(venue): Json<crate::venue::Venue>,
+) -> Response {
+    if let Err(error) = venue.validate() {
+        return admin_error(StatusCode::BAD_REQUEST, error.to_string());
+    }
+    match state.config.save_venue(venue) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            tracing::error!(?error, "会場案内を保存できませんでした");
+            admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "会場案内を保存できませんでした",
+            )
+        }
+    }
+}
+
+async fn upload_venue_map(State(state): State<AppState>, multipart: Multipart) -> Response {
+    let image = match read_webp_image(multipart, "会場地図").await {
+        Ok(image) => image,
+        Err(message) => return admin_error(StatusCode::BAD_REQUEST, message),
+    };
+    save_webp_image(
+        &state,
+        &state.screen_overlay_lock,
+        VENUE_MAP_FILE_NAME,
+        "会場地図",
+        image,
+    )
+    .await
+}
+
+async fn delete_venue_map(State(state): State<AppState>) -> Response {
+    let _guard = state.screen_overlay_lock.lock().await;
+    delete_display_image(&state, VENUE_MAP_FILE_NAME, "会場地図").await
+}
+
 async fn upload_preparation_image(State(state): State<AppState>, multipart: Multipart) -> Response {
     let image = match read_webp_image(multipart, "準備中画像").await {
         Ok(image) => image,
@@ -1097,22 +1144,22 @@ async fn save_webp_image(
 
 async fn delete_preparation_image(State(state): State<AppState>) -> Response {
     let _guard = state.preparation_image_lock.lock().await;
-    let path = state.assets_dir.join(PREPARATION_IMAGE_FILE_NAME);
+    delete_display_image(&state, PREPARATION_IMAGE_FILE_NAME, "準備中画像").await
+}
+
+async fn delete_display_image(state: &AppState, file_name: &str, label: &str) -> Response {
+    let path = state.assets_dir.join(file_name);
     match tokio::fs::remove_file(&path).await {
-        Ok(()) => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) => {
-            tracing::error!(path = %path.display(), error = ?error, "準備中画像を削除できませんでした");
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            tracing::error!(path = %path.display(), ?error, "画像を削除できませんでした");
             admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "準備中画像を削除できませんでした",
+                format!("{label}を削除できませんでした"),
             )
+        }
+        _ => {
+            notify_display_config_changed(state);
+            StatusCode::NO_CONTENT.into_response()
         }
     }
 }
@@ -1148,24 +1195,7 @@ async fn read_webp_image(mut multipart: Multipart, label: &str) -> Result<Bytes,
 
 async fn delete_background_image(State(state): State<AppState>) -> Response {
     let _guard = state.background_image_lock.lock().await;
-    let path = state.assets_dir.join(BACKGROUND_IMAGE_FILE_NAME);
-    match tokio::fs::remove_file(&path).await {
-        Ok(()) => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) => {
-            tracing::error!(path = %path.display(), error = ?error, "背景画像を削除できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "背景画像を削除できませんでした",
-            )
-        }
-    }
+    delete_display_image(&state, BACKGROUND_IMAGE_FILE_NAME, "背景画像").await
 }
 
 async fn upload_screen_overlay(
@@ -1200,24 +1230,7 @@ async fn delete_screen_overlay(
     };
 
     let _guard = state.screen_overlay_lock.lock().await;
-    let path = state.assets_dir.join(slot.file_name());
-    match tokio::fs::remove_file(&path).await {
-        Ok(()) => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            notify_display_config_changed(&state);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Err(error) => {
-            tracing::error!(path = %path.display(), error = ?error, "画面オーバーレイを削除できませんでした");
-            admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "画面オーバーレイを削除できませんでした",
-            )
-        }
-    }
+    delete_display_image(&state, slot.file_name(), "画面オーバーレイ").await
 }
 
 async fn update_screen_overlay_scale(
@@ -3641,6 +3654,63 @@ mod tests {
         state.config = ConfigStore::new(path, config);
         state.audio_dir = Arc::new(directory.join("audio"));
         (state, directory)
+    }
+
+    #[tokio::test]
+    async fn admin_venue_saves_first_catalog_and_preserves_it_on_invalid_edits() {
+        use serde_json::{Value, json};
+        let (mut state, directory) = state_with_temporary_assets();
+        let config = (*state.config.current()).clone();
+        let path = directory.join("config.json");
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        state.config = ConfigStore::new(path, config);
+        let app = router(state.clone());
+        let venue = json!({
+            "buildings": {"east": {"name":"東館","pin":{"x":12.5,"y":67.0},"directions":"渡り廊下を渡ってね。"}},
+            "events": {"art":{"name":"作品展","description":"学生の作品です。","building":"east","floor":"2階","room":"201号室"}}
+        });
+        let put = |url: &str, value: &Value| {
+            Request::put(url)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(value.to_string()))
+                .unwrap()
+        };
+        let url = "/api/admin/venue?token=test-token";
+        assert_eq!(
+            app.clone()
+                .oneshot(put("/api/admin/venue", &venue))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(put(url, &venue))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        let mut invalid = venue.clone();
+        invalid["events"]["art"]["building"] = json!("missing");
+        assert_eq!(
+            app.clone()
+                .oneshot(put(url, &invalid))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        state.config.reload().unwrap();
+        let response = app
+            .oneshot(Request::get(url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let saved: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(saved, venue);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]

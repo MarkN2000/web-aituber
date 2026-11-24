@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=28">
+  <link rel="stylesheet" href="/static/style.css?v=30">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -16,6 +16,7 @@
       <button id="tab-ai" type="button" role="tab" aria-selected="false" aria-controls="panel-ai" tabindex="-1">AI設定</button>
       <button id="tab-tts" type="button" role="tab" aria-selected="false" aria-controls="panel-tts" tabindex="-1">音声設定</button>
       <button id="tab-display" type="button" role="tab" aria-selected="false" aria-controls="panel-display" tabindex="-1">表示設定</button>
+      <button id="tab-venue" type="button" role="tab" aria-selected="false" aria-controls="panel-venue" tabindex="-1">会場案内</button>
       <button id="tab-motions" type="button" role="tab" aria-selected="false" aria-controls="panel-motions" tabindex="-1">モーション</button>
     </div>
 
@@ -199,6 +200,64 @@
       </section>
     </section>
 
+    <section id="panel-venue" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-venue" hidden>
+      <h2>会場案内</h2>
+      <section aria-labelledby="venue-map-title">
+        <h3 id="venue-map-title">会場地図</h3>
+        <div class="background-previews">
+          <figure class="background-preview">
+            <figcaption>現在の地図</figcaption>
+            <div class="venue-preview"><span class="venue-map-surface"><img id="venue-current-map" alt="登録済みの会場地図" hidden><span id="venue-edit-pin" aria-hidden="true" hidden>📍</span></span><p id="venue-current-empty">地図は未登録です。</p></div>
+          </figure>
+          <figure class="background-preview">
+            <figcaption>選択した画像</figcaption>
+            <div class="venue-preview"><img id="venue-selected-map" alt="アップロードする地図" hidden><p id="venue-selected-empty">画像を選択してください。</p></div>
+          </figure>
+        </div>
+        <form id="venue-map-form">
+          <label for="venue-map-file">受付の現在地を記した地図画像</label>
+          <input id="venue-map-file" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="venue-map-note">
+          <p id="venue-map-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。アップロードすると来場者の画面に表示されます。</p>
+          <div class="admin-form-actions"><button id="venue-upload-map" type="submit" disabled>地図をアップロード</button><button id="venue-delete-map" class="secondary-button" type="button" disabled>地図を削除</button></div>
+        </form>
+        <p id="venue-map-status" role="status"></p><p id="venue-map-error" role="alert"></p>
+      </section>
+      <form id="venue-form">
+        <fieldset id="venue-fields" disabled>
+          <label for="venue-map-building">地図でピンを設定する棟</label>
+          <select id="venue-map-building"></select>
+          <p class="field-note admin-field-note">棟を選び、現在の地図上で入口をクリックしてください。下の座標欄からも指定できます。</p>
+          <h3>棟と道順</h3>
+          <div id="venue-buildings"></div>
+          <button id="venue-add-building" class="secondary-button" type="button">棟を追加</button>
+          <h3>企画</h3>
+          <div id="venue-events"></div>
+          <button id="venue-add-event" class="secondary-button" type="button">企画を追加</button>
+          <div class="admin-form-actions"><button type="submit">棟と企画を保存</button></div>
+        </fieldset>
+      </form>
+      <p id="venue-status" role="status"></p><p id="venue-error" role="alert"></p>
+      <template id="venue-building-row">
+        <fieldset class="venue-row"><legend>棟</legend>
+          <label>棟名<input name="name" required></label>
+          <div class="venue-pair">
+            <label>横位置（左から %）<input name="x" type="number" min="0" max="100" step="any" required></label>
+            <label>縦位置（上から %）<input name="y" type="number" min="0" max="100" step="any" required></label>
+          </div>
+          <label>受付からの道順<textarea name="directions" required></textarea></label>
+          <button class="secondary-button" type="button">この棟を外す</button>
+        </fieldset>
+      </template>
+      <template id="venue-event-row">
+        <fieldset class="venue-row"><legend>企画</legend>
+          <label>企画名<input name="name" required></label>
+          <label>紹介文<textarea name="description" required></textarea></label>
+          <label>会場の棟<select name="building" required></select></label>
+          <div class="venue-pair"><label>階<input name="floor" required></label><label>部屋<input name="room" required></label></div>
+          <button class="secondary-button" type="button">この企画を外す</button>
+        </fieldset>
+      </template>
+    </section>
     <section id="panel-display" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-display" hidden>
       <h2>表示設定</h2>
       <p class="admin-help">メイン画面の変更は接続中の画面へ通知されます。VRMモデル、明るさ、アンチエイリアスは現在の処理が終わってから切り替わります。</p>
@@ -498,6 +557,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=48"></script>
+  <script type="module" src="/static/js/admin.js?v=49"></script>
 </body>
 </html>

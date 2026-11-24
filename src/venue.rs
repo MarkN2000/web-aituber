@@ -4,13 +4,13 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Venue {
     buildings: BTreeMap<String, Building>,
     events: BTreeMap<String, VenueEvent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct Building {
     name: String,
     pin: MapPin,
@@ -23,7 +23,7 @@ pub struct MapPin {
     y: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct VenueEvent {
     name: String,
     description: String,
@@ -46,10 +46,19 @@ impl Venue {
         };
         let venue: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} の会場案内データが不正です", path.display()))?;
-        ensure!(!venue.events.is_empty(), "venue.json に企画がありません");
-        for (id, building) in &venue.buildings {
+        venue.validate()?;
+        Ok(Some(venue))
+    }
+
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for (id, building) in &self.buildings {
             ensure!(
-                !building.name.trim().is_empty()
+                !id.trim().is_empty()
+                    && !building.name.trim().is_empty()
                     && !building.directions.trim().is_empty()
                     && [building.pin.x, building.pin.y]
                         .iter()
@@ -57,9 +66,9 @@ impl Venue {
                 "venue.json の棟 {id} の名称、道順またはピン座標が不正です"
             );
         }
-        for (id, event) in &venue.events {
+        for (id, event) in &self.events {
             ensure!(
-                venue.buildings.contains_key(&event.building)
+                self.buildings.contains_key(&event.building)
                     && [
                         id,
                         &event.name,
@@ -72,7 +81,7 @@ impl Venue {
                 "venue.json の企画 {id} に未登録の棟または空の項目があります"
             );
         }
-        Ok(Some(venue))
+        Ok(())
     }
 
     pub fn catalog(&self) -> Map<String, Value> {

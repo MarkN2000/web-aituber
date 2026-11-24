@@ -1,6 +1,7 @@
 import { UserDictionaryEditor } from "./user-dictionary.js?v=9";
 import { canvasToWebp } from "./webp.js?v=1";
 import { initMotionSettings } from "./admin-motions.js?v=2";
+import { initVenueSettings } from "./admin-venue.js?v=1";
 
 const token = new URLSearchParams(window.location.search).get("token");
 const MAX_BACKGROUND_BYTES = 10 * 1024 * 1024;
@@ -142,7 +143,16 @@ const preparationImageAsset = {
   selectedBlob: undefined, selectedUrl: undefined, currentExists: false, busy: false,
 };
 
-const imageAssets = [backgroundImageAsset, preparationImageAsset, ...screenOverlays];
+const venueMapAsset = {
+  label: "会場地図", fileName: "venue-map.webp", endpoint: "/api/admin/venue-map",
+  form: document.querySelector("#venue-map-form"), imageUrl: (config) => config.venue_map_url,
+  input: document.querySelector("#venue-map-file"), upload: document.querySelector("#venue-upload-map"),
+  remove: document.querySelector("#venue-delete-map"),
+  currentPreview: document.querySelector("#venue-current-map"), currentEmpty: document.querySelector("#venue-current-empty"),
+  selectedPreview: document.querySelector("#venue-selected-map"), selectedEmpty: document.querySelector("#venue-selected-empty"),
+  status: document.querySelector("#venue-map-status"), error: document.querySelector("#venue-map-error"),
+};
+const imageAssets = [backgroundImageAsset, preparationImageAsset, venueMapAsset, ...screenOverlays];
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -1069,7 +1079,7 @@ async function clearConversationHistory() {
 async function reload() {
   if (!token) return;
   elements.reload.disabled = true; const original = elements.reload.textContent; elements.reload.textContent = "再読み込み中…"; setMessage(elements.operationStatus, elements.operationError);
-  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await Promise.all([loadConfig(), loadEventAccess(), loadMotionSettings()]); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
+  try { const response = await fetch(adminUrl("/api/admin/reload-config"), { method: "POST" }); const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "設定を再読み込みできませんでした。"); await Promise.all([loadConfig(), loadEventAccess(), loadMotionSettings(), loadVenueSettings(), loadDisplayConfig()]); setMessage(elements.operationStatus, elements.operationError, result.restart_required ? "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映されます。待受アドレスとポートは再起動後に反映されます。" : "ファイルから再読み込みしました。表示設定は接続中のメイン画面へ反映され、AI・音声設定は次の投稿から反映されます。"); }
   catch (error) { console.error(error); setMessage(elements.operationStatus, elements.operationError, error.message || "設定を再読み込みできませんでした。", true); }
   finally { elements.reload.disabled = false; elements.reload.textContent = original; }
 }
@@ -1228,6 +1238,7 @@ async function previewTts() {
 }
 
 const loadMotionSettings = initMotionSettings({ token, adminUrl, readError, setMessage });
+const loadVenueSettings = initVenueSettings({ token, adminUrl, readError, setMessage });
 elements.tabs.forEach((tab) => { tab.addEventListener("click", () => activateTab(tab)); tab.addEventListener("keydown", tabKeydown); });
 for (const field of [...elements.aiForm.elements, ...elements.ttsForm.elements]) {
   field.addEventListener("invalid", () => field.setAttribute("aria-invalid", "true"));
@@ -1317,6 +1328,7 @@ if (!token) {
   loadVersion();
   loadConfig();
   loadMotionSettings();
+  loadVenueSettings();
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の表示設定を確認できませんでした。", true); });
 }

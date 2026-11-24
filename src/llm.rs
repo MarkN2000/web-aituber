@@ -97,7 +97,10 @@ fn build_request(
     }
     input.push(json!({ "role": "user", "content": content }));
 
-    let venue = config.venue.as_deref().filter(|_| !is_food);
+    let venue = config
+        .venue
+        .as_deref()
+        .filter(|v| !is_food && v.has_events());
     let mut tools = vec![json!({ "type": "web_search", "search_context_size": "low" })];
     if let Some(venue) = venue {
         let catalog = venue.catalog();

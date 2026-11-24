@@ -506,6 +506,17 @@ impl ConfigStore {
         Ok(self.apply(replacement))
     }
 
+    pub(crate) fn save_venue(&self, venue: crate::venue::Venue) -> Result<()> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("設定の保存ロックを取得できません"))?;
+        write_config_atomically(&self.path.with_file_name("venue.json"), &venue)?;
+        self.current
+            .send_modify(|current| Arc::make_mut(current).venue = Some(Arc::new(venue)));
+        Ok(())
+    }
+
     /// 変更を永続化できた場合だけ、実行中の設定を更新する。
     pub fn update_and_save<F>(&self, update: F) -> Result<ConfigReloadResult>
     where
@@ -599,9 +610,14 @@ fn create_default_config(path: &Path, example_path: &Path) -> Result<bool> {
 
 fn write_config_atomically(path: &Path, config: &impl Serialize) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let permissions = fs::metadata(path)
-        .with_context(|| format!("設定ファイルの情報を取得できません: {}", path.display()))?
-        .permissions();
+    let permissions = match fs::metadata(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        result => Some(
+            result
+                .with_context(|| format!("設定ファイルの情報を取得できません: {}", path.display()))?
+                .permissions(),
+        ),
+    };
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -616,8 +632,10 @@ fn write_config_atomically(path: &Path, config: &impl Serialize) -> Result<()> {
             .with_context(|| {
                 format!("一時設定ファイルを作成できません: {}", temporary.display())
             })?;
-        file.set_permissions(permissions)
-            .context("一時設定ファイルへ現在のアクセス権を引き継げません")?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)
+                .context("一時設定ファイルへ現在のアクセス権を引き継げません")?;
+        }
         file.write_all(&serialized)
             .context("一時設定ファイルへ書き込めません")?;
         file.write_all(b"\n")
@@ -625,7 +643,7 @@ fn write_config_atomically(path: &Path, config: &impl Serialize) -> Result<()> {
         file.sync_all()
             .context("一時設定ファイルを同期できません")?;
         drop(file);
-        crate::atomic_file::replace(&temporary, path).with_context(|| {
+        crate::atomic_file::install(&temporary, path).with_context(|| {
             format!(
                 "設定ファイルを原子的に置き換えられません: {}",
                 path.display()
