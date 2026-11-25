@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { resolveObjectURL } = require("node:buffer");
 const { randomUUID } = require("node:crypto");
 const { setImmediate: settle } = require("node:timers/promises");
 const test = require("node:test");
@@ -20,6 +21,8 @@ class Element extends EventTarget {
   createElement() { return new Element(); }
   createElementNS() { return new Element(); }
   setAttribute() {}
+  getAttribute(name) { return name === "src" ? this.currentUrl ?? null : null; }
+  async decode() {}
   setCustomValidity() {}
   reportValidity() { return true; }
   append(...children) { this.children.push(...children); }
@@ -41,14 +44,13 @@ async function setup(t, token = "test") {
   const document = new Element();
   const field = (id) => document.querySelector("#" + id);
   const overlays = ["top-left", "top-right"].map((slot) => {
-    const form = new Element();
-    const scaleForm = document.querySelector(`.screen-overlay-scale-form[data-screen-overlay-slot="${slot}"]`);
-    form.parentElement = form;
-    form.dataset.screenOverlaySlot = slot;
-    return { form, scaleForm, field: (key) => form.querySelector(`[data-screen-overlay-${key}]`),
+    const section = new Element();
+    const scaleForm = section.querySelector(".screen-overlay-scale-form");
+    section.dataset.screenOverlaySlot = slot;
+    return { section, scaleForm, field: (key) => section.querySelector(`[data-screen-overlay-${key}]`),
       scale: scaleForm.querySelector("[data-screen-overlay-scale-number]") };
   });
-  document.querySelectorAll = (selector) => selector === ".screen-overlay-form" ? overlays.map((slot) => slot.form) : [];
+  document.querySelectorAll = (selector) => selector === ".screen-overlay-slot" ? overlays.map((slot) => slot.section) : [];
   field("model-layout-form").elements = ["camera-fov", "camera-fov-number", "save-model-layout"].map(field);
   const config = {
     camera: { fov: 22.5, position: [1, 2, 3] }, preparation_image_url: null,
@@ -208,29 +210,31 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
     for (const [element, value] of drafts) assert.equal(element.value, value);
     assert.equal(field("preparation-mode").checked, true);
   };
-  config.preparation_image_url = "/prep?v=2";
-  config.background_image_url = "/bg?v=2";
-  config.venue_map_url = "/venue?v=2";
   config.background_music_url = "/music?v=2";
-  config.screen_overlays.top_left = { image_url: "/left?v=2", scale: 100 };
   config.screen_overlays.top_right = { image_url: "/right?v=2", scale: 100 };
-  for (const [input, form, preview, remove, url, endpoint] of [
-    [field("background-image"), field("background-form"), field("current-background-preview"), field("delete-background"), "/bg?v=2", "/api/admin/background-image"],
-    [field("venue-map-file"), field("venue-map-form"), field("venue-current-map"), field("venue-delete-map"), "/venue?v=2", "/api/admin/venue-map"],
-    [field("preparation-image"), field("preparation-image-form"), field("current-preparation-preview"), field("delete-preparation-image"), "/prep?v=2", "/api/admin/preparation-image"],
-    [left.field("input"), left.form, left.field("current"), left.field("delete"), "/left?v=2", "/api/admin/screen-overlays/top-left"],
+  for (const [input, preview, remove, endpoint] of [
+    [field("background-image"), field("current-background-preview"), field("delete-background"), "/api/admin/background-image"],
+    [field("venue-map-file"), field("venue-current-map"), field("venue-delete-map"), "/api/admin/venue-map"],
+    [field("preparation-image"), field("current-preparation-preview"), field("delete-preparation-image"), "/api/admin/preparation-image"],
+    [left.field("input"), left.field("current"), left.field("delete"), "/api/admin/screen-overlays/top-left"],
   ]) {
+    const before = requests.length;
     input.files = [new File(["image"], "test.png", { type: "image/png" })];
     await send(input, "change");
-    await send(form, "submit");
-    const upload = requests.find((req) => req.path === endpoint && req.method === "POST");
+    assert.equal(requests.length, before + 1);
+    const upload = requests.at(-1);
+    assert.equal(upload.path, endpoint);
+    assert.equal(upload.method, "POST");
     assert.equal(upload.body.get("image").type, "image/webp");
-    assert.equal(preview.src, url);
+    const url = preview.src;
+    assert.deepEqual(await resolveObjectURL(url).arrayBuffer(), await upload.body.get("image").arrayBuffer());
+    assert.equal(preview.hidden, false);
     checkDrafts();
     await send(remove, "click");
     assert.equal(requests.at(-1).path, endpoint);
     assert.equal(requests.at(-1).method, "DELETE");
     assert.equal(preview.hidden, true);
+    assert.equal(resolveObjectURL(url), undefined);
     checkDrafts();
   }
   assert.equal(right.field("current").src, "/right?v=1");
@@ -245,6 +249,45 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
   await send(right.scaleForm, "submit");
   assert.equal(requests.at(-1).path, "/api/admin/screen-overlays/top-right/scale");
   assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 91 });
+});
+
+test("画像の自動保存に失敗しても元の画像を表示し、同じファイルを再選択できる", async (t) => {
+  const { field, send, requests } = await setup(t);
+  const input = field("background-image");
+  const preview = field("current-background-preview");
+  const original = preview.src;
+  t.mock.method(console, "error", () => {});
+  const before = requests.length;
+  input.files = [new File(["text"], "bad.txt", { type: "text/plain" })];
+  await send(input, "change");
+  assert.equal(requests.length, before);
+  assert.match(field("display-config-error").textContent, /WebP/);
+  assert.equal(preview.src, original);
+
+  const pending = Promise.withResolvers();
+  const fetch = t.mock.method(globalThis, "fetch", () => pending.promise);
+  const file = new File(["image"], "retry.png", { type: "image/png" });
+  const selectFile = () => {
+    input.files = [file];
+    input.value = file.name;
+    return send(input, "change");
+  };
+  await selectFile();
+  assert.equal(input.disabled, true);
+  await send(input, "change");
+  assert.equal(fetch.mock.callCount(), 1);
+  pending.resolve({ ok: false, json: async () => ({ error: "保存失敗" }) });
+  await settle();
+  assert.equal(field("display-config-error").textContent, "保存失敗");
+  assert.equal(preview.src, original);
+  assert.equal(preview.hidden, false);
+  assert.equal(input.value, "");
+  assert.equal(input.disabled, false);
+
+  fetch.mock.mockImplementation(async () => ({ ok: true }));
+  await selectFile();
+  assert.notEqual(preview.src, original);
+  assert.equal(field("display-config-error").textContent, "");
 });
 
 test("試聴を切り替えると古い音声と通信を解放し、前の終了通知は次の試聴を止めない", async (t) => {

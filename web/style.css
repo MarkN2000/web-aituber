@@ -1037,16 +1037,16 @@ textarea::placeholder {
   color: #b3261e;
 }
 
-.background-previews {
+.image-controls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 10px;
+}
+.image-controls button {
+  justify-self: start;
 }
 
 .venue-preview {
   display: grid;
-  min-height: 8rem;
   place-content: center;
   background: #f2f2f0;
   border-radius: 8px;
@@ -1097,17 +1097,6 @@ textarea::placeholder {
   font-size: 1rem;
 }
 
-.screen-overlay-previews {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.screen-overlay-previews .background-preview figcaption {
-  font-size: .85rem;
-}
-
 .screen-overlay-scale-form {
   margin-top: 18px;
 }
@@ -1118,24 +1107,18 @@ textarea::placeholder {
   min-width: 0;
 }
 
-.background-preview {
-  min-width: 0;
-  margin: 0;
-}
-
-.background-preview figcaption {
-  margin-bottom: 8px;
-  font-weight: 700;
-}
-
 .background-preview-frame {
   display: grid;
-  aspect-ratio: 16 / 9;
+  max-width: 32rem;
   overflow: hidden;
   place-items: center;
   border: 1px solid #dededb;
   border-radius: 8px;
   background: #f2f2f0;
+}
+
+.background-preview-frame:has(img:not([hidden])) {
+  aspect-ratio: 16 / 9;
 }
 
 .background-preview-frame img {
@@ -1144,11 +1127,12 @@ textarea::placeholder {
   object-fit: cover;
 }
 
-.preparation-previews .background-preview-frame {
+.preparation-setting-section .background-preview-frame:has(img:not([hidden])) {
   background: #000;
 }
 
-.preparation-previews .background-preview-frame img {
+.preparation-setting-section .background-preview-frame img,
+.screen-overlay-slot .background-preview-frame img {
   object-fit: contain;
 }
 
@@ -1376,10 +1360,6 @@ textarea::placeholder {
 
   .tts-user-dictionary-word-actions button {
     flex: 1;
-  }
-
-  .background-previews {
-    grid-template-columns: 1fr;
   }
 
   .screen-overlay-grid {

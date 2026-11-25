@@ -39,15 +39,11 @@ const elements = {
   engineUrl: document.querySelector("#tts-engine-url"),
   preparationModeForm: document.querySelector("#preparation-mode-form"), preparationMode: document.querySelector("#preparation-mode"),
   savePreparationMode: document.querySelector("#save-preparation-mode"), preparationStatus: document.querySelector("#preparation-status"), preparationError: document.querySelector("#preparation-error"),
-  preparationForm: document.querySelector("#preparation-image-form"), preparationInput: document.querySelector("#preparation-image"),
-  uploadPreparation: document.querySelector("#upload-preparation-image"), deletePreparation: document.querySelector("#delete-preparation-image"),
-  currentPreparationPreview: document.querySelector("#current-preparation-preview"), currentPreparationEmpty: document.querySelector("#current-preparation-empty"),
-  selectedPreparationPreview: document.querySelector("#selected-preparation-preview"), selectedPreparationEmpty: document.querySelector("#selected-preparation-empty"),
   drawingForm: document.querySelector("#drawing-stabilization-form"), drawingStabilization: document.querySelector("#drawing-stabilization"),
   drawingStabilizationValue: document.querySelector("#drawing-stabilization-value"), saveDrawingStabilization: document.querySelector("#save-drawing-stabilization"),
   drawingStatus: document.querySelector("#drawing-stabilization-status"), drawingError: document.querySelector("#drawing-stabilization-error"),
   vrmForm: document.querySelector("#vrm-model-form"), vrmInput: document.querySelector("#vrm-model"),
-  selectedVrm: document.querySelector("#selected-vrm-model"), uploadVrm: document.querySelector("#upload-vrm-model"),
+  uploadVrm: document.querySelector("#upload-vrm-model"),
   brightnessForm: document.querySelector("#model-brightness-form"), brightness: document.querySelector("#model-brightness"),
   brightnessValue: document.querySelector("#model-brightness-value"), saveBrightness: document.querySelector("#save-model-brightness"),
   antialiasForm: document.querySelector("#model-antialias-form"), antialias: document.querySelector("#model-antialias"),
@@ -59,22 +55,18 @@ const elements = {
   foodRotation: ["x", "y", "z"].map((axis) => document.querySelector(`#food-prop-rotation-${axis}`)),
   foodScale: document.querySelector("#food-prop-scale"),
   vrmStatus: document.querySelector("#vrm-status"), vrmError: document.querySelector("#vrm-error"),
-  backgroundForm: document.querySelector("#background-form"), backgroundInput: document.querySelector("#background-image"),
-  uploadBackground: document.querySelector("#upload-background"), deleteBackground: document.querySelector("#delete-background"),
-  currentBackgroundPreview: document.querySelector("#current-background-preview"), currentBackgroundEmpty: document.querySelector("#current-background-empty"),
-  selectedBackgroundPreview: document.querySelector("#selected-background-preview"), selectedBackgroundEmpty: document.querySelector("#selected-background-empty"),
   musicForm: document.querySelector("#background-music-form"), musicInput: document.querySelector("#background-music"),
   uploadMusic: document.querySelector("#upload-background-music"), deleteMusic: document.querySelector("#delete-background-music"),
-  currentMusic: document.querySelector("#current-background-music"), currentMusicEmpty: document.querySelector("#current-background-music-empty"), selectedMusic: document.querySelector("#selected-background-music"),
+  currentMusic: document.querySelector("#current-background-music"), currentMusicEmpty: document.querySelector("#current-background-music-empty"),
   musicVolumeForm: document.querySelector("#background-music-volume-form"), musicVolume: document.querySelector("#background-music-volume"),
   musicVolumeValue: document.querySelector("#background-music-volume-value"), saveMusicVolume: document.querySelector("#save-background-music-volume"),
   musicDuckRatio: document.querySelector("#background-music-duck-ratio"), musicDuckRatioValue: document.querySelector("#background-music-duck-ratio-value"),
   musicStatus: document.querySelector("#background-music-status"), musicError: document.querySelector("#background-music-error"),
   displayStatus: document.querySelector("#display-config-status"), displayError: document.querySelector("#display-config-error"),
 };
-const screenOverlays = [...document.querySelectorAll(".screen-overlay-form")].map((form) => {
-  const slot = form.dataset.screenOverlaySlot;
-  const scaleForm = document.querySelector(`.screen-overlay-scale-form[data-screen-overlay-slot="${slot}"]`);
+const screenOverlays = [...document.querySelectorAll(".screen-overlay-slot")].map((section) => {
+  const slot = section.dataset.screenOverlaySlot;
+  const scaleForm = section.querySelector(".screen-overlay-scale-form");
   const key = slot.replace("-", "_");
   const corner = { "top-left": "左上", "top-right": "右上", "bottom-left": "左下", "bottom-right": "右下" }[slot];
   return {
@@ -84,20 +76,14 @@ const screenOverlays = [...document.querySelectorAll(".screen-overlay-form")].ma
     fileName: `screen-overlay-${slot}.webp`,
     imageUrl: (config) => config.screen_overlays?.[key]?.image_url,
     status: elements.displayStatus, error: elements.displayError,
-    form,
     scaleForm,
-    input: form.querySelector("[data-screen-overlay-input]"),
-    upload: form.querySelector("[data-screen-overlay-upload]"),
-    remove: form.querySelector("[data-screen-overlay-delete]"),
-    currentPreview: form.parentElement.querySelector("[data-screen-overlay-current]"),
-    currentEmpty: form.parentElement.querySelector("[data-screen-overlay-current-empty]"),
-    selectedPreview: form.parentElement.querySelector("[data-screen-overlay-selected]"),
-    selectedEmpty: form.parentElement.querySelector("[data-screen-overlay-selected-empty]"),
+    input: section.querySelector("[data-screen-overlay-input]"),
+    remove: section.querySelector("[data-screen-overlay-delete]"),
+    currentPreview: section.querySelector("[data-screen-overlay-current]"),
+    currentEmpty: section.querySelector("[data-screen-overlay-current-empty]"),
     scale: scaleForm.querySelector("[data-screen-overlay-scale]"),
     scaleNumber: scaleForm.querySelector("[data-screen-overlay-scale-number]"),
     saveScale: scaleForm.querySelector("[data-screen-overlay-save-scale]"),
-    selectedBlob: undefined,
-    selectedUrl: undefined,
     currentExists: false,
     busy: false,
   };
@@ -126,30 +112,27 @@ let updateInProgress = false;
 
 const backgroundImageAsset = {
   label: "背景画像", fileName: "background.webp", endpoint: "/api/admin/background-image",
-  form: elements.backgroundForm, imageUrl: (config) => config.background_image_url,
-  input: elements.backgroundInput, upload: elements.uploadBackground, remove: elements.deleteBackground,
-  currentPreview: elements.currentBackgroundPreview, currentEmpty: elements.currentBackgroundEmpty,
-  selectedPreview: elements.selectedBackgroundPreview, selectedEmpty: elements.selectedBackgroundEmpty,
+  imageUrl: (config) => config.background_image_url,
+  input: document.querySelector("#background-image"), remove: document.querySelector("#delete-background"),
+  currentPreview: document.querySelector("#current-background-preview"), currentEmpty: document.querySelector("#current-background-empty"),
   status: elements.displayStatus, error: elements.displayError,
-  selectedBlob: undefined, selectedUrl: undefined, currentExists: false, busy: false,
+  currentExists: false, busy: false,
 };
 const preparationImageAsset = {
   label: "準備中画像", fileName: "preparation.webp", endpoint: "/api/admin/preparation-image",
-  form: elements.preparationForm, imageUrl: (config) => config.preparation_image_url,
-  input: elements.preparationInput, upload: elements.uploadPreparation, remove: elements.deletePreparation,
-  currentPreview: elements.currentPreparationPreview, currentEmpty: elements.currentPreparationEmpty,
-  selectedPreview: elements.selectedPreparationPreview, selectedEmpty: elements.selectedPreparationEmpty,
+  imageUrl: (config) => config.preparation_image_url,
+  input: document.querySelector("#preparation-image"), remove: document.querySelector("#delete-preparation-image"),
+  currentPreview: document.querySelector("#current-preparation-preview"), currentEmpty: document.querySelector("#current-preparation-empty"),
   status: elements.preparationStatus, error: elements.preparationError,
-  selectedBlob: undefined, selectedUrl: undefined, currentExists: false, busy: false,
+  currentExists: false, busy: false,
 };
 
 const venueMapAsset = {
   label: "会場地図", fileName: "venue-map.webp", endpoint: "/api/admin/venue-map",
-  form: document.querySelector("#venue-map-form"), imageUrl: (config) => config.venue_map_url,
-  input: document.querySelector("#venue-map-file"), upload: document.querySelector("#venue-upload-map"),
+  imageUrl: (config) => config.venue_map_url,
+  input: document.querySelector("#venue-map-file"),
   remove: document.querySelector("#venue-delete-map"),
   currentPreview: document.querySelector("#venue-current-map"), currentEmpty: document.querySelector("#venue-current-empty"),
-  selectedPreview: document.querySelector("#venue-selected-map"), selectedEmpty: document.querySelector("#venue-selected-empty"),
   status: document.querySelector("#venue-map-status"), error: document.querySelector("#venue-map-error"),
 };
 const imageAssets = [backgroundImageAsset, preparationImageAsset, venueMapAsset, ...screenOverlays];
@@ -332,7 +315,6 @@ function updateBrightnessLabel() {
 }
 function updateImageAssetControls(asset) {
   asset.input.disabled = asset.busy || !token;
-  asset.upload.disabled = asset.busy || !asset.selectedBlob || !token;
   asset.remove.disabled = asset.busy || !asset.currentExists || !token;
   if (asset.scale) {
     asset.scale.disabled = asset.busy || !token;
@@ -364,7 +346,6 @@ function selectVrmModel() {
   if (vrmBusy) return;
   const [file] = elements.vrmInput.files;
   selectedVrmFile = undefined;
-  elements.selectedVrm.textContent = "なし";
   setMessage(elements.vrmStatus, elements.vrmError);
   if (!file) {
     updateVrmControls();
@@ -378,8 +359,7 @@ function selectVrmModel() {
     setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルは100MiB以下にしてください。", true);
   } else {
     selectedVrmFile = file;
-    elements.selectedVrm.textContent = `${file.name}（${(file.size / 1024 / 1024).toFixed(1)}MiB）`;
-    setMessage(elements.vrmStatus, elements.vrmError, "置き換えるVRMモデルを選択しました。");
+    setMessage(elements.vrmStatus, elements.vrmError, `${(file.size / 1024 / 1024).toFixed(1)}MiBのモデルを選択しました。`);
   }
   updateVrmControls();
 }
@@ -405,7 +385,6 @@ function selectMusic() {
   if (musicBusy) return;
   const [file] = elements.musicInput.files;
   selectedMusicFile = undefined;
-  elements.selectedMusic.textContent = "なし";
   setMessage(elements.musicStatus, elements.musicError);
   if (!file) {
     updateMusicControls();
@@ -420,54 +399,32 @@ function selectMusic() {
     setMessage(elements.musicStatus, elements.musicError, "BGM音源は100MiB以下にしてください。", true);
   } else {
     selectedMusicFile = file;
-    elements.selectedMusic.textContent = file.name;
     setMessage(elements.musicStatus, elements.musicError, "アップロードすると現在のBGMを上書きします。");
   }
   updateMusicControls();
 }
-async function showCurrentImageAsset(asset, url) {
-  asset.currentExists = Boolean(url);
+async function showCurrentImageAsset(asset, image) {
+  const previousUrl = asset.currentPreview.getAttribute("src");
+  if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
+  asset.currentExists = Boolean(image);
   asset.currentPreview.hidden = true;
   asset.currentPreview.removeAttribute("src");
   asset.currentEmpty.hidden = false;
-  asset.currentEmpty.textContent = url ? `現在の${asset.label}を読み込み中です…` : `${asset.label}は設定されていません。`;
+  asset.currentEmpty.textContent = image ? `現在の${asset.label}を読み込み中です…` : `${asset.label}は設定されていません。`;
   updateImageAssetControls(asset);
-  if (!url) return;
+  if (!image) return;
+  const url = image instanceof Blob ? URL.createObjectURL(image) : image;
+  asset.currentPreview.src = url;
   try {
-    await new Promise((resolve, reject) => {
-      asset.currentPreview.onload = resolve;
-      asset.currentPreview.onerror = () => reject(new Error(`現在の${asset.label}を読み込めませんでした。`));
-      asset.currentPreview.src = url;
-    });
-  } catch (error) {
-    asset.currentPreview.removeAttribute("src");
+    await asset.currentPreview.decode();
+  } catch {
+    if (asset.currentPreview.getAttribute("src") !== url) return;
     asset.currentEmpty.textContent = `現在の${asset.label}を読み込めませんでした。`;
-    throw error;
-  } finally {
-    asset.currentPreview.onload = null;
-    asset.currentPreview.onerror = null;
+    throw new Error(asset.currentEmpty.textContent);
   }
+  if (asset.currentPreview.getAttribute("src") !== url) return;
   asset.currentPreview.hidden = false;
   asset.currentEmpty.hidden = true;
-  updateImageAssetControls(asset);
-}
-function releaseSelectedImageAsset(asset) {
-  if (asset.selectedUrl) URL.revokeObjectURL(asset.selectedUrl);
-  asset.selectedUrl = undefined;
-  asset.selectedBlob = undefined;
-  asset.selectedPreview.removeAttribute("src");
-  asset.selectedPreview.hidden = true;
-  asset.selectedEmpty.hidden = false;
-  updateImageAssetControls(asset);
-}
-function showSelectedImageAsset(asset, blob) {
-  releaseSelectedImageAsset(asset);
-  asset.selectedBlob = blob;
-  asset.selectedUrl = URL.createObjectURL(blob);
-  asset.selectedPreview.src = asset.selectedUrl;
-  asset.selectedPreview.hidden = false;
-  asset.selectedEmpty.hidden = true;
-  updateImageAssetControls(asset);
 }
 function loadImage(file) {
   return new Promise((resolve, reject) => {
@@ -513,6 +470,7 @@ async function fetchDisplayConfig() {
   return response.json();
 }
 async function loadDisplayConfig() {
+  const previews = imageAssets.map((asset) => asset.currentPreview.getAttribute("src"));
   const config = await fetchDisplayConfig();
   showCurrentMusic(config.background_music_url);
   const stabilization = Number(config.drawing?.stabilization);
@@ -541,33 +499,11 @@ async function loadDisplayConfig() {
     overlay.scale.value = String(Math.min(100, Math.max(1, Number(scale) || 100)));
     syncScreenOverlayScaleFromRange(overlay);
   }
-  await Promise.all(imageAssets.map((asset) => showCurrentImageAsset(asset, asset.imageUrl(config))));
-}
-async function selectImageAsset(asset) {
-  if (asset.busy) return;
-  asset.busy = true;
-  releaseSelectedImageAsset(asset);
-  updateImageAssetControls(asset);
-  setMessage(asset.status, asset.error);
-  const [file] = asset.input.files;
-  if (!file) {
-    asset.busy = false;
-    updateImageAssetControls(asset);
-    return;
-  }
-  asset.selectedEmpty.textContent = "画像を変換中です…";
-  try {
-    showSelectedImageAsset(asset, await convertBackground(file));
-    setMessage(asset.status, asset.error, `画像をWebPへ変換しました。アップロードすると現在の${asset.label}を上書きします。`);
-  } catch (error) {
-    console.error(error);
-    asset.input.value = "";
-    setMessage(asset.status, asset.error, error.message || "画像を変換できませんでした。", true);
-  } finally {
-    asset.busy = false;
-    asset.selectedEmpty.textContent = "画像を選択してください。";
-    updateImageAssetControls(asset);
-  }
+  await Promise.all(imageAssets.map((asset, i) => {
+    if (asset.currentPreview.getAttribute("src") === previews[i]) {
+      return showCurrentImageAsset(asset, asset.imageUrl(config));
+    }
+  }));
 }
 async function saveScreenOverlayScale(event, overlay) {
   event.preventDefault();
@@ -614,7 +550,6 @@ async function uploadVrmModel(event) {
     if (!response.ok) throw new Error(await readError(response, "VRMモデルを置き換えられませんでした。"));
     selectedVrmFile = undefined;
     elements.vrmInput.value = "";
-    elements.selectedVrm.textContent = "なし";
     setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを更新しました。接続中のメイン画面は現在の処理後に読み込み直します。");
   } catch (error) {
     console.error(error);
@@ -744,24 +679,20 @@ async function saveModelLayout(event) {
     updateLayoutControls();
   }
 }
-async function uploadImageAsset(event, asset) {
-  event.preventDefault();
-  if (!token || !asset.selectedBlob || asset.busy) return;
+async function uploadImageAsset(asset) {
+  const [file] = asset.input.files;
+  if (!token || !file || asset.busy) return;
   asset.busy = true;
   updateImageAssetControls(asset);
-  const original = asset.upload.textContent;
-  asset.upload.textContent = "アップロード中…";
-  setMessage(asset.status, asset.error);
+  setMessage(asset.status, asset.error, `${asset.label}を保存中です…`);
   try {
+    const image = await convertBackground(file);
     const body = new FormData();
-    body.append("image", asset.selectedBlob, asset.fileName);
+    body.append("image", image, asset.fileName);
     const response = await fetch(adminUrl(asset.endpoint), { method: "POST", body });
     if (!response.ok) throw new Error(await readError(response, `${asset.label}をアップロードできませんでした。`));
-    releaseSelectedImageAsset(asset);
-    asset.input.value = "";
     try {
-      const config = await fetchDisplayConfig();
-      await showCurrentImageAsset(asset, asset.imageUrl(config));
+      await showCurrentImageAsset(asset, image);
       setMessage(asset.status, asset.error, `${asset.label}を更新しました。接続中のメイン画面へ反映されます。`);
     } catch (error) {
       console.error(error);
@@ -772,7 +703,7 @@ async function uploadImageAsset(event, asset) {
     setMessage(asset.status, asset.error, error.message || `${asset.label}をアップロードできませんでした。`, true);
   } finally {
     asset.busy = false;
-    asset.upload.textContent = original;
+    asset.input.value = "";
     updateImageAssetControls(asset);
   }
 }
@@ -844,7 +775,6 @@ async function uploadMusic(event) {
     if (!response.ok) throw new Error(await readError(response, "BGMをアップロードできませんでした。"));
     selectedMusicFile = undefined;
     elements.musicInput.value = "";
-    elements.selectedMusic.textContent = "なし";
     try {
       const config = await fetchDisplayConfig();
       showCurrentMusic(config.background_music_url);
@@ -1277,8 +1207,7 @@ elements.preparationModeForm.addEventListener("submit", savePreparationMode);
 elements.preparationMode.addEventListener("change", updatePreparationModeControls);
 updatePreparationModeControls();
 for (const asset of imageAssets) {
-  asset.input.addEventListener("change", () => { void selectImageAsset(asset); });
-  asset.form.addEventListener("submit", (event) => { void uploadImageAsset(event, asset); });
+  asset.input.addEventListener("change", () => { void uploadImageAsset(asset); });
   asset.remove.addEventListener("click", () => { void deleteImageAsset(asset); });
   updateImageAssetControls(asset);
 }
@@ -1322,7 +1251,7 @@ if (!token) {
   setMessage(elements.vrmStatus, elements.vrmError, "VRMモデルを変更するには管理用トークンが必要です。", true);
   setMessage(elements.displayStatus, elements.displayError, "表示設定を変更するには管理用トークンが必要です。", true);
   setMessage(elements.musicStatus, elements.musicError, "BGMを変更するには管理用トークンが必要です。", true);
-  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.preparationModeForm.elements, ...elements.preparationForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.backgroundForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, ...screenOverlays.flatMap((overlay) => [...overlay.form.elements, ...overlay.scaleForm.elements]), elements.reload, elements.checkUpdate, elements.clearTtsCache].forEach((element) => { element.disabled = true; });
+  [...elements.eventForm.elements, ...elements.aiForm.elements, ...elements.ttsForm.elements, ...elements.preparationModeForm.elements, ...elements.drawingForm.elements, ...elements.vrmForm.elements, ...elements.brightnessForm.elements, ...elements.antialiasForm.elements, ...elements.musicForm.elements, ...elements.musicVolumeForm.elements, elements.reload, elements.checkUpdate, elements.clearTtsCache].forEach((element) => { element.disabled = true; });
 } else {
   connect();
   loadVersion();
@@ -1332,4 +1261,4 @@ if (!token) {
   loadEventAccess().catch((error) => { console.error(error); setMessage(elements.eventAccessStatus, elements.eventAccessError, error.message || "公開URLを読み込めませんでした。", true); });
   loadDisplayConfig().catch((error) => { console.error(error); setMessage(elements.displayStatus, elements.displayError, error.message || "現在の表示設定を確認できませんでした。", true); });
 }
-window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); stopPreview(); for (const asset of imageAssets) releaseSelectedImageAsset(asset); releaseEventQrImage(); elements.currentMusic.pause(); });
+window.addEventListener("beforeunload", () => { clearTimeout(reconnectTimer); socket?.close(); stopPreview(); releaseEventQrImage(); elements.currentMusic.pause(); });

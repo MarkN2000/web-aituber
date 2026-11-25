@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web AITuber | 管理</title>
-  <link rel="stylesheet" href="/static/style.css?v=30">
+  <link rel="stylesheet" href="/static/style.css?v=31">
 </head>
 <body class="admin-page">
   <main class="admin-card">
@@ -204,22 +204,13 @@
       <h2>会場案内</h2>
       <section aria-labelledby="venue-map-title">
         <h3 id="venue-map-title">会場地図</h3>
-        <div class="background-previews">
-          <figure class="background-preview">
-            <figcaption>現在の地図</figcaption>
-            <div class="venue-preview"><span class="venue-map-surface"><img id="venue-current-map" alt="登録済みの会場地図" hidden><span id="venue-edit-pin" aria-hidden="true" hidden>📍</span></span><p id="venue-current-empty">地図は未登録です。</p></div>
-          </figure>
-          <figure class="background-preview">
-            <figcaption>選択した画像</figcaption>
-            <div class="venue-preview"><img id="venue-selected-map" alt="アップロードする地図" hidden><p id="venue-selected-empty">画像を選択してください。</p></div>
-          </figure>
-        </div>
-        <form id="venue-map-form">
+        <div class="venue-preview"><span class="venue-map-surface"><img id="venue-current-map" alt="登録済みの会場地図" hidden><span id="venue-edit-pin" aria-hidden="true" hidden>📍</span></span><p id="venue-current-empty">地図は未登録です。</p></div>
+        <div class="image-controls">
           <label for="venue-map-file">受付の現在地を記した地図画像</label>
           <input id="venue-map-file" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="venue-map-note">
-          <p id="venue-map-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。アップロードすると来場者の画面に表示されます。</p>
-          <div class="admin-form-actions"><button id="venue-upload-map" type="submit" disabled>地図をアップロード</button><button id="venue-delete-map" class="secondary-button" type="button" disabled>地図を削除</button></div>
-        </form>
+          <p id="venue-map-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。選ぶと保存され、来場者の画面に反映されます。</p>
+          <button id="venue-delete-map" class="secondary-button" type="button" disabled>地図を削除</button>
+        </div>
         <p id="venue-map-status" role="status"></p><p id="venue-map-error" role="alert"></p>
       </section>
       <form id="venue-form">
@@ -273,31 +264,16 @@
             <button id="save-preparation-mode" type="submit">設定を保存</button>
           </div>
         </form>
-        <div class="background-previews preparation-previews">
-          <figure class="background-preview">
-            <figcaption>現在の準備中画像</figcaption>
-            <div class="background-preview-frame">
-              <img id="current-preparation-preview" alt="現在設定されている準備中画像" hidden>
-              <p id="current-preparation-empty">準備中画像は設定されていません。</p>
-            </div>
-          </figure>
-          <figure class="background-preview">
-            <figcaption>選択した画像</figcaption>
-            <div class="background-preview-frame">
-              <img id="selected-preparation-preview" alt="アップロードする準備中画像のプレビュー" hidden>
-              <p id="selected-preparation-empty">画像を選択してください。</p>
-            </div>
-          </figure>
+        <div class="background-preview-frame">
+          <img id="current-preparation-preview" alt="現在設定されている準備中画像" hidden>
+          <p id="current-preparation-empty">準備中画像は設定されていません。</p>
         </div>
-        <form id="preparation-image-form" novalidate>
+        <div class="image-controls">
           <label for="preparation-image">準備中画像</label>
           <input id="preparation-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="preparation-image-note">
-          <p id="preparation-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-          <div class="admin-form-actions">
-            <button id="upload-preparation-image" type="submit" disabled>準備中画像をアップロード</button>
-            <button id="delete-preparation-image" class="secondary-button" type="button" disabled>準備中画像を削除</button>
-          </div>
-        </form>
+          <p id="preparation-image-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。選ぶと長辺1920px以内のWebPに変換して保存します。</p>
+          <button id="delete-preparation-image" class="secondary-button" type="button" disabled>準備中画像を削除</button>
+        </div>
         <p id="preparation-status" class="status" role="status" aria-live="polite"></p>
         <p id="preparation-error" class="status" role="alert"></p>
       </section>
@@ -322,7 +298,7 @@
         <form id="vrm-model-form" novalidate>
           <label for="vrm-model">置き換えるモデル</label>
           <input id="vrm-model" type="file" accept=".vrm" aria-describedby="vrm-model-note">
-          <p id="vrm-model-note" class="field-note admin-field-note">VRM（100MiB以下）。選択中: <span id="selected-vrm-model">なし</span></p>
+          <p id="vrm-model-note" class="field-note admin-field-note">VRM（100MiB以下）。</p>
           <div class="admin-form-actions">
             <button id="upload-vrm-model" type="submit" disabled>VRMモデルを置き換える</button>
           </div>
@@ -393,87 +369,57 @@
       </section>
       <section class="display-setting-section" aria-labelledby="background-image-title">
         <h3 id="background-image-title">背景画像</h3>
-        <div class="background-previews">
-          <figure class="background-preview">
-            <figcaption>現在の背景画像</figcaption>
-            <div class="background-preview-frame">
-              <img id="current-background-preview" alt="現在設定されている背景画像" hidden>
-              <p id="current-background-empty">背景画像は設定されていません。</p>
-            </div>
-          </figure>
-          <figure class="background-preview">
-            <figcaption>選択した画像</figcaption>
-            <div class="background-preview-frame">
-              <img id="selected-background-preview" alt="アップロードする背景画像のプレビュー" hidden>
-              <p id="selected-background-empty">画像を選択してください。</p>
-            </div>
-          </figure>
+        <div class="background-preview-frame">
+          <img id="current-background-preview" alt="現在設定されている背景画像" hidden>
+          <p id="current-background-empty">背景画像は設定されていません。</p>
         </div>
-        <form id="background-form" novalidate>
+        <div class="image-controls">
           <label for="background-image">背景画像</label>
           <input id="background-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="background-image-note">
-          <p id="background-image-note" class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-          <div class="admin-form-actions">
-            <button id="upload-background" type="submit" disabled>背景画像をアップロード</button>
-            <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
-          </div>
-        </form>
+          <p id="background-image-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。選ぶと長辺1920px以内のWebPに変換して保存します。</p>
+          <button id="delete-background" class="secondary-button" type="button" disabled>背景画像を削除</button>
+        </div>
       </section>
       <section class="display-setting-section" aria-labelledby="screen-overlays-title">
         <h3 id="screen-overlays-title">画面オーバーレイ</h3>
         <p class="admin-help">各画像は選択した隅を基準に、画面全体を覆う大きさを100%として表示します。</p>
+        <p id="screen-overlay-image-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。選ぶと長辺1920px以内のWebPに変換して保存します。</p>
         <div class="screen-overlay-grid">
-          <section class="screen-overlay-slot" aria-labelledby="screen-overlay-top-left-title">
+          <section class="screen-overlay-slot" data-screen-overlay-slot="top-left" aria-labelledby="screen-overlay-top-left-title">
             <h4 id="screen-overlay-top-left-title">左上</h4>
-            <div class="screen-overlay-previews">
-              <figure class="background-preview"><figcaption>現在の画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-current alt="左上に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div></figure>
-              <figure class="background-preview"><figcaption>選択した画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-selected alt="左上へアップロードする画像のプレビュー" hidden><p data-screen-overlay-selected-empty>画像を選択してください。</p></div></figure>
+            <div class="background-preview-frame"><img data-screen-overlay-current alt="左上に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div>
+            <div class="image-controls">
+              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="screen-overlay-image-note"></label>
+              <button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button>
             </div>
-            <form class="screen-overlay-form" data-screen-overlay-slot="top-left" novalidate>
-              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp"></label>
-              <p class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-              <div class="admin-form-actions"><button data-screen-overlay-upload type="submit" disabled>画像をアップロード</button><button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button></div>
-            </form>
-            <form class="screen-overlay-scale-form" data-screen-overlay-slot="top-left" novalidate><label for="screen-overlay-top-left-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-top-left-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="左上の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
+            <form class="screen-overlay-scale-form" novalidate><label for="screen-overlay-top-left-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-top-left-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="左上の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
           </section>
-          <section class="screen-overlay-slot" aria-labelledby="screen-overlay-top-right-title">
+          <section class="screen-overlay-slot" data-screen-overlay-slot="top-right" aria-labelledby="screen-overlay-top-right-title">
             <h4 id="screen-overlay-top-right-title">右上</h4>
-            <div class="screen-overlay-previews">
-              <figure class="background-preview"><figcaption>現在の画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-current alt="右上に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div></figure>
-              <figure class="background-preview"><figcaption>選択した画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-selected alt="右上へアップロードする画像のプレビュー" hidden><p data-screen-overlay-selected-empty>画像を選択してください。</p></div></figure>
+            <div class="background-preview-frame"><img data-screen-overlay-current alt="右上に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div>
+            <div class="image-controls">
+              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="screen-overlay-image-note"></label>
+              <button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button>
             </div>
-            <form class="screen-overlay-form" data-screen-overlay-slot="top-right" novalidate>
-              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp"></label>
-              <p class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-              <div class="admin-form-actions"><button data-screen-overlay-upload type="submit" disabled>画像をアップロード</button><button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button></div>
-            </form>
-            <form class="screen-overlay-scale-form" data-screen-overlay-slot="top-right" novalidate><label for="screen-overlay-top-right-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-top-right-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="右上の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
+            <form class="screen-overlay-scale-form" novalidate><label for="screen-overlay-top-right-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-top-right-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="右上の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
           </section>
-          <section class="screen-overlay-slot" aria-labelledby="screen-overlay-bottom-left-title">
+          <section class="screen-overlay-slot" data-screen-overlay-slot="bottom-left" aria-labelledby="screen-overlay-bottom-left-title">
             <h4 id="screen-overlay-bottom-left-title">左下</h4>
-            <div class="screen-overlay-previews">
-              <figure class="background-preview"><figcaption>現在の画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-current alt="左下に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div></figure>
-              <figure class="background-preview"><figcaption>選択した画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-selected alt="左下へアップロードする画像のプレビュー" hidden><p data-screen-overlay-selected-empty>画像を選択してください。</p></div></figure>
+            <div class="background-preview-frame"><img data-screen-overlay-current alt="左下に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div>
+            <div class="image-controls">
+              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="screen-overlay-image-note"></label>
+              <button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button>
             </div>
-            <form class="screen-overlay-form" data-screen-overlay-slot="bottom-left" novalidate>
-              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp"></label>
-              <p class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-              <div class="admin-form-actions"><button data-screen-overlay-upload type="submit" disabled>画像をアップロード</button><button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button></div>
-            </form>
-            <form class="screen-overlay-scale-form" data-screen-overlay-slot="bottom-left" novalidate><label for="screen-overlay-bottom-left-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-bottom-left-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="左下の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
+            <form class="screen-overlay-scale-form" novalidate><label for="screen-overlay-bottom-left-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-bottom-left-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="左下の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
           </section>
-          <section class="screen-overlay-slot" aria-labelledby="screen-overlay-bottom-right-title">
+          <section class="screen-overlay-slot" data-screen-overlay-slot="bottom-right" aria-labelledby="screen-overlay-bottom-right-title">
             <h4 id="screen-overlay-bottom-right-title">右下</h4>
-            <div class="screen-overlay-previews">
-              <figure class="background-preview"><figcaption>現在の画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-current alt="右下に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div></figure>
-              <figure class="background-preview"><figcaption>選択した画像</figcaption><div class="background-preview-frame"><img data-screen-overlay-selected alt="右下へアップロードする画像のプレビュー" hidden><p data-screen-overlay-selected-empty>画像を選択してください。</p></div></figure>
+            <div class="background-preview-frame"><img data-screen-overlay-current alt="右下に設定されている画像" hidden><p data-screen-overlay-current-empty>画像は設定されていません。</p></div>
+            <div class="image-controls">
+              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="screen-overlay-image-note"></label>
+              <button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button>
             </div>
-            <form class="screen-overlay-form" data-screen-overlay-slot="bottom-right" novalidate>
-              <label>画像<input data-screen-overlay-input type="file" accept="image/jpeg,image/png,image/webp"></label>
-              <p class="field-note admin-field-note">JPEG、PNG、WebP（10MiB以下）。長辺1920px以内のWebPへ変換して保存します。</p>
-              <div class="admin-form-actions"><button data-screen-overlay-upload type="submit" disabled>画像をアップロード</button><button data-screen-overlay-delete class="secondary-button" type="button" disabled>画像を削除</button></div>
-            </form>
-            <form class="screen-overlay-scale-form" data-screen-overlay-slot="bottom-right" novalidate><label for="screen-overlay-bottom-right-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-bottom-right-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="右下の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
+            <form class="screen-overlay-scale-form" novalidate><label for="screen-overlay-bottom-right-scale">表示倍率（%）</label><div class="volume-control screen-overlay-scale-control"><input id="screen-overlay-bottom-right-scale" data-screen-overlay-scale type="range" min="1" max="100" step="1" value="100"><input data-screen-overlay-scale-number type="number" min="1" max="100" step="1" value="100" aria-label="右下の表示倍率（パーセント）"></div><div class="admin-form-actions"><button data-screen-overlay-save-scale type="submit">倍率を保存</button></div></form>
           </section>
         </div>
       </section>
@@ -481,7 +427,6 @@
       <p id="display-config-error" class="status" role="alert"></p>
       <section class="display-setting-section" aria-labelledby="background-music-title">
         <h3 id="background-music-title">BGM</h3>
-        <p class="admin-help">MP3、OGG、WAVをM4A/AACへ変換し、メイン画面でループ再生します。</p>
         <div class="background-music-preview">
           <p class="background-music-label">現在のBGM</p>
           <audio id="current-background-music" controls loop preload="metadata" hidden></audio>
@@ -490,7 +435,7 @@
         <form id="background-music-form" novalidate>
           <label for="background-music">BGM音源</label>
           <input id="background-music" type="file" accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" aria-describedby="background-music-note">
-          <p id="background-music-note" class="field-note admin-field-note">MP3、OGG、WAV（100MiB以下）。選択中: <span id="selected-background-music">なし</span></p>
+          <p id="background-music-note" class="field-note admin-field-note">MP3・OGG・WAV、100MiBまで。M4A/AACに変換し、メイン画面でループ再生します。</p>
           <div class="admin-form-actions">
             <button id="upload-background-music" type="submit" disabled>BGMをアップロード</button>
             <button id="delete-background-music" class="secondary-button" type="button" disabled>BGMを削除</button>
@@ -557,6 +502,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=49"></script>
+  <script type="module" src="/static/js/admin.js?v=50"></script>
 </body>
 </html>
