@@ -85,21 +85,26 @@ impl Venue {
     }
 
     pub fn catalog(&self) -> Map<String, Value> {
-        self.events.iter().map(|(id, event)| (id.clone(), json!({
-            "name": event.name, "description": event.description,
-            "building": self.buildings[&event.building].name, "floor": event.floor, "room": event.room
-        }))).collect()
+        self.events
+            .iter()
+            .map(|(id, event)| {
+                let building = &self.buildings[&event.building];
+                let entry = json!({
+                    "name": event.name, "description": event.description,
+                    "building": building.name, "floor": event.floor, "room": event.room,
+                    "directions": building.directions
+                });
+                (id.clone(), entry)
+            })
+            .collect()
     }
 
-    pub fn guide(&self, id: &str) -> Option<(Destination, &str)> {
+    pub fn guide(&self, id: &str) -> Option<Destination> {
         let event = self.events.get(id)?;
         let building = &self.buildings[&event.building];
-        Some((
-            Destination {
-                label: format!("{} {} {}", building.name, event.floor, event.room),
-                pin: building.pin,
-            },
-            &building.directions,
-        ))
+        Some(Destination {
+            label: format!("{} {} {}", building.name, event.floor, event.room),
+            pin: building.pin,
+        })
     }
 }

@@ -3714,16 +3714,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn venue_answer_reads_location_and_directions_in_one_turn_and_pins_the_building() {
+    async fn venue_answer_pins_the_building_and_appends_only_the_location() {
         use serde_json::{Value, json};
         async fn respond(Json(request): Json<Value>) -> String {
             assert_eq!(request["reasoning"]["effort"], "medium");
-            assert!(
-                request["instructions"]
-                    .as_str()
-                    .unwrap()
-                    .contains("ブロックで遊ぶ")
-            );
+            let instructions = request["instructions"].as_str().unwrap();
+            assert!(instructions.contains("ブロックで遊ぶ"));
+            assert!(instructions.contains("渡り廊下を渡ってね。"));
             assert_eq!(
                 request["tools"][1]["parameters"]["properties"]["event_id"]["enum"],
                 json!(["game"])
@@ -3803,11 +3800,11 @@ mod tests {
         let expected = [
             "ゲーム制作は小学生も参加できるよ！",
             "場所は東館 2階 203号室です。",
-            "渡り廊下を渡ってね。",
         ];
         for text in expected {
             assert_eq!(spoken.try_recv().unwrap(), text);
         }
+        assert!(spoken.try_recv().is_err());
         assert_eq!(
             state.history.lock().await.snapshot()[0].answer,
             expected.concat()
