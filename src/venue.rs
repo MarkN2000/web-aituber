@@ -14,6 +14,7 @@ pub struct Venue {
 struct Building {
     name: String,
     pin: MapPin,
+    #[serde(default)]
     directions: String,
 }
 
@@ -59,11 +60,10 @@ impl Venue {
             ensure!(
                 !id.trim().is_empty()
                     && !building.name.trim().is_empty()
-                    && !building.directions.trim().is_empty()
                     && [building.pin.x, building.pin.y]
                         .iter()
                         .all(|v| (0.0..=100.0).contains(v)),
-                "venue.json の棟 {id} の名称、道順またはピン座標が不正です"
+                "venue.json の棟 {id} の名称またはピン座標が不正です"
             );
         }
         for (id, event) in &self.events {
@@ -92,7 +92,7 @@ impl Venue {
                 let entry = json!({
                     "name": event.name, "description": event.description,
                     "building": building.name, "floor": event.floor, "room": event.room,
-                    "directions": building.directions
+                    "directions": building.directions.trim()
                 });
                 (id.clone(), entry)
             })

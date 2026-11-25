@@ -3679,7 +3679,10 @@ mod tests {
         state.config = ConfigStore::new(path, config);
         let app = router(state.clone());
         let venue = json!({
-            "buildings": {"east": {"name":"東館","pin":{"x":12.5,"y":67.0},"directions":"渡り廊下を渡ってね。"}},
+            "buildings": {
+                "east": {"name":"東館","pin":{"x":12.5,"y":67.0},"directions":""},
+                "west": {"name":"西館","pin":{"x":70.0,"y":30.0}}
+            },
             "events": {"art":{"name":"作品展","description":"学生の作品です。","building":"east","floor":"2階","room":"201号室"}}
         });
         let put = |url: &str, value: &Value| {
@@ -3722,7 +3725,9 @@ mod tests {
             .unwrap();
         let saved: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-        assert_eq!(saved, venue);
+        let mut expected = venue;
+        expected["buildings"]["west"]["directions"] = json!("");
+        assert_eq!(saved, expected);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
