@@ -51,7 +51,7 @@ async function setup(t, token = "test") {
   document.querySelectorAll = (selector) => selector === ".screen-overlay-form" ? overlays.map((slot) => slot.form) : [];
   field("model-layout-form").elements = ["camera-fov", "camera-fov-number", "save-model-layout"].map(field);
   const config = {
-    camera: { fov: 22.5, position: [1, 2, 3] }, preparation_image_url: "/prep?v=1",
+    camera: { fov: 22.5, position: [1, 2, 3] }, preparation_image_url: null,
     background_image_url: "/bg?v=1", background_music_url: "/music?v=1",
     screen_overlays: { top_left: { image_url: "/left?v=1", scale: 50 }, top_right: { image_url: "/right?v=1", scale: 60 } },
   };
@@ -179,6 +179,22 @@ test("画角の保存中は二重送信を防ぎ、保存に失敗しても編�
   assert.equal(field("vrm-error").textContent, "保存失敗");
 });
 
+test("画像未設定でも準備中にでき、アンチエイリアスの切り替えも個別に保存できる", async (t) => {
+  const { field, send, requests } = await setup(t);
+  for (const [id, key, value] of [
+    ["preparation-mode", "enabled", true],
+    ["model-antialias", "antialias", false],
+    ["model-antialias", "antialias", true],
+  ]) {
+    field(id).checked = value;
+    await send(field(id + "-form"), "submit");
+    const request = requests.at(-1);
+    assert.equal(request.path, "/api/admin/" + id);
+    assert.equal(request.method, "PUT");
+    assert.deepEqual(JSON.parse(request.body), { [key]: value });
+  }
+});
+
 test("画像・BGMの更新と削除は操作したプレビューだけに反映し、編集中の値を保つ", async (t) => {
   const { field, overlays: [left, right], config, send, requests } = await setup(t);
   assert.equal(left.scale.value, "50");
@@ -194,11 +210,13 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
   };
   config.preparation_image_url = "/prep?v=2";
   config.background_image_url = "/bg?v=2";
+  config.venue_map_url = "/venue?v=2";
   config.background_music_url = "/music?v=2";
   config.screen_overlays.top_left = { image_url: "/left?v=2", scale: 100 };
   config.screen_overlays.top_right = { image_url: "/right?v=2", scale: 100 };
   for (const [input, form, preview, remove, url, endpoint] of [
     [field("background-image"), field("background-form"), field("current-background-preview"), field("delete-background"), "/bg?v=2", "/api/admin/background-image"],
+    [field("venue-map-file"), field("venue-map-form"), field("venue-current-map"), field("venue-delete-map"), "/venue?v=2", "/api/admin/venue-map"],
     [field("preparation-image"), field("preparation-image-form"), field("current-preparation-preview"), field("delete-preparation-image"), "/prep?v=2", "/api/admin/preparation-image"],
     [left.field("input"), left.form, left.field("current"), left.field("delete"), "/left?v=2", "/api/admin/screen-overlays/top-left"],
   ]) {

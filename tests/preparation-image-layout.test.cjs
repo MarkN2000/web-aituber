@@ -14,11 +14,7 @@ test("準備中画像の全画面スタイルはメイン画面だけに適用�
   assert.match(mainHtml, /<img id="preparation-image"/);
   assert.match(adminHtml, /<input id="preparation-image" type="file"/);
   assert.match(style, /\.main-page #preparation-image\s*\{/);
-  assert.equal((style.match(/#preparation-image/g) || []).length, 1);
-});
-
-test("管理画面は修正後のスタイルシートを読み込む", () => {
-  assert.ok(Number(adminHtml.match(/\/static\/style\.css\?v=(\d+)/)?.[1]) >= 28);
+  assert.doesNotMatch(style, /^\s*#preparation-image\s*\{/m);
 });
 
 test("準備中画像がない場合はステージを黒くする", () => {

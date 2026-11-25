@@ -3393,11 +3393,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn admin_websocket_upgrades_with_response_headers() {
+    async fn admin_websocket_upgrades_and_closes_on_shutdown() {
+        use tokio::io::AsyncReadExt;
+        let state = test_state();
+        let shutdown = state.shutdown.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            axum::serve(listener, router(test_state())).await.unwrap();
+            axum::serve(listener, router(state)).await.unwrap();
         });
         let response = upgrade_websocket(address, "/ws?token=test-token").await;
         assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
@@ -3407,6 +3410,16 @@ mod tests {
         );
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        let mut connection = response.upgrade().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            connection.read_u8().await.unwrap(); // 初期スナップショットの送信開始を待つ。
+            shutdown.send(true).unwrap();
+            let mut frames = Vec::new();
+            connection.read_to_end(&mut frames).await.unwrap();
+            assert!(frames.ends_with(&[0x88, 0])); // WebSocketの空のCloseフレーム。
+        })
+        .await
+        .unwrap();
         server.abort();
     }
 
@@ -3721,8 +3734,14 @@ mod tests {
             let instructions = request["instructions"].as_str().unwrap();
             assert!(instructions.contains("ブロックで遊ぶ"));
             assert!(instructions.contains("渡り廊下を渡ってね。"));
+            let guide = request["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "guide_to_event")
+                .unwrap();
             assert_eq!(
-                request["tools"][1]["parameters"]["properties"]["event_id"]["enum"],
+                guide["parameters"]["properties"]["event_id"]["enum"],
                 json!(["game"])
             );
             let response = json!({"type": "response.completed", "response": {"output": [{

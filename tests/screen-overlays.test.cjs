@@ -44,7 +44,6 @@ test("横長画像は画像全体のcover寸法を求めてから縮小できる
 
   assert.equal(size.width, 2000);
   assert.equal(size.height, 1000);
-  assert.equal(size.width * 0.5, 1000);
 });
 
 test("縦長画像は画像全体のcover寸法を求めてから縮小できる", () => {
@@ -52,7 +51,6 @@ test("縦長画像は画像全体のcover寸法を求めてから縮小できる
 
   assert.equal(size.width, 1000);
   assert.equal(size.height, 2000);
-  assert.equal(size.height * 0.5, 1000);
 });
 
 test("画面と同じ比率の画像は画面寸法へ一致する", () => {
