@@ -163,13 +163,19 @@ function showDestination(destination) {
   }
 }
 
-function applyVenueMap({ venue_map_url: url, venue_map_scale: scale = 100 }) {
+function applyVenueMap({ venue_map_url: url, venue_map_scale: scale = 100, venue_pin_size: pinSize = 72 }) {
   elements.venueMap.style.setProperty("--venue-map-scale", scale / 100);
+  elements.venuePin.style.setProperty("--venue-pin-size", `${pinSize}px`);
   if (elements.venueMapImage.getAttribute("src") === (url || null)) return;
   showDestination(null);
   elements.venueMap.hidden = !url;
   if (url) elements.venueMapImage.src = url;
   else elements.venueMapImage.removeAttribute("src");
+}
+
+function updateVenuePinZoom() {
+  const zoom = window.devicePixelRatio * (window.visualViewport?.scale || 1);
+  elements.venuePin.style.setProperty("--screen-zoom", zoom);
 }
 
 function fitScreenOverlay(image) {
@@ -695,6 +701,9 @@ async function startMain() {
 }
 
 elements.start.addEventListener("click", startMain);
+updateVenuePinZoom();
+window.addEventListener("resize", updateVenuePinZoom);
+window.visualViewport?.addEventListener("resize", updateVenuePinZoom);
 elements.venueMapImage.addEventListener("load", ({ currentTarget: image }) => {
   image.style.setProperty("--venue-map-ratio", image.naturalWidth / image.naturalHeight);
 });

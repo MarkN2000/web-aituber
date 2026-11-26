@@ -201,9 +201,10 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
   const { field, overlays: [left, right], config, send, requests } = await setup(t);
   assert.equal(left.scale.value, "50");
   assert.equal(field("venue-map-scale-number").value, "75");
+  assert.equal(field("venue-pin-size").value, "72");
   const drafts = [
     [field("camera-fov-number"), "55"], [field("drawing-stabilization"), "9"],
-    [field("background-music-volume"), "15"], [field("venue-map-scale-number"), "42"], [left.scale, ""], [right.scale, "91"],
+    [field("background-music-volume"), "15"], [field("venue-map-scale-number"), "42"], [field("venue-pin-size"), "60"], [left.scale, ""], [right.scale, "91"],
   ];
   for (const [element, value] of drafts) element.value = value;
   field("preparation-mode").checked = true;
@@ -252,7 +253,7 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
   assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 91 });
   await send(field("venue-map-scale-form"), "submit");
   assert.equal(requests.at(-1).path, "/api/admin/venue-map/scale");
-  assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 42 });
+  assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 42, pin_size: 60 });
 });
 
 test("画像の自動保存に失敗しても元の画像を表示し、同じファイルを再選択できる", async (t) => {

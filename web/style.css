@@ -210,7 +210,7 @@ textarea::placeholder {
   position: absolute;
   z-index: 1;
   transform: translate(-50%, -100%);
-  font-size: clamp(20px, 3vw, 36px);
+  font-size: calc(var(--venue-pin-size, 72px) / var(--screen-zoom, 1));
   line-height: 1;
   animation: venue-pin-bob 1.6s ease-in-out infinite;
 }

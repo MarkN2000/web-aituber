@@ -218,7 +218,10 @@
             <input id="venue-map-scale-number" type="number" min="1" max="100" step="1" value="100" required aria-label="会場地図の表示倍率（パーセント）" aria-describedby="venue-map-scale-note">
           </div>
           <p id="venue-map-scale-note" class="field-note admin-field-note">100%で地図全体が画面に収まる最大サイズになります。右端を固定して縮小します。</p>
-          <div class="admin-form-actions"><button id="venue-map-save-scale" type="submit">倍率を保存</button></div>
+          <label for="venue-pin-size">行き先のピンのサイズ（px）</label>
+          <input id="venue-pin-size" type="number" min="1" max="255" step="1" value="72" required aria-describedby="venue-pin-size-note">
+          <p id="venue-pin-size-note" class="field-note admin-field-note">地図の倍率やブラウザーのズームを変えても、この大きさで表示します。</p>
+          <div class="admin-form-actions"><button id="venue-map-save-scale" type="submit">地図の表示設定を保存</button></div>
         </form>
         <p id="venue-map-status" role="status"></p><p id="venue-map-error" role="alert"></p>
       </section>
@@ -514,6 +517,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=52"></script>
+  <script type="module" src="/static/js/admin.js?v=53"></script>
 </body>
 </html>

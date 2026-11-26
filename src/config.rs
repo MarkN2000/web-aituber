@@ -126,6 +126,8 @@ pub struct CharacterConfig {
     pub background_music_duck_ratio: f32,
     #[serde(default = "default_image_scale")]
     pub venue_map_scale: u8,
+    #[serde(default = "default_venue_pin_size")]
+    pub venue_pin_size: u8,
     #[serde(default)]
     pub screen_overlays: ScreenOverlaysConfig,
     #[serde(default)]
@@ -269,6 +271,10 @@ fn default_image_scale() -> u8 {
     100
 }
 
+fn default_venue_pin_size() -> u8 {
+    72
+}
+
 fn default_light_brightness() -> f32 {
     1.0
 }
@@ -369,6 +375,9 @@ impl AppConfig {
         }
         if !(1..=100).contains(&self.character.venue_map_scale) {
             bail!("設定項目 character.venue_map_scale は1から100の整数にしてください");
+        }
+        if self.character.venue_pin_size == 0 {
+            bail!("設定項目 character.venue_pin_size は1から255の整数にしてください");
         }
         for (slot, overlay) in [
             ("top_left", &self.character.screen_overlays.top_left),
@@ -812,6 +821,7 @@ mod tests {
         assert_eq!(character.background_music_volume, 0.3);
         assert_eq!(character.background_music_duck_ratio, 0.4);
         assert_eq!(character.venue_map_scale, 100);
+        assert_eq!(character.venue_pin_size, 72);
         assert_eq!(character.screen_overlays.top_left.scale, 100);
         assert_eq!(character.screen_overlays.bottom_right.scale, 100);
         assert_eq!(character.light.ambient_intensity, 0.8);

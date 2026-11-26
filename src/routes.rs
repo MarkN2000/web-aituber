@@ -526,6 +526,7 @@ async fn display_config(State(state): State<AppState>) -> Response {
         )
         .await,
         venue_map_scale: character.venue_map_scale,
+        venue_pin_size: character.venue_pin_size,
         screen_overlays: screen_overlays_display_config(&state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
@@ -1103,17 +1104,20 @@ async fn delete_venue_map(State(state): State<AppState>) -> Response {
 
 async fn update_venue_map_scale(
     State(state): State<AppState>,
-    Json(request): Json<ImageScaleRequest>,
+    Json(request): Json<VenueMapDisplayRequest>,
 ) -> Response {
     match save_config(&state, false, |config| {
         config.character.venue_map_scale = request.scale;
+        if let Some(size) = request.pin_size {
+            config.character.venue_pin_size = size;
+        }
     }) {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
-            tracing::warn!(?error, "会場地図の表示倍率を保存できませんでした");
+            tracing::warn!(?error, "会場地図の表示設定を保存できませんでした");
             admin_error(
                 StatusCode::BAD_REQUEST,
-                "会場地図の表示倍率を保存できませんでした",
+                "会場地図の表示設定を保存できませんでした",
             )
         }
     }
@@ -2439,6 +2443,7 @@ struct AdminQrCodeRequest {
 struct DisplayConfigDto {
     venue_map_url: Option<String>,
     venue_map_scale: u8,
+    venue_pin_size: u8,
     #[serde(flatten)]
     character: DisplayCharacterConfig,
     preparation_image_url: Option<String>,
@@ -2539,6 +2544,12 @@ struct BackgroundMusicVolumeRequest {
 #[derive(Deserialize)]
 struct ImageScaleRequest {
     scale: u8,
+}
+
+#[derive(Deserialize)]
+struct VenueMapDisplayRequest {
+    scale: u8,
+    pin_size: Option<u8>,
 }
 
 #[derive(Deserialize)]
@@ -5424,15 +5435,33 @@ mod tests {
         let mut events = state.events.subscribe();
         let app = router(state.clone());
 
-        for (image, scale, expected) in [
-            ("screen-overlays/top-left", 0, StatusCode::BAD_REQUEST),
-            ("screen-overlays/bottom-right", 65, StatusCode::NO_CONTENT),
-            ("venue-map", 45, StatusCode::NO_CONTENT),
-            ("venue-map", 101, StatusCode::BAD_REQUEST),
+        for (image, body, expected) in [
+            (
+                "screen-overlays/top-left",
+                r#"{"scale":0}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "screen-overlays/bottom-right",
+                r#"{"scale":65}"#,
+                StatusCode::NO_CONTENT,
+            ),
+            (
+                "venue-map",
+                r#"{"scale":60,"pin_size":96}"#,
+                StatusCode::NO_CONTENT,
+            ),
+            ("venue-map", r#"{"scale":45}"#, StatusCode::NO_CONTENT),
+            (
+                "venue-map",
+                r#"{"scale":50,"pin_size":0}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+            ("venue-map", r#"{"scale":101}"#, StatusCode::BAD_REQUEST),
         ] {
             let request = Request::put(format!("/api/admin/{image}/scale?token=test-token"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(serde_json::json!({"scale": scale}).to_string()))
+                .body(Body::from(body))
                 .unwrap();
             assert_eq!(
                 app.clone().oneshot(request).await.unwrap().status(),
@@ -5449,12 +5478,14 @@ mod tests {
         }
         let saved = AppConfig::load_from_path(&config_path).unwrap();
         assert_eq!(saved.character.venue_map_scale, 45);
+        assert_eq!(saved.character.venue_pin_size, 96);
         assert_eq!(saved.character.screen_overlays.bottom_right.scale, 65);
         assert_eq!(saved.character.screen_overlays.top_left.scale, 100);
         let response = display_config(State(state)).await;
         let display: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
         assert_eq!(display["venue_map_scale"], 45);
+        assert_eq!(display["venue_pin_size"], 96);
         assert_eq!(display["screen_overlays"]["bottom_right"]["scale"], 65);
 
         std::fs::remove_dir_all(assets_dir).unwrap();

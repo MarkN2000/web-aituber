@@ -137,6 +137,7 @@ const venueMapAsset = {
   scaleValue: (config) => config.venue_map_scale,
   scaleForm: document.querySelector("#venue-map-scale-form"),
   scale: document.querySelector("#venue-map-scale"), scaleNumber: document.querySelector("#venue-map-scale-number"),
+  pinSize: document.querySelector("#venue-pin-size"),
   saveScale: document.querySelector("#venue-map-save-scale"),
 };
 const scaledImages = [venueMapAsset, ...screenOverlays];
@@ -326,6 +327,7 @@ function updateImageAssetControls(asset) {
     asset.scaleNumber.disabled = asset.busy || !token;
     asset.saveScale.disabled = asset.busy || !token;
   }
+  if (asset.pinSize) asset.pinSize.disabled = asset.busy || !token;
 }
 function updatePreparationModeControls() {
   elements.preparationMode.disabled = preparationModeBusy || !token;
@@ -499,6 +501,7 @@ async function loadDisplayConfig() {
   preparationModeEnabled = config.preparation_mode === true;
   elements.preparationMode.checked = preparationModeEnabled;
   updatePreparationModeControls();
+  venueMapAsset.pinSize.value = String(config.venue_pin_size ?? 72);
   for (const asset of scaledImages) {
     asset.scale.value = String(Math.min(100, Math.max(1, Number(asset.scaleValue(config)) || 100)));
     syncImageScaleFromRange(asset);
@@ -526,13 +529,13 @@ async function saveImageScale(event, asset) {
     const response = await fetch(adminUrl(`${asset.endpoint}/scale`), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scale }),
+      body: JSON.stringify({ scale, pin_size: asset.pinSize ? Number(asset.pinSize.value) : undefined }),
     });
-    if (!response.ok) throw new Error(await readError(response, "表示倍率を保存できませんでした。"));
-    setMessage(asset.status, asset.error, `${asset.label}の表示倍率を保存しました。接続中のメイン画面へ反映されます。`);
+    if (!response.ok) throw new Error(await readError(response, "表示設定を保存できませんでした。"));
+    setMessage(asset.status, asset.error, `${asset.label}の表示設定を保存しました。接続中のメイン画面へ反映されます。`);
   } catch (error) {
     console.error(error);
-    setMessage(asset.status, asset.error, error.message || "表示倍率を保存できませんでした。", true);
+    setMessage(asset.status, asset.error, error.message || "表示設定を保存できませんでした。", true);
   } finally {
     asset.busy = false;
     asset.saveScale.textContent = original;
