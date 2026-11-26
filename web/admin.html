@@ -224,6 +224,9 @@
       </section>
       <form id="venue-form">
         <fieldset id="venue-fields" disabled>
+          <label for="venue-location-template">場所を伝える一文</label>
+          <input id="venue-location-template" type="text" value="場所は{場所}です。" required pattern=".*\{場所\}.*" title="文中に {場所} を入れてください。" aria-describedby="venue-location-template-note">
+          <p id="venue-location-template-note" class="field-note admin-field-note">{場所} に会場名と登録済みの階・部屋が入ります。例：会場は{場所}だよ！</p>
           <label for="venue-map-building">地図でピンを設定する棟</label>
           <select id="venue-map-building"></select>
           <p class="field-note admin-field-note">棟を選び、現在の地図上で入口をクリックしてください。下の座標欄からも指定できます。</p>
@@ -233,7 +236,7 @@
           <h3>企画</h3>
           <div id="venue-events"></div>
           <button id="venue-add-event" class="secondary-button" type="button">企画を追加</button>
-          <div class="admin-form-actions"><button type="submit">棟と企画を保存</button></div>
+          <div class="admin-form-actions"><button type="submit">会場案内を保存</button></div>
         </fieldset>
       </form>
       <p id="venue-status" role="status"></p><p id="venue-error" role="alert"></p>
@@ -511,6 +514,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=51"></script>
+  <script type="module" src="/static/js/admin.js?v=52"></script>
 </body>
 </html>

@@ -2,6 +2,7 @@ export function initVenueSettings({ token, adminUrl, readError, setMessage }) {
   const byId = (name) => document.querySelector("#venue-" + name);
   const form = byId("form");
   const fields = byId("fields");
+  const locationTemplate = byId("location-template");
   const buildings = byId("buildings");
   const events = byId("events");
   const mapBuilding = byId("map-building");
@@ -100,6 +101,7 @@ export function initVenueSettings({ token, adminUrl, readError, setMessage }) {
     event.preventDefault();
     if (!token || fields.disabled || !form.reportValidity()) return;
     const venue = {
+      location_template: locationTemplate.value.trim(),
       buildings: Object.fromEntries(Array.from(buildings.children, (row) => [row.dataset.id, {
         name: row.elements.namedItem("name").value.trim(),
         directions: row.elements.directions.value.trim(),
@@ -134,6 +136,7 @@ export function initVenueSettings({ token, adminUrl, readError, setMessage }) {
       const response = await fetch(adminUrl("/api/admin/venue"), { cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response, "会場案内を読み込めませんでした。"));
       const venue = await response.json();
+      locationTemplate.value = venue?.location_template ?? locationTemplate.defaultValue;
       buildings.replaceChildren();
       events.replaceChildren();
       for (const [id, { name, directions, pin }] of Object.entries(venue?.buildings || {})) {

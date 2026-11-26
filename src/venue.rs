@@ -6,8 +6,14 @@ use serde_json::{Map, Value, json};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Venue {
+    #[serde(default = "default_location_template")]
+    pub(crate) location_template: String,
     buildings: BTreeMap<String, Building>,
     events: BTreeMap<String, VenueEvent>,
+}
+
+fn default_location_template() -> String {
+    "場所は{場所}です。".into()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -58,6 +64,11 @@ impl Venue {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.location_template.contains("{場所}"),
+            "場所を伝える一文に {} を入れてください",
+            "{場所}"
+        );
         for (id, building) in &self.buildings {
             ensure!(
                 !id.trim().is_empty()

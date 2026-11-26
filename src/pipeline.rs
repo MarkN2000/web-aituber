@@ -332,10 +332,12 @@ async fn process_active_submission(
     let mut segments = limited_answer_segments(&generated.answer, generated.output_limit_reached);
     let mut destination = None;
     if let Some(id) = &generated.event_id {
-        if let Some(place) = config.venue.as_ref().and_then(|v| v.guide(id)) {
+        if let Some(venue) = &config.venue
+            && let Some(place) = venue.guide(id)
+        {
             segments.push(AnswerSegment {
                 emotion: Emotion::Neutral,
-                text: format!("場所は{}です。", place.label),
+                text: venue.location_template.replace("{場所}", &place.label),
             });
             destination = Some(place);
         } else {

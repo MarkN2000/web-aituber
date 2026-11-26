@@ -3754,6 +3754,7 @@ mod tests {
         let saved: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
         let mut expected = venue;
+        expected["location_template"] = json!("場所は{場所}です。");
         expected["buildings"]["grounds"]["directions"] = json!("");
         expected["events"]["art"]["room"] = json!("");
         expected["events"]["music"]["floor"] = json!("");
@@ -3812,6 +3813,7 @@ mod tests {
         let (mut state, directory) = preview_test_state();
         let venue_path = directory.join("venue.json");
         std::fs::write(&venue_path, json!({
+            "location_template": "会場は{場所}だよ！",
             "buildings": {"east": {"name": "東館", "directions": "渡り廊下を渡ってね。", "pin": {"x": 68, "y": 32}}},
             "events": {"game": {"name": "ゲーム制作", "description": "ブロックで遊ぶ", "building": "east", "floor": "2階", "room": "203号室"}}
         }).to_string()).unwrap();
@@ -3862,7 +3864,7 @@ mod tests {
         assert_eq!(destination["pin"], json!({"x": 68.0, "y": 32.0}));
         let expected = [
             "ゲーム制作は小学生も参加できるよ！",
-            "場所は東館 2階 203号室です。",
+            "会場は東館 2階 203号室だよ！",
         ];
         for text in expected {
             assert_eq!(spoken.try_recv().unwrap(), text);
