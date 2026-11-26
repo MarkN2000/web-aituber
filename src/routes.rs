@@ -3681,9 +3681,13 @@ mod tests {
         let venue = json!({
             "buildings": {
                 "east": {"name":"東館","pin":{"x":12.5,"y":67.0},"directions":""},
-                "west": {"name":"西館","pin":{"x":70.0,"y":30.0}}
+                "grounds": {"name":"グラウンド","pin":{"x":70.0,"y":30.0}}
             },
-            "events": {"art":{"name":"作品展","description":"学生の作品です。","building":"east","floor":"2階","room":"201号室"}}
+            "events": {
+                "art":{"name":"作品展","description":"学生の作品です。","building":"east","floor":"2階"},
+                "music":{"name":"演奏会","description":"吹奏楽です。","building":"east","room":"ホール"},
+                "relay":{"name":"リレー","description":"学年対抗です。","building":"grounds","floor":"","room":""}
+            }
         });
         let put = |url: &str, value: &Value| {
             Request::put(url)
@@ -3726,8 +3730,19 @@ mod tests {
         let saved: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
         let mut expected = venue;
-        expected["buildings"]["west"]["directions"] = json!("");
+        expected["buildings"]["grounds"]["directions"] = json!("");
+        expected["events"]["art"]["room"] = json!("");
+        expected["events"]["music"]["floor"] = json!("");
         assert_eq!(saved, expected);
+        let config = state.config.current();
+        let venue = config.venue.as_ref().unwrap();
+        for (id, label) in [
+            ("art", "東館 2階"),
+            ("music", "東館 ホール"),
+            ("relay", "グラウンド"),
+        ] {
+            assert_eq!(venue.guide(id).unwrap().label, label);
+        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 

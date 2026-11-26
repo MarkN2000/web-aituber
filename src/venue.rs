@@ -29,7 +29,9 @@ struct VenueEvent {
     name: String,
     description: String,
     building: String,
+    #[serde(default)]
     floor: String,
+    #[serde(default)]
     room: String,
 }
 
@@ -69,15 +71,9 @@ impl Venue {
         for (id, event) in &self.events {
             ensure!(
                 self.buildings.contains_key(&event.building)
-                    && [
-                        id,
-                        &event.name,
-                        &event.description,
-                        &event.floor,
-                        &event.room
-                    ]
-                    .iter()
-                    .all(|v| !v.trim().is_empty()),
+                    && [id, &event.name, &event.description]
+                        .iter()
+                        .all(|v| !v.trim().is_empty()),
                 "venue.json の企画 {id} に未登録の棟または空の項目があります"
             );
         }
@@ -91,7 +87,7 @@ impl Venue {
                 let building = &self.buildings[&event.building];
                 let entry = json!({
                     "name": event.name, "description": event.description,
-                    "building": building.name, "floor": event.floor, "room": event.room,
+                    "building": building.name, "floor": event.floor.trim(), "room": event.room.trim(),
                     "directions": building.directions.trim()
                 });
                 (id.clone(), entry)
@@ -103,7 +99,11 @@ impl Venue {
         let event = self.events.get(id)?;
         let building = &self.buildings[&event.building];
         Some(Destination {
-            label: format!("{} {} {}", building.name, event.floor, event.room),
+            label: [building.name.trim(), event.floor.trim(), event.room.trim()]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
             pin: building.pin,
         })
     }
