@@ -157,6 +157,7 @@ function showDestination(destination) {
   elements.venueDestination.hidden = !destination;
   elements.venueDestination.textContent = destination?.label || "";
   if (destination) {
+    elements.venuePin.classList.toggle("near-top", destination.pin.y < 10);
     elements.venuePin.style.left = destination.pin.x + "%";
     elements.venuePin.style.top = destination.pin.y + "%";
   }
@@ -693,6 +694,9 @@ async function startMain() {
 }
 
 elements.start.addEventListener("click", startMain);
+elements.venueMapImage.addEventListener("load", ({ currentTarget: image }) => {
+  image.style.setProperty("--venue-map-ratio", image.naturalWidth / image.naturalHeight);
+});
 if (debugEnabled) {
   elements.debugMotionType.addEventListener("change", refreshDebugMotionOptions);
   elements.debugMotionPlay.addEventListener("click", playDebugMotion);

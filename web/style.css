@@ -191,8 +191,9 @@ textarea::placeholder {
 #venue-map {
   position: absolute;
   z-index: 2;
-  top: max(20px, env(safe-area-inset-top));
-  right: max(20px, env(safe-area-inset-right));
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
   margin: 0;
   pointer-events: none;
   background: white;
@@ -201,20 +202,38 @@ textarea::placeholder {
 
 #venue-map-image {
   display: block;
-  max-width: 46vw;
-  max-height: 45dvh;
+  width: 100vw;
+  height: auto;
+  max-width: calc(100dvh * var(--venue-map-ratio));
 }
 
 #venue-pin {
   position: absolute;
+  z-index: 1;
   transform: translate(-50%, -100%);
   font-size: clamp(20px, 3vw, 36px);
   line-height: 1;
+  animation: venue-pin-bob 1.6s ease-in-out infinite;
+}
+
+#venue-pin.near-top {
+  transform: translateX(-50%) rotate(180deg);
+  --pin-lift: 5px;
+}
+
+@keyframes venue-pin-bob {
+  50% { translate: 0 var(--pin-lift, -5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #venue-pin { animation: none; }
 }
 
 #venue-destination {
   position: absolute;
-  inset: 100% 0 auto;
+  top: 0;
+  left: 0;
+  max-width: 100%;
   padding: .4em .6em;
   background: #fff;
   color: #202632;

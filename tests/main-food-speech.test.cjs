@@ -53,7 +53,7 @@ function loadContext() {
       loader: { hidden: false },
       answer: { hidden: true },
       answerText: { textContent: "" },
-      venuePin: { hidden: true, style: {} },
+      venuePin: { hidden: true, style: {}, classList: { toggle() {} } },
       venueDestination: { hidden: true, textContent: "" },
     };
     const viewer = {
