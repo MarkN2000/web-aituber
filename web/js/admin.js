@@ -70,7 +70,7 @@ const screenOverlays = [...document.querySelectorAll(".screen-overlay-slot")].ma
   const key = slot.replace("-", "_");
   const corner = { "top-left": "左上", "top-right": "右上", "bottom-left": "左下", "bottom-right": "右下" }[slot];
   return {
-    key,
+    scaleValue: (config) => config.screen_overlays?.[key]?.scale,
     label: `${corner}の画面オーバーレイ`,
     endpoint: `/api/admin/screen-overlays/${slot}`,
     fileName: `screen-overlay-${slot}.webp`,
@@ -134,8 +134,13 @@ const venueMapAsset = {
   remove: document.querySelector("#venue-delete-map"),
   currentPreview: document.querySelector("#venue-current-map"), currentEmpty: document.querySelector("#venue-current-empty"),
   status: document.querySelector("#venue-map-status"), error: document.querySelector("#venue-map-error"),
+  scaleValue: (config) => config.venue_map_scale,
+  scaleForm: document.querySelector("#venue-map-scale-form"),
+  scale: document.querySelector("#venue-map-scale"), scaleNumber: document.querySelector("#venue-map-scale-number"),
+  saveScale: document.querySelector("#venue-map-save-scale"),
 };
-const imageAssets = [backgroundImageAsset, preparationImageAsset, venueMapAsset, ...screenOverlays];
+const scaledImages = [venueMapAsset, ...screenOverlays];
+const imageAssets = [backgroundImageAsset, preparationImageAsset, ...scaledImages];
 
 function adminUrl(path) { return `${path}?token=${encodeURIComponent(token)}`; }
 function setStatus(message) { elements.status.textContent = message; }
@@ -326,13 +331,13 @@ function updatePreparationModeControls() {
   elements.preparationMode.disabled = preparationModeBusy || !token;
   elements.savePreparationMode.disabled = preparationModeBusy || !token;
 }
-function syncScreenOverlayScaleFromRange(overlay) {
-  overlay.scaleNumber.value = overlay.scale.value;
+function syncImageScaleFromRange(asset) {
+  asset.scaleNumber.value = asset.scale.value;
 }
-function syncScreenOverlayScaleFromNumber(overlay) {
-  const scale = Number(overlay.scaleNumber.value);
+function syncImageScaleFromNumber(asset) {
+  const scale = Number(asset.scaleNumber.value);
   if (!Number.isInteger(scale) || scale < 1 || scale > 100) return;
-  overlay.scale.value = String(scale);
+  asset.scale.value = String(scale);
 }
 function updateMusicControls() {
   elements.musicInput.disabled = musicBusy || !token;
@@ -494,10 +499,9 @@ async function loadDisplayConfig() {
   preparationModeEnabled = config.preparation_mode === true;
   elements.preparationMode.checked = preparationModeEnabled;
   updatePreparationModeControls();
-  for (const overlay of screenOverlays) {
-    const scale = config.screen_overlays?.[overlay.key]?.scale;
-    overlay.scale.value = String(Math.min(100, Math.max(1, Number(scale) || 100)));
-    syncScreenOverlayScaleFromRange(overlay);
+  for (const asset of scaledImages) {
+    asset.scale.value = String(Math.min(100, Math.max(1, Number(asset.scaleValue(config)) || 100)));
+    syncImageScaleFromRange(asset);
   }
   await Promise.all(imageAssets.map((asset, i) => {
     if (asset.currentPreview.getAttribute("src") === previews[i]) {
@@ -505,34 +509,34 @@ async function loadDisplayConfig() {
     }
   }));
 }
-async function saveScreenOverlayScale(event, overlay) {
+async function saveImageScale(event, asset) {
   event.preventDefault();
-  if (!token || overlay.busy) return;
-  const scale = Number(overlay.scaleNumber.value);
+  if (!token || asset.busy) return;
+  const scale = Number(asset.scaleNumber.value);
   if (!Number.isInteger(scale) || scale < 1 || scale > 100) {
-    setMessage(elements.displayStatus, elements.displayError, "表示倍率は1〜100%の整数で指定してください。", true);
+    setMessage(asset.status, asset.error, "表示倍率は1〜100%の整数で指定してください。", true);
     return;
   }
-  overlay.busy = true;
-  updateImageAssetControls(overlay);
-  const original = overlay.saveScale.textContent;
-  overlay.saveScale.textContent = "保存中…";
-  setMessage(elements.displayStatus, elements.displayError);
+  asset.busy = true;
+  updateImageAssetControls(asset);
+  const original = asset.saveScale.textContent;
+  asset.saveScale.textContent = "保存中…";
+  setMessage(asset.status, asset.error);
   try {
-    const response = await fetch(adminUrl(`${overlay.endpoint}/scale`), {
+    const response = await fetch(adminUrl(`${asset.endpoint}/scale`), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scale }),
     });
     if (!response.ok) throw new Error(await readError(response, "表示倍率を保存できませんでした。"));
-    setMessage(elements.displayStatus, elements.displayError, `${overlay.label}の表示倍率を保存しました。接続中のメイン画面へ反映されます。`);
+    setMessage(asset.status, asset.error, `${asset.label}の表示倍率を保存しました。接続中のメイン画面へ反映されます。`);
   } catch (error) {
     console.error(error);
-    setMessage(elements.displayStatus, elements.displayError, error.message || "表示倍率を保存できませんでした。", true);
+    setMessage(asset.status, asset.error, error.message || "表示倍率を保存できませんでした。", true);
   } finally {
-    overlay.busy = false;
-    overlay.saveScale.textContent = original;
-    updateImageAssetControls(overlay);
+    asset.busy = false;
+    asset.saveScale.textContent = original;
+    updateImageAssetControls(asset);
   }
 }
 async function uploadVrmModel(event) {
@@ -1211,11 +1215,11 @@ for (const asset of imageAssets) {
   asset.remove.addEventListener("click", () => { void deleteImageAsset(asset); });
   updateImageAssetControls(asset);
 }
-for (const overlay of screenOverlays) {
-  overlay.scale.addEventListener("input", () => syncScreenOverlayScaleFromRange(overlay));
-  overlay.scaleNumber.addEventListener("input", () => syncScreenOverlayScaleFromNumber(overlay));
-  overlay.scaleForm.addEventListener("submit", (event) => { void saveScreenOverlayScale(event, overlay); });
-  syncScreenOverlayScaleFromRange(overlay);
+for (const asset of scaledImages) {
+  asset.scale.addEventListener("input", () => syncImageScaleFromRange(asset));
+  asset.scaleNumber.addEventListener("input", () => syncImageScaleFromNumber(asset));
+  asset.scaleForm.addEventListener("submit", (event) => { void saveImageScale(event, asset); });
+  syncImageScaleFromRange(asset);
 }
 elements.musicInput.addEventListener("change", selectMusic);
 elements.musicForm.addEventListener("submit", uploadMusic);

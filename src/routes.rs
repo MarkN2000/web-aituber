@@ -70,6 +70,10 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_venue_map)
                 .layer(DefaultBodyLimit::max(MAX_BACKGROUND_REQUEST_BYTES)),
         )
+        .route(
+            "/api/admin/venue-map/scale",
+            axum::routing::put(update_venue_map_scale),
+        )
         .route("/api/admin/version", get(admin_version))
         .route("/api/admin/update", get(check_update).post(apply_update))
         .route(
@@ -521,6 +525,7 @@ async fn display_config(State(state): State<AppState>) -> Response {
             "会場地図",
         )
         .await,
+        venue_map_scale: character.venue_map_scale,
         screen_overlays: screen_overlays_display_config(&state, &character).await,
         drawing: config.drawing.clone(),
         character: DisplayCharacterConfig::from(character),
@@ -1096,6 +1101,24 @@ async fn delete_venue_map(State(state): State<AppState>) -> Response {
     delete_display_image(&state, VENUE_MAP_FILE_NAME, "会場地図").await
 }
 
+async fn update_venue_map_scale(
+    State(state): State<AppState>,
+    Json(request): Json<ImageScaleRequest>,
+) -> Response {
+    match save_config(&state, false, |config| {
+        config.character.venue_map_scale = request.scale;
+    }) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            tracing::warn!(?error, "会場地図の表示倍率を保存できませんでした");
+            admin_error(
+                StatusCode::BAD_REQUEST,
+                "会場地図の表示倍率を保存できませんでした",
+            )
+        }
+    }
+}
+
 async fn upload_preparation_image(State(state): State<AppState>, multipart: Multipart) -> Response {
     let image = match read_webp_image(multipart, "準備中画像").await {
         Ok(image) => image,
@@ -1236,7 +1259,7 @@ async fn delete_screen_overlay(
 async fn update_screen_overlay_scale(
     Path(slot): Path<String>,
     State(state): State<AppState>,
-    Json(request): Json<ScreenOverlayScaleRequest>,
+    Json(request): Json<ImageScaleRequest>,
 ) -> Response {
     let Ok(slot) = ScreenOverlaySlot::try_from(slot.as_str()) else {
         return admin_error(StatusCode::BAD_REQUEST, "画面オーバーレイの位置が不正です");
@@ -2415,6 +2438,7 @@ struct AdminQrCodeRequest {
 #[derive(Serialize)]
 struct DisplayConfigDto {
     venue_map_url: Option<String>,
+    venue_map_scale: u8,
     #[serde(flatten)]
     character: DisplayCharacterConfig,
     preparation_image_url: Option<String>,
@@ -2513,7 +2537,7 @@ struct BackgroundMusicVolumeRequest {
 }
 
 #[derive(Deserialize)]
-struct ScreenOverlayScaleRequest {
+struct ImageScaleRequest {
     scale: u8,
 }
 
@@ -5389,7 +5413,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn screen_overlay_scale_is_validated_persisted_and_notifies_display_clients() {
+    async fn image_scales_are_validated_persisted_and_notified_independently() {
         let (mut state, assets_dir) = state_with_temporary_assets();
         let config_path = assets_dir.join("config.json");
         let config = state.config.current().as_ref().clone();
@@ -5398,45 +5422,38 @@ mod tests {
         let mut events = state.events.subscribe();
         let app = router(state.clone());
 
-        let invalid = app
-            .clone()
-            .oneshot(
-                Request::put("/api/admin/screen-overlays/top-left/scale?token=test-token")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"scale":0}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
-
-        let updated = app
-            .oneshot(
-                Request::put("/api/admin/screen-overlays/bottom-right/scale?token=test-token")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"scale":65}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(updated.status(), StatusCode::NO_CONTENT);
-        assert!(matches!(
-            events.recv().await.unwrap(),
-            ServerEvent::DisplayConfigChanged
-        ));
+        for (image, scale, expected) in [
+            ("screen-overlays/top-left", 0, StatusCode::BAD_REQUEST),
+            ("screen-overlays/bottom-right", 65, StatusCode::NO_CONTENT),
+            ("venue-map", 45, StatusCode::NO_CONTENT),
+            ("venue-map", 101, StatusCode::BAD_REQUEST),
+        ] {
+            let request = Request::put(format!("/api/admin/{image}/scale?token=test-token"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::json!({"scale": scale}).to_string()))
+                .unwrap();
+            assert_eq!(
+                app.clone().oneshot(request).await.unwrap().status(),
+                expected
+            );
+            if expected == StatusCode::NO_CONTENT {
+                assert!(matches!(
+                    events.try_recv().unwrap(),
+                    ServerEvent::DisplayConfigChanged
+                ));
+            } else {
+                assert!(events.try_recv().is_err());
+            }
+        }
         let saved = AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(saved.character.venue_map_scale, 45);
         assert_eq!(saved.character.screen_overlays.bottom_right.scale, 65);
         assert_eq!(saved.character.screen_overlays.top_left.scale, 100);
-        assert_eq!(
-            state
-                .config
-                .current()
-                .character
-                .screen_overlays
-                .bottom_right
-                .scale,
-            65
-        );
+        let response = display_config(State(state)).await;
+        let display: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+        assert_eq!(display["venue_map_scale"], 45);
+        assert_eq!(display["screen_overlays"]["bottom_right"]["scale"], 65);
 
         std::fs::remove_dir_all(assets_dir).unwrap();
     }

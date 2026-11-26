@@ -80,6 +80,7 @@
     "background_color": "#1b1b22",
     "background_music_volume": 0.2,
     "background_music_duck_ratio": 0.5,
+    "venue_map_scale": 100,
     "screen_overlays": {
       "top_left": { "scale": 100 },
       "top_right": { "scale": 100 },

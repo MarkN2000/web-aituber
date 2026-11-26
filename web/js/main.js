@@ -163,7 +163,8 @@ function showDestination(destination) {
   }
 }
 
-function applyVenueMap(url) {
+function applyVenueMap({ venue_map_url: url, venue_map_scale: scale = 100 }) {
+  elements.venueMap.style.setProperty("--venue-map-scale", scale / 100);
   if (elements.venueMapImage.getAttribute("src") === (url || null)) return;
   showDestination(null);
   elements.venueMap.hidden = !url;
@@ -340,7 +341,7 @@ function applyUpdatedDisplayConfig(config) {
   leavePreparationMode();
   applyBackground(config);
   applyScreenOverlays(config);
-  applyVenueMap(config.venue_map_url);
+  applyVenueMap(config);
   if (viewerConfigKey(config) !== appliedViewerConfigKey) {
     pendingViewerConfig = config;
     void applyPendingViewerConfig();
@@ -670,7 +671,7 @@ async function startMain() {
       leavePreparationMode();
       applyBackground(config);
       applyScreenOverlays(config);
-      applyVenueMap(config.venue_map_url);
+      applyVenueMap(config);
       viewer = await createViewer(config);
       await viewer.load(config);
       appliedViewerConfigKey = viewerConfigKey(config);

@@ -124,6 +124,8 @@ pub struct CharacterConfig {
     pub background_music_volume: f32,
     #[serde(default = "default_background_music_duck_ratio")]
     pub background_music_duck_ratio: f32,
+    #[serde(default = "default_image_scale")]
+    pub venue_map_scale: u8,
     #[serde(default)]
     pub screen_overlays: ScreenOverlaysConfig,
     #[serde(default)]
@@ -144,7 +146,7 @@ pub struct ScreenOverlaysConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ScreenOverlayConfig {
-    #[serde(default = "default_screen_overlay_scale")]
+    #[serde(default = "default_image_scale")]
     pub scale: u8,
 }
 
@@ -210,7 +212,7 @@ impl Default for DrawingConfig {
 impl Default for ScreenOverlayConfig {
     fn default() -> Self {
         Self {
-            scale: default_screen_overlay_scale(),
+            scale: default_image_scale(),
         }
     }
 }
@@ -263,7 +265,7 @@ fn default_background_music_duck_ratio() -> f32 {
     0.4
 }
 
-fn default_screen_overlay_scale() -> u8 {
+fn default_image_scale() -> u8 {
     100
 }
 
@@ -364,6 +366,9 @@ impl AppConfig {
             bail!(
                 "設定項目 character.background_music_duck_ratio は0.0から1.0の有限値にしてください"
             );
+        }
+        if !(1..=100).contains(&self.character.venue_map_scale) {
+            bail!("設定項目 character.venue_map_scale は1から100の整数にしてください");
         }
         for (slot, overlay) in [
             ("top_left", &self.character.screen_overlays.top_left),
@@ -806,6 +811,7 @@ mod tests {
         assert_eq!(character.camera.fov, 30.0);
         assert_eq!(character.background_music_volume, 0.3);
         assert_eq!(character.background_music_duck_ratio, 0.4);
+        assert_eq!(character.venue_map_scale, 100);
         assert_eq!(character.screen_overlays.top_left.scale, 100);
         assert_eq!(character.screen_overlays.bottom_right.scale, 100);
         assert_eq!(character.light.ambient_intensity, 0.8);

@@ -54,7 +54,7 @@ async function setup(t, token = "test") {
   field("model-layout-form").elements = ["camera-fov", "camera-fov-number", "save-model-layout"].map(field);
   const config = {
     camera: { fov: 22.5, position: [1, 2, 3] }, preparation_image_url: null,
-    background_image_url: "/bg?v=1", background_music_url: "/music?v=1",
+    background_image_url: "/bg?v=1", background_music_url: "/music?v=1", venue_map_scale: 75,
     screen_overlays: { top_left: { image_url: "/left?v=1", scale: 50 }, top_right: { image_url: "/right?v=1", scale: 60 } },
   };
   const location = new URL("http://localhost/admin?token=" + token);
@@ -200,9 +200,10 @@ test("画像未設定でも準備中にでき、アンチエイリアスの切�
 test("画像・BGMの更新と削除は操作したプレビューだけに反映し、編集中の値を保つ", async (t) => {
   const { field, overlays: [left, right], config, send, requests } = await setup(t);
   assert.equal(left.scale.value, "50");
+  assert.equal(field("venue-map-scale-number").value, "75");
   const drafts = [
     [field("camera-fov-number"), "55"], [field("drawing-stabilization"), "9"],
-    [field("background-music-volume"), "15"], [left.scale, ""], [right.scale, "91"],
+    [field("background-music-volume"), "15"], [field("venue-map-scale-number"), "42"], [left.scale, ""], [right.scale, "91"],
   ];
   for (const [element, value] of drafts) element.value = value;
   field("preparation-mode").checked = true;
@@ -249,6 +250,9 @@ test("画像・BGMの更新と削除は操作したプレビューだけに反�
   await send(right.scaleForm, "submit");
   assert.equal(requests.at(-1).path, "/api/admin/screen-overlays/top-right/scale");
   assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 91 });
+  await send(field("venue-map-scale-form"), "submit");
+  assert.equal(requests.at(-1).path, "/api/admin/venue-map/scale");
+  assert.deepEqual(JSON.parse(requests.at(-1).body), { scale: 42 });
 });
 
 test("画像の自動保存に失敗しても元の画像を表示し、同じファイルを再選択できる", async (t) => {

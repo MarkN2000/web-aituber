@@ -202,9 +202,8 @@ textarea::placeholder {
 
 #venue-map-image {
   display: block;
-  width: 100vw;
+  width: calc(min(100vw, 100dvh * var(--venue-map-ratio, 1)) * var(--venue-map-scale, 1));
   height: auto;
-  max-width: calc(100dvh * var(--venue-map-ratio));
 }
 
 #venue-pin {

@@ -211,6 +211,15 @@
           <p id="venue-map-note" class="field-note admin-field-note">JPEG・PNG・WebP、10MiBまで。選ぶと保存され、来場者の画面に反映されます。</p>
           <button id="venue-delete-map" class="secondary-button" type="button" disabled>地図を削除</button>
         </div>
+        <form id="venue-map-scale-form">
+          <label for="venue-map-scale">来場者画面での地図の表示倍率（%）</label>
+          <div class="volume-control screen-overlay-scale-control">
+            <input id="venue-map-scale" type="range" min="1" max="100" step="1" value="100" aria-describedby="venue-map-scale-note">
+            <input id="venue-map-scale-number" type="number" min="1" max="100" step="1" value="100" required aria-label="会場地図の表示倍率（パーセント）" aria-describedby="venue-map-scale-note">
+          </div>
+          <p id="venue-map-scale-note" class="field-note admin-field-note">100%で地図全体が画面に収まる最大サイズになります。右端を固定して縮小します。</p>
+          <div class="admin-form-actions"><button id="venue-map-save-scale" type="submit">倍率を保存</button></div>
+        </form>
         <p id="venue-map-status" role="status"></p><p id="venue-map-error" role="alert"></p>
       </section>
       <form id="venue-form">
@@ -502,6 +511,6 @@
       <p id="event-qr-url"></p>
     </div>
   </dialog>
-  <script type="module" src="/static/js/admin.js?v=50"></script>
+  <script type="module" src="/static/js/admin.js?v=51"></script>
 </body>
 </html>
